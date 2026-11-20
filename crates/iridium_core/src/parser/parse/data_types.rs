@@ -3,17 +3,32 @@ use crate::parser::error::{Expected, ParseResult};
 use crate::parser::state::Parser;
 use crate::parser::token::Keyword;
 
+fn consume_optional_single_int_param(parser: &mut Parser) -> ParseResult<()> {
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        match parser.next() {
+            Some(Token::Number { .. }) => {}
+            _ => return parser.backtrack(Expected::Description("number")),
+        }
+        parser.expect_rparen()?;
+    }
+    Ok(())
+}
+
 pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
     match parser.next() {
         Some(Token::Identifier(id)) => {
             let upper = id.to_uppercase();
             match upper.as_str() {
-                "INT" => Ok(DataType::Int),
+                "INT" | "INTEGER" => Ok(DataType::Int),
                 "BIGINT" => Ok(DataType::BigInt),
                 "SMALLINT" => Ok(DataType::SmallInt),
                 "TINYINT" => Ok(DataType::TinyInt),
                 "BIT" => Ok(DataType::Bit),
-                "FLOAT" => Ok(DataType::Float),
+                "FLOAT" => {
+                    consume_optional_single_int_param(parser)?;
+                    Ok(DataType::Float)
+                }
                 "REAL" => Ok(DataType::Real),
                 "DECIMAL" | "NUMERIC" => {
                     let mut p = 18;
@@ -215,8 +230,24 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                 "SYSNAME" => Ok(DataType::NVarChar(Some(128))),
                 "DATE" => Ok(DataType::Date),
                 "DATETIME" => Ok(DataType::DateTime),
-                "DATETIME2" => Ok(DataType::DateTime2),
-                "TIME" => Ok(DataType::Time),
+                "SMALLDATETIME" => Ok(DataType::SmallDateTime),
+                "DATETIME2" => {
+                    consume_optional_single_int_param(parser)?;
+                    Ok(DataType::DateTime2)
+                }
+                "DATETIMEOFFSET" => {
+                    consume_optional_single_int_param(parser)?;
+                    Ok(DataType::DateTimeOffset)
+                }
+                "TIME" => {
+                    consume_optional_single_int_param(parser)?;
+                    Ok(DataType::Time)
+                }
+                "XML" => Ok(DataType::Xml),
+                "TEXT" => Ok(DataType::Text),
+                "NTEXT" => Ok(DataType::NText),
+                "IMAGE" => Ok(DataType::Image),
+                "SQL_VARIANT" => Ok(DataType::SqlVariant),
                 _ => {
                     let mut parts = vec![id.clone()];
                     while matches!(parser.peek(), Some(Token::Dot)) {
@@ -243,7 +274,10 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
             Keyword::SmallInt => Ok(DataType::SmallInt),
             Keyword::TinyInt => Ok(DataType::TinyInt),
             Keyword::Bit => Ok(DataType::Bit),
-            Keyword::Float => Ok(DataType::Float),
+            Keyword::Float => {
+                consume_optional_single_int_param(parser)?;
+                Ok(DataType::Float)
+            }
             Keyword::Real => Ok(DataType::Real),
             Keyword::Decimal | Keyword::Numeric => {
                 let is_decimal = matches!(kw, Keyword::Decimal);
@@ -390,8 +424,24 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
             Keyword::SysName => Ok(DataType::NVarChar(Some(128))),
             Keyword::Date => Ok(DataType::Date),
             Keyword::DateTime => Ok(DataType::DateTime),
-            Keyword::DateTime2 => Ok(DataType::DateTime2),
-            Keyword::Time => Ok(DataType::Time),
+            Keyword::SmallDateTime => Ok(DataType::SmallDateTime),
+            Keyword::DateTime2 => {
+                consume_optional_single_int_param(parser)?;
+                Ok(DataType::DateTime2)
+            }
+            Keyword::DateTimeOffset => {
+                consume_optional_single_int_param(parser)?;
+                Ok(DataType::DateTimeOffset)
+            }
+            Keyword::Time => {
+                consume_optional_single_int_param(parser)?;
+                Ok(DataType::Time)
+            }
+            Keyword::Xml => Ok(DataType::Xml),
+            Keyword::Text => Ok(DataType::Text),
+            Keyword::NText => Ok(DataType::NText),
+            Keyword::Image => Ok(DataType::Image),
+            Keyword::SqlVariant => Ok(DataType::SqlVariant),
             _ => Ok(DataType::Custom(kw.as_ref().to_string())),
         },
         _ => parser.backtrack(Expected::Description("data type")),

@@ -50,3 +50,22 @@ fn test_datetime_casting_with_hm_fractional_and_basic_iso() {
     assert_eq!(r.rows.len(), 1);
     assert_eq!(r.rows[0].len(), 4);
 }
+
+#[test]
+fn test_temporal_and_float_type_precision_parameters() {
+    let mut engine = Engine::new();
+    let r = engine_exec(
+        &mut engine,
+        "BEGIN
+            DECLARE @dt2 DATETIME2(0) = '2026-04-01T12:30:00';
+            DECLARE @t TIME(3) = '12:30:00';
+            DECLARE @dto DATETIMEOFFSET(7) = '2026-04-01 12:30:00';
+            DECLARE @sdt SMALLDATETIME = '2026-04-01 12:30:00';
+            DECLARE @f FLOAT(53) = 1.5;
+            SELECT CAST(@dt2 AS DATETIME2(3)), @t, @dto, @sdt, @f;
+        END",
+    )
+    .unwrap();
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows[0].len(), 5);
+}

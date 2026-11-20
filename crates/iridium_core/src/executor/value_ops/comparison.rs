@@ -108,7 +108,9 @@ pub fn compare_values(a: &Value, b: &Value) -> Ordering {
         (ValueCategory::String, ValueCategory::Integer)
         | (ValueCategory::String, ValueCategory::Decimal)
         | (ValueCategory::String, ValueCategory::Float)
-        | (ValueCategory::String, ValueCategory::Money) => compare_numeric_with_string(&a, &b),
+        | (ValueCategory::String, ValueCategory::Money) => {
+            compare_numeric_with_string(&b, &a).reverse()
+        }
 
         (ValueCategory::DateTime, ValueCategory::DateTime) => {
             if let (Some(da), Some(db)) = (normalize_datetime(&a), normalize_datetime(&b)) {
@@ -266,7 +268,7 @@ fn unwrap_sql_variant(v: &Value) -> Value {
 }
 
 fn compare_numeric_with_string(num: &Value, str_val: &Value) -> Ordering {
-    let num_str = extract_string(num);
+    let num_str = num.to_string_value();
     if let Some((ar, as_)) = parse_string_as_numeric(&num_str) {
         let str_parsed = parse_string_as_numeric(&extract_string(str_val));
         if let Some((br, bs)) = str_parsed {
@@ -274,7 +276,7 @@ fn compare_numeric_with_string(num: &Value, str_val: &Value) -> Ordering {
             return an.cmp(&bn);
         }
     }
-    num.to_string_value().cmp(&str_val.to_string_value())
+    num_str.cmp(&str_val.to_string_value())
 }
 
 fn extract_string(v: &Value) -> String {
@@ -365,7 +367,11 @@ fn parse_string_as_numeric(input: &str) -> Option<(i128, u8)> {
     if parts.len() != 2 {
         return None;
     }
-    let whole = parts[0].parse::<i128>().ok()?;
+    let whole = if parts[0].is_empty() {
+        0
+    } else {
+        parts[0].parse::<i128>().ok()?
+    };
     let frac_raw = parts[1];
     if frac_raw.is_empty() || !frac_raw.chars().all(|c| c.is_ascii_digit()) {
         return None;
@@ -377,4 +383,99 @@ fn parse_string_as_numeric(input: &str) -> Option<(i128, u8)> {
         raw = -raw;
     }
     Some((raw, scale))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashKeyFamily {
+    Null,
+    ExactNum,
+    Float,
+    String,
+    DateTime,
+    DateTimeOffset,
+    Binary,
+    Vector,
+    Uuid,
+    Mixed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SqlHashKey {
+    Null,
+    ExactNum(i128, u8),
+    Float(u64),
+    String(String),
+    DateTime(NaiveDateTime),
+    DateTimeOffset(String),
+    Binary(Vec<u8>),
+    Vector(Vec<u32>),
+    Uuid(uuid::Uuid),
+}
+
+fn canonical_decimal(mut raw: i128, mut scale: u8) -> SqlHashKey {
+    if raw == 0 {
+        return SqlHashKey::ExactNum(0, 0);
+    }
+    while scale > 0 && raw % 10 == 0 {
+        raw /= 10;
+        scale -= 1;
+    }
+    SqlHashKey::ExactNum(raw, scale)
+}
+
+impl SqlHashKey {
+    pub fn from_value(v: &Value) -> Self {
+        match v {
+            Value::SqlVariant(inner) => Self::from_value(inner),
+            Value::Null => SqlHashKey::Null,
+            Value::Bit(b) => SqlHashKey::ExactNum(if *b { 1 } else { 0 }, 0),
+            Value::TinyInt(n) => SqlHashKey::ExactNum(*n as i128, 0),
+            Value::SmallInt(n) => SqlHashKey::ExactNum(*n as i128, 0),
+            Value::Int(n) => SqlHashKey::ExactNum(*n as i128, 0),
+            Value::BigInt(n) => SqlHashKey::ExactNum(*n as i128, 0),
+            Value::Decimal(raw, scale) => canonical_decimal(*raw, *scale),
+            Value::Money(raw) => canonical_decimal(*raw, 4),
+            Value::SmallMoney(raw) => canonical_decimal(*raw as i128, 4),
+            Value::Float(bits) => {
+                let f = f64::from_bits(*bits);
+                if f == 0.0 {
+                    SqlHashKey::Float(0.0f64.to_bits())
+                } else {
+                    SqlHashKey::Float(*bits)
+                }
+            }
+            Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
+                SqlHashKey::String(s.trim_end_matches(' ').to_lowercase())
+            }
+            Value::Date(_)
+            | Value::Time(_)
+            | Value::DateTime(_)
+            | Value::DateTime2(_)
+            | Value::SmallDateTime(_) => {
+                if let Some(dt) = normalize_datetime(v) {
+                    SqlHashKey::DateTime(dt)
+                } else {
+                    SqlHashKey::String(extract_string(v).trim_end_matches(' ').to_lowercase())
+                }
+            }
+            Value::DateTimeOffset(s) => SqlHashKey::DateTimeOffset(s.clone()),
+            Value::Binary(b) | Value::VarBinary(b) => SqlHashKey::Binary(b.clone()),
+            Value::Vector(vec) => SqlHashKey::Vector(vec.clone()),
+            Value::UniqueIdentifier(u) => SqlHashKey::Uuid(*u),
+        }
+    }
+
+    pub fn family(&self) -> HashKeyFamily {
+        match self {
+            SqlHashKey::Null => HashKeyFamily::Null,
+            SqlHashKey::ExactNum(_, _) => HashKeyFamily::ExactNum,
+            SqlHashKey::Float(_) => HashKeyFamily::Float,
+            SqlHashKey::String(_) => HashKeyFamily::String,
+            SqlHashKey::DateTime(_) => HashKeyFamily::DateTime,
+            SqlHashKey::DateTimeOffset(_) => HashKeyFamily::DateTimeOffset,
+            SqlHashKey::Binary(_) => HashKeyFamily::Binary,
+            SqlHashKey::Vector(_) => HashKeyFamily::Vector,
+            SqlHashKey::Uuid(_) => HashKeyFamily::Uuid,
+        }
+    }
 }

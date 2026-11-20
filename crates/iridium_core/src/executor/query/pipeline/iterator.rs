@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::ast::{Expr, JoinType};
@@ -8,6 +9,7 @@ use crate::executor::context::ExecutionContext;
 use crate::executor::evaluator::eval_predicate;
 use crate::executor::joins::eval_key;
 use crate::executor::model::{BoundTable, ContextTable, JoinedRow};
+use crate::executor::value_ops::{compare_values, HashKeyFamily, SqlHashKey};
 use crate::storage::Storage;
 use crate::types::Value;
 
@@ -162,7 +164,9 @@ pub struct HashJoinIterator {
     // Build state
     pub build_done: bool,
     pub right_materialized: Vec<JoinedRow>,
-    pub hash_map: HashMap<Vec<Value>, Vec<usize>>,
+    pub right_raw_keys: Vec<Vec<Value>>,
+    pub right_key_families: Vec<Option<HashKeyFamily>>,
+    pub hash_map: HashMap<Vec<SqlHashKey>, Vec<usize>>,
     pub right_matched: Vec<bool>,
 
     // Probe state
@@ -184,12 +188,26 @@ impl RowIterator for HashJoinIterator {
         clock: &dyn Clock,
     ) -> Result<Option<JoinedRow>, DbError> {
         if !self.build_done {
+            self.right_key_families = vec![None; self.right_keys.len()];
             while let Some(right_row) = self.right.next_row(ctx, catalog, storage, clock)? {
                 let ri = self.right_materialized.len();
-                let key = eval_key(&self.right_keys, &right_row, ctx, catalog, storage, clock)?;
-                if !key.iter().any(|v| v.is_null()) {
-                    self.hash_map.entry(key).or_default().push(ri);
+                let raw_key = eval_key(&self.right_keys, &right_row, ctx, catalog, storage, clock)?;
+                if !raw_key.iter().any(|v| v.is_null()) {
+                    let norm_key: Vec<SqlHashKey> =
+                        raw_key.iter().map(SqlHashKey::from_value).collect();
+                    for (slot, nk) in norm_key.iter().enumerate() {
+                        let fam = nk.family();
+                        match self.right_key_families[slot] {
+                            None => self.right_key_families[slot] = Some(fam),
+                            Some(prev) if prev != fam => {
+                                self.right_key_families[slot] = Some(HashKeyFamily::Mixed);
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.hash_map.entry(norm_key).or_default().push(ri);
                 }
+                self.right_raw_keys.push(raw_key);
                 self.right_materialized.push(right_row);
                 self.right_matched.push(false);
             }
@@ -209,7 +227,7 @@ impl RowIterator for HashJoinIterator {
                         }
                     }
 
-                    let key = eval_key(
+                    let raw_key = eval_key(
                         &self.left_keys,
                         self.current_left.as_ref().unwrap(),
                         ctx,
@@ -217,9 +235,40 @@ impl RowIterator for HashJoinIterator {
                         storage,
                         clock,
                     )?;
-                    if !key.iter().any(|v| v.is_null()) {
-                        if let Some(indices) = self.hash_map.get(&key) {
-                            self.current_matches = indices.clone();
+                    if !raw_key.iter().any(|v| v.is_null()) {
+                        let norm_key: Vec<SqlHashKey> =
+                            raw_key.iter().map(SqlHashKey::from_value).collect();
+                        let same_family = norm_key.iter().enumerate().all(|(slot, nk)| {
+                            matches!(
+                                self.right_key_families.get(slot).copied().flatten(),
+                                Some(rf) if rf == nk.family() && rf != HashKeyFamily::Mixed
+                            )
+                        });
+                        if same_family {
+                            if let Some(indices) = self.hash_map.get(&norm_key) {
+                                self.current_matches = indices.clone();
+                                self.current_match_idx = 0;
+                            } else {
+                                self.current_matches = Vec::new();
+                            }
+                        } else if !self.right_raw_keys.is_empty() {
+                            // Cross-family join (e.g. INT = NVARCHAR from STRING_SPLIT,
+                            // FLOAT = INT, UUID = VARCHAR, DATETIME = VARCHAR): fall back
+                            // to exact SQL equality so implicit coercions always match.
+                            let mut matched = Vec::new();
+                            for (ri, rkey) in self.right_raw_keys.iter().enumerate() {
+                                if rkey.iter().any(|v| v.is_null()) {
+                                    continue;
+                                }
+                                if raw_key
+                                    .iter()
+                                    .zip(rkey.iter())
+                                    .all(|(lv, rv)| compare_values(lv, rv) == Ordering::Equal)
+                                {
+                                    matched.push(ri);
+                                }
+                            }
+                            self.current_matches = matched;
                             self.current_match_idx = 0;
                         } else {
                             self.current_matches = Vec::new();

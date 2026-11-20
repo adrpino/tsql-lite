@@ -163,7 +163,7 @@ impl<'a> GroupExecutor<'a> {
         if group_by.is_empty() {
             return Ok(vec![Group { key: vec![], rows }]);
         }
-        let mut map: HashMap<Vec<Value>, usize> = HashMap::new();
+        let mut map: HashMap<Vec<super::value_ops::SqlHashKey>, usize> = HashMap::new();
         let mut groups: Vec<Group> = Vec::new();
         for row in rows {
             let mut key = Vec::new();
@@ -177,12 +177,14 @@ impl<'a> GroupExecutor<'a> {
                     self.clock,
                 )?);
             }
+            let hash_key: Vec<super::value_ops::SqlHashKey> =
+                key.iter().map(super::value_ops::SqlHashKey::from_value).collect();
 
-            if let Some(&idx) = map.get(&key) {
+            if let Some(&idx) = map.get(&hash_key) {
                 groups[idx].rows.push(row);
             } else {
                 let idx = groups.len();
-                map.insert(key.clone(), idx);
+                map.insert(hash_key, idx);
                 groups.push(Group {
                     key,
                     rows: vec![row],

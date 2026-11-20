@@ -81,6 +81,8 @@ pub(crate) fn execute_from_clause(
                             right_shape: right_eval.shape,
                             build_done: false,
                             right_materialized: Vec::new(),
+                            right_raw_keys: Vec::new(),
+                            right_key_families: Vec::new(),
                             hash_map: HashMap::new(),
                             right_matched: Vec::new(),
                             current_left: None,

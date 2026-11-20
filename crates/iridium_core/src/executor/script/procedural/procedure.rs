@@ -48,6 +48,51 @@ impl<'a> ScriptExecutor<'a> {
             return Ok(None);
         }
 
+        if stmt.name.name.eq_ignore_ascii_case("sp_executesql")
+            && stmt
+                .name
+                .schema
+                .as_deref()
+                .is_none_or(|s| s.eq_ignore_ascii_case("sys") || s.eq_ignore_ascii_case("dbo"))
+        {
+            let mut sql_expr: Option<crate::ast::Expr> = None;
+            let mut params_def: Option<crate::ast::Expr> = None;
+            let mut remaining = Vec::new();
+            for (idx, arg) in stmt.args.into_iter().enumerate() {
+                if let Some(ref name) = arg.name {
+                    let norm = name.trim_start_matches('@');
+                    if norm.eq_ignore_ascii_case("stmt") || norm.eq_ignore_ascii_case("statement") {
+                        sql_expr = Some(arg.expr);
+                        continue;
+                    }
+                    if norm.eq_ignore_ascii_case("params") {
+                        params_def = Some(arg.expr);
+                        continue;
+                    }
+                    remaining.push(arg);
+                } else if idx == 0 && sql_expr.is_none() {
+                    sql_expr = Some(arg.expr);
+                } else if idx == 1 && params_def.is_none() {
+                    params_def = Some(arg.expr);
+                } else {
+                    remaining.push(arg);
+                }
+            }
+            let Some(sql_expr) = sql_expr else {
+                return Err(DbError::Execution(
+                    "sp_executesql requires a SQL statement argument".into(),
+                ));
+            };
+            let sp_stmt = crate::ast::SpExecuteSqlStmt {
+                sql_expr,
+                params_def,
+                args: remaining,
+            };
+            let res = super::sp_executesql::execute_sp_executesql(self, sp_stmt, ctx)?;
+            self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
+            return Ok(res);
+        }
+
         if is_system_procedure(&stmt.name.name) {
             self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
             return execute_system_procedure(self, &stmt, ctx);

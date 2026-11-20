@@ -15,6 +15,18 @@ static SYSTEM_VARIABLES: &[SystemVariable] = &[
         handler: |ctx| Value::Int(*ctx.session.fetch_status),
     },
     SystemVariable {
+        name: "@@ROWCOUNT",
+        handler: |ctx| {
+            Value::Int(
+                ctx.session
+                    .variables
+                    .get("@@ROWCOUNT")
+                    .and_then(|v| v.1.to_integer_i64())
+                    .unwrap_or(0) as i32,
+            )
+        },
+    },
+    SystemVariable {
         name: "@@ERROR",
         handler: |ctx| {
             let code = ctx

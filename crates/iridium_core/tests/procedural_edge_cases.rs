@@ -294,3 +294,34 @@ fn procedural_create_proc_with_options_multi_stmt_body_and_param_syntax() {
     let r2 = query(&mut e, "EXEC dbo.p_encrypted");
     assert_eq!(r2.rows[0][0], Value::Int(42));
 }
+
+#[test]
+fn procedural_insert_exec_sp_executesql_named_args_and_initial_rowcount() {
+    let mut e = Engine::new();
+    let rc0 = query(&mut e, "SELECT @@ROWCOUNT");
+    assert_eq!(rc0.rows[0][0], Value::Int(0));
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_add_two @a INT, @b INT AS SELECT @a + @b AS total",
+    );
+    exec(&mut e, "CREATE TABLE #res (total INT)");
+    exec(
+        &mut e,
+        "INSERT INTO #res (total) EXEC dbo.p_add_two @b = 20, @a = 5",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO #res (total) EXEC sys.sp_executesql N'SELECT @v * 2', N'@v INT', @v = 7",
+    );
+    let r = query(&mut e, "SELECT total FROM #res ORDER BY total");
+    assert_eq!(r.rows.len(), 2);
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(14));
+    assert_eq!(r.rows[1][0].to_integer_i64(), Some(25));
+
+    exec(&mut e, "DECLARE @rc INT = -1");
+    let r_exec = query(&mut e, "EXEC @rc = sys.sp_executesql N'SELECT 1'");
+    assert_eq!(r_exec.rows[0][0].to_integer_i64(), Some(1));
+    let r_rc = query(&mut e, "SELECT @rc");
+    assert_eq!(r_rc.rows[0][0], Value::Int(0));
+}

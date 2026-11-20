@@ -576,11 +576,11 @@ pub fn lower_insert(
                                 name: lower_object_name(procedure),
                                 args: args
                                     .into_iter()
-                                    .map(|e| {
+                                    .map(|a| {
                                         Ok(executor_ast::statements::procedural::ExecArgument {
-                                            name: None,
-                                            expr: lower_expr(e)?,
-                                            is_output: false,
+                                            name: a.name,
+                                            expr: lower_expr(a.expr)?,
+                                            is_output: a.is_output,
                                         })
                                     })
                                     .collect::<Result<Vec<_>, DbError>>()?,

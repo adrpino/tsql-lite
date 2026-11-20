@@ -129,9 +129,10 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
             }
 
             let name = super::parse_multipart_name(parser)?;
-            if name
-                .last()
-                .is_some_and(|n| n.eq_ignore_ascii_case("sp_executesql"))
+            if return_variable.is_none()
+                && name
+                    .last()
+                    .is_some_and(|n| n.eq_ignore_ascii_case("sp_executesql"))
                 && (name.len() == 1
                     || (name.len() == 2
                         && (name[0].eq_ignore_ascii_case("sys")
@@ -175,7 +176,7 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
     }
 }
 
-fn parse_exec_arg(parser: &mut Parser) -> ParseResult<ExecArg> {
+pub(super) fn parse_exec_arg(parser: &mut Parser) -> ParseResult<ExecArg> {
     let mut name = None;
     if let Some(Token::Variable(v)) = parser.peek() {
         let v = v.clone();

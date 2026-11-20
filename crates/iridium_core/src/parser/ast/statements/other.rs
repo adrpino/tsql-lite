@@ -267,7 +267,7 @@ pub enum InsertSource {
     Select(Box<SelectStmt>),
     Exec {
         procedure: Vec<String>,
-        args: Vec<Expr>,
+        args: Vec<ExecArg>,
     },
     DefaultValues,
 }

@@ -123,7 +123,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             {
                 crate::parser::parse::expressions::parse_comma_list(
                     parser,
-                    crate::parser::parse::expressions::parse_expr,
+                    super::other::parse_exec_arg,
                 )?
             } else {
                 Vec::new()

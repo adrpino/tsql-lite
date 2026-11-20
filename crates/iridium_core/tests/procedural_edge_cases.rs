@@ -584,3 +584,32 @@ fn procedural_merge_uses_actual_source_columns() {
     assert_eq!(r.rows[0], vec![Value::Int(1), Value::Int(2)]);
     assert_eq!(r.rows[1], vec![Value::Int(2), Value::Int(1)]);
 }
+
+#[test]
+fn procedural_execute_batch_all_results_captures_multiple_result_sets() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_multi_rs
+        AS
+        BEGIN
+            SELECT 1 AS a, 'first' AS label;
+            SELECT 10 AS x, 20 AS y, 30 AS z;
+            RETURN 0;
+        END",
+    );
+    let results = e
+        .execute_batch_all_results(iridium_core::parse_batch("EXEC dbo.p_multi_rs").unwrap())
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].columns, vec!["a", "label"]);
+    assert_eq!(
+        results[0].rows[0],
+        vec![Value::Int(1), Value::VarChar("first".to_string())]
+    );
+    assert_eq!(results[1].columns, vec!["x", "y", "z"]);
+    assert_eq!(
+        results[1].rows[0],
+        vec![Value::Int(10), Value::Int(20), Value::Int(30)]
+    );
+}

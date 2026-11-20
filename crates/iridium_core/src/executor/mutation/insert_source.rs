@@ -46,12 +46,15 @@ impl<'a> MutationExecutor<'a> {
                 )
             }
             InsertSource::Exec(exec_stmt) => {
+                let saved_sink = ctx.frame.result_set_sink.take();
                 let outcome = ScriptExecutor {
                     catalog: self.catalog,
                     storage: self.storage,
                     clock: self.clock,
                 }
-                .execute(*exec_stmt.clone(), ctx)?;
+                .execute(*exec_stmt.clone(), ctx);
+                ctx.frame.result_set_sink = saved_sink;
+                let outcome = outcome?;
                 let query_result = match outcome {
                     StmtOutcome::Ok(Some(r)) => r,
                     StmtOutcome::Ok(None) => {

@@ -123,6 +123,14 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
             .execute_session_batch(self.default_session, stmts)
     }
 
+    pub fn execute_batch_all_results(
+        &self,
+        stmts: Vec<Statement>,
+    ) -> Result<Vec<QueryResult>, DbError> {
+        self.db
+            .execute_session_batch_all_results(self.default_session, stmts)
+    }
+
     pub fn execute_session_batch_sql(
         &self,
         session_id: SessionId,

@@ -141,7 +141,10 @@ impl<'a> ScriptExecutor<'a> {
                 }
             } else {
                 // Standard non-recursive CTE
-                let cte_outcome = self.execute(cte_def.query.clone(), ctx)?;
+                let saved_sink = ctx.frame.result_set_sink.take();
+                let cte_outcome = self.execute(cte_def.query.clone(), ctx);
+                ctx.frame.result_set_sink = saved_sink;
+                let cte_outcome = cte_outcome?;
                 let result = match cte_outcome {
                     StmtOutcome::Ok(Some(r)) => r,
                     StmtOutcome::Ok(None) => {

@@ -120,6 +120,7 @@ where
         host_name.clone(),
     );
     ctx.options = options.clone();
+    ctx.frame.result_set_sink = diagnostics.result_set_sink.clone();
     (ctx, tx_manager, journal, workspace, clock, options)
 }
 

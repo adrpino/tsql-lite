@@ -226,6 +226,24 @@ where
         self.executor().execute_session_batch(session_id, stmts)
     }
 
+    pub fn execute_session_batch_all_results(
+        &self,
+        session_id: SessionId,
+        stmts: Vec<Statement>,
+    ) -> Result<Vec<QueryResult>, DbError> {
+        let sink = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        if let Some(entry) = self.inner.sessions.get(&session_id) {
+            entry.value().lock().diagnostics.result_set_sink = Some(sink.clone());
+        }
+        let res = self.executor().execute_session_batch(session_id, stmts);
+        if let Some(entry) = self.inner.sessions.get(&session_id) {
+            entry.value().lock().diagnostics.result_set_sink = None;
+        }
+        res?;
+        let collected = std::mem::take(&mut *sink.lock());
+        Ok(collected)
+    }
+
     pub fn execute_session_batch_sql(
         &self,
         session_id: SessionId,

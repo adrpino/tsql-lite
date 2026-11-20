@@ -158,6 +158,8 @@ pub struct SessionSnapshot {
 #[derive(Debug, Clone)]
 pub struct DiagnosticsState {
     pub(crate) print_output: Vec<String>,
+    pub(crate) result_set_sink:
+        Option<std::sync::Arc<parking_lot::Mutex<Vec<super::result::QueryResult>>>>,
 }
 
 impl Default for DiagnosticsState {
@@ -170,10 +172,12 @@ impl DiagnosticsState {
     pub fn new() -> Self {
         Self {
             print_output: Vec::new(),
+            result_set_sink: None,
         }
     }
     pub fn reset(&mut self) {
         self.print_output.clear();
+        self.result_set_sink = None;
     }
 }
 

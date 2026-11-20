@@ -92,6 +92,12 @@ impl<'a> ScriptExecutor<'a> {
         }
         .execute_select(RelationalQuery::from(stmt), ctx)?;
 
+        if into_table.is_none() && !result.columns.is_empty() {
+            if let Some(ref sink) = ctx.frame.result_set_sink {
+                sink.lock().push(result.clone());
+            }
+        }
+
         if let Some(mut target) = into_table {
             if target.name.starts_with('#') {
                 let logical = target.name.clone();

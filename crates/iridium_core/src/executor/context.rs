@@ -78,6 +78,8 @@ pub struct FrameState {
     pub(crate) skip_instead_of: bool,
     pub(crate) last_error: Option<DbError>,
     pub(crate) script_tx: ScriptTransactionState,
+    pub(crate) result_set_sink:
+        Option<std::sync::Arc<parking_lot::Mutex<Vec<super::result::QueryResult>>>>,
 }
 
 #[derive(Debug, Clone)]

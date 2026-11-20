@@ -131,6 +131,11 @@ where
                 super::super::query::plan::RelationalQuery::from(select_stmt),
                 ctx,
             )?;
+            if !result.columns.is_empty() {
+                if let Some(ref sink) = ctx.frame.result_set_sink {
+                    sink.lock().push(result.clone());
+                }
+            }
             state.table_locks.lock().release_all_for_session(session_id);
             return Ok(StmtOutcome::Ok(Some(result)));
         }

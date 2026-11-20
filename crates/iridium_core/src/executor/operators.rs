@@ -70,6 +70,24 @@ pub(crate) fn eval_unary(op: &UnaryOp, val: Value) -> Result<Value, DbError> {
     }
 }
 
+fn datetime_add_days(dt: &Value, days_val: &Value, sign: f64) -> Result<Option<Value>, DbError> {
+    let base = match dt {
+        Value::DateTime(d) | Value::DateTime2(d) | Value::SmallDateTime(d) => *d,
+        Value::Date(d) => d.and_hms_opt(0, 0, 0).unwrap(),
+        _ => return Ok(None),
+    };
+    let days = value_to_f64(days_val)?;
+    let millis = (days * sign * 86_400_000.0).round() as i64;
+    let shifted = base + chrono::Duration::milliseconds(millis);
+    Ok(Some(match dt {
+        Value::DateTime(_) => Value::DateTime(shifted),
+        Value::DateTime2(_) => Value::DateTime2(shifted),
+        Value::SmallDateTime(_) => Value::SmallDateTime(shifted),
+        Value::Date(_) => Value::Date(shifted.date()),
+        _ => unreachable!(),
+    }))
+}
+
 fn eval_add(
     lv: Value,
     rv: Value,
@@ -95,6 +113,12 @@ fn eval_add(
     }
     if lv.is_null() || rv.is_null() {
         return Ok(Value::Null);
+    }
+    if let Some(res) = datetime_add_days(&lv, &rv, 1.0)? {
+        return Ok(res);
+    }
+    if let Some(res) = datetime_add_days(&rv, &lv, 1.0)? {
+        return Ok(res);
     }
     if is_float_type(&lv) || is_float_type(&rv) {
         let a = value_to_f64(&lv)?;
@@ -134,6 +158,9 @@ fn eval_subtract(
 ) -> Result<Value, DbError> {
     if lv.is_null() || rv.is_null() {
         return Ok(Value::Null);
+    }
+    if let Some(res) = datetime_add_days(&lv, &rv, -1.0)? {
+        return Ok(res);
     }
     if is_float_type(&lv) || is_float_type(&rv) {
         let a = value_to_f64(&lv)?;

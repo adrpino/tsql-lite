@@ -439,7 +439,7 @@ impl<'a> WindowExecutor<'a> {
             }
         }
 
-        // 5. Final pass to evaluate all projected expressions
+        // 5. Final pass to evaluate all projected expressions (expanding wildcards)
         let mut final_projected_rows = Vec::with_capacity(rows.len());
         let wc = super::context::WindowContext {
             results: results_map,
@@ -450,45 +450,67 @@ impl<'a> WindowExecutor<'a> {
             ctx.row.window_context.as_mut().unwrap().row_idx = idx;
             let mut projected_row = Vec::with_capacity(projection.len());
             for item in projection {
-                projected_row.push(eval_expr(
-                    &item.expr,
-                    row,
-                    ctx,
-                    self.catalog,
-                    self.storage,
-                    self.clock,
-                )?);
+                match &item.expr {
+                    Expr::Wildcard => {
+                        for ct in row {
+                            if let Some(r) = &ct.row {
+                                projected_row.extend(r.values.clone());
+                            } else {
+                                projected_row.extend(vec![Value::Null; ct.table.columns.len()]);
+                            }
+                        }
+                    }
+                    Expr::QualifiedWildcard(parts) => {
+                        let table_name = parts.last().map(String::as_str).unwrap_or("");
+                        for ct in row {
+                            let matches = ct.alias.eq_ignore_ascii_case(table_name)
+                                || ct.table.name.eq_ignore_ascii_case(table_name)
+                                || ct
+                                    .source_aliases
+                                    .iter()
+                                    .any(|a| a.eq_ignore_ascii_case(table_name));
+                            if matches {
+                                if let Some(r) = &ct.row {
+                                    projected_row.extend(r.values.clone());
+                                } else {
+                                    projected_row.extend(vec![Value::Null; ct.table.columns.len()]);
+                                }
+                            }
+                        }
+                    }
+                    expr => {
+                        projected_row.push(eval_expr(
+                            expr,
+                            row,
+                            ctx,
+                            self.catalog,
+                            self.storage,
+                            self.clock,
+                        )?);
+                    }
+                }
             }
             final_projected_rows.push(projected_row);
         }
         ctx.row.window_context = None;
 
-        let mut column_types =
-            vec![crate::types::DataType::VarChar { max_len: 4000 }; projection.len()];
-        for col_idx in 0..projection.len() {
+        let columns: Vec<String> =
+            super::projection::expand_projection_columns(projection, rows.first());
+
+        let col_count = columns.len();
+        let mut column_types = vec![crate::types::DataType::VarChar { max_len: 4000 }; col_count];
+        for col_idx in 0..col_count {
             for row in &final_projected_rows {
-                if !row[col_idx].is_null() {
-                    column_types[col_idx] = row[col_idx]
-                        .data_type()
-                        .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 });
-                    break;
+                if let Some(val) = row.get(col_idx) {
+                    if !val.is_null() {
+                        column_types[col_idx] = val
+                            .data_type()
+                            .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 });
+                        break;
+                    }
                 }
             }
         }
-
-        if final_projected_rows.is_empty() {
-            column_types =
-                vec![crate::types::DataType::VarChar { max_len: 4000 }; projection.len()];
-        }
-
-        let columns: Vec<String> = projection
-            .iter()
-            .map(|i| {
-                i.alias
-                    .clone()
-                    .unwrap_or_else(|| super::projection::expr_label(&i.expr))
-            })
-            .collect();
 
         let column_nullabilities = vec![true; columns.len()];
         Ok(super::result::QueryResult {

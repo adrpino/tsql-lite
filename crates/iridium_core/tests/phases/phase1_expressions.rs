@@ -404,6 +404,29 @@ fn test_sqlserver_default_ci_as_and_trailing_space_string_equality() {
     assert_eq!(r2.rows[0][0], Value::Int(2));
 }
 
+#[test]
+fn test_datetime_day_arithmetic_and_window_with_wildcard() {
+    let mut e = Engine::new();
+    let r_sub = query(
+        &mut e,
+        "SELECT CAST('2026-04-10 12:00:00' AS DATETIME) - 3 AS earlier, CAST('2026-04-10 12:00:00' AS DATETIME) + 2 AS later",
+    );
+    assert_eq!(r_sub.rows[0][0].to_string_value(), "2026-04-07 12:00:00");
+    assert_eq!(r_sub.rows[0][1].to_string_value(), "2026-04-12 12:00:00");
+
+    exec(&mut e, "CREATE TABLE dbo.items (id INT, label VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.items VALUES (1, 'a'), (2, 'b')");
+    let r_win = query(
+        &mut e,
+        "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn, * FROM dbo.items ORDER BY id",
+    );
+    assert_eq!(r_win.columns, vec!["rn", "id", "label"]);
+    assert_eq!(r_win.rows.len(), 2);
+    assert_eq!(r_win.rows[0][0], Value::Int(1));
+    assert_eq!(r_win.rows[0][1], Value::Int(1));
+    assert_eq!(r_win.rows[0][2], Value::VarChar("a".to_string()));
+}
+
 // ─── String concatenation with + ──────────────────────────────────────
 
 #[test]

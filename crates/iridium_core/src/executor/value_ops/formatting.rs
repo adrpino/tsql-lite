@@ -190,6 +190,11 @@ fn parse_date_string(v: &str, dateformat: &str) -> Result<NaiveDate, ()> {
 
 pub(crate) fn parse_datetime_string(v: &str, dateformat: &str) -> Result<NaiveDateTime, ()> {
     let v = v.trim();
+    if v.is_empty() {
+        return NaiveDate::from_ymd_opt(1900, 1, 1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .ok_or(());
+    }
     NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.f"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M:%S"))

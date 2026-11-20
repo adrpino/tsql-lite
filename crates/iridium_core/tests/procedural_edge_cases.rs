@@ -1044,3 +1044,50 @@ fn query_for_xml_path_stuff_concatenation_and_type_value() {
         "<items><item><tag>a</tag></item><item><tag>b</tag></item><item><tag>c</tag></item></items>"
     );
 }
+
+#[test]
+fn datetime_empty_epoch_dateadd_clamping_week_part_and_error_procedure() {
+    let mut e = Engine::new();
+
+    // 1. Empty string as DATETIME -> 1900-01-01, while ISDATE('') stays 0
+    let r1 = query(
+        &mut e,
+        "SELECT CAST('' AS DATETIME) AS dt, DATEADD(day, 1, '') AS next_day, ISDATE('') AS is_d",
+    );
+    assert_eq!(r1.rows[0][0].to_string_value(), "1900-01-01 00:00:00");
+    assert_eq!(r1.rows[0][1].to_string_value(), "1900-01-02 00:00:00");
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(0));
+
+    // 2. DATEADD month/year end-of-month clamping + week/quarter dateparts
+    let r2 = query(
+        &mut e,
+        "SELECT CAST(DATEADD(MONTH, 2, '2025-12-31') AS DATE) AS feb_end,
+                CAST(DATEADD(YEAR, 1, '2024-02-29') AS DATE) AS leap_clamp,
+                CAST(DATEADD(WEEK, 2, '2026-01-01') AS DATE) AS plus_2w,
+                DATEDIFF(WEEK, '2026-01-01', '2026-01-15') AS diff_w,
+                DATEPART(WEEK, '2026-01-08') AS part_w",
+    );
+    assert_eq!(r2.rows[0][0].to_string_value(), "2026-02-28");
+    assert_eq!(r2.rows[0][1].to_string_value(), "2025-02-28");
+    assert_eq!(r2.rows[0][2].to_string_value(), "2026-01-15");
+    assert_eq!(r2.rows[0][3].to_integer_i64(), Some(2));
+    assert_eq!(r2.rows[0][4].to_integer_i64(), Some(2));
+
+    // 3. ERROR_PROCEDURE() and ERROR_LINE() inside CATCH
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_err_diag
+        AS
+        BEGIN
+            BEGIN TRY
+                RAISERROR('boom', 16, 1);
+            END TRY
+            BEGIN CATCH
+                SELECT ERROR_PROCEDURE() AS proc_name, ERROR_LINE() AS err_line;
+            END CATCH
+        END",
+    );
+    let r3 = query(&mut e, "EXEC dbo.p_err_diag");
+    assert_eq!(r3.rows[0][0].to_string_value(), "p_err_diag");
+    assert!(r3.rows[0][1].to_integer_i64().is_some());
+}

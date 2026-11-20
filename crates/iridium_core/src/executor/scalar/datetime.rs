@@ -84,8 +84,18 @@ pub(crate) fn eval_datediff(
 
     let result = match part.as_str() {
         "year" | "yy" | "yyyy" => ey - sy,
+        "quarter" | "qq" | "q" => (ey - sy) * 4 + ((em - 1) / 3 - (sm - 1) / 3),
         "month" | "mm" | "m" => (ey - sy) * 12 + (em - sm),
-        "day" | "dd" | "d" => (date_to_days(ey, em, ed) - date_to_days(sy, sm, sd)) as i32,
+        "week" | "wk" | "ww" => {
+            let start_days = date_to_days(sy, sm, sd);
+            let end_days = date_to_days(ey, em, ed);
+            let start_sunday = start_days - day_of_week_from_date(sy, sm, sd) as i64;
+            let end_sunday = end_days - day_of_week_from_date(ey, em, ed) as i64;
+            ((end_sunday - start_sunday) / 7) as i32
+        }
+        "day" | "dd" | "d" | "dayofyear" | "dy" | "y" | "weekday" | "dw" | "w" => {
+            (date_to_days(ey, em, ed) - date_to_days(sy, sm, sd)) as i32
+        }
         "hour" | "hh" => {
             let day_diff = date_to_days(ey, em, ed) - date_to_days(sy, sm, sd);
             (day_diff * 24 + (ehi - sh) as i64) as i32
@@ -100,6 +110,14 @@ pub(crate) fn eval_datediff(
                 + (ehi - sh) as i64 * 3600
                 + (emi - smi) as i64 * 60
                 + (es - ss) as i64) as i32
+        }
+        "millisecond" | "ms" => {
+            let day_diff = date_to_days(ey, em, ed) - date_to_days(sy, sm, sd);
+            ((day_diff * 86400
+                + (ehi - sh) as i64 * 3600
+                + (emi - smi) as i64 * 60
+                + (es - ss) as i64)
+                * 1000) as i32
         }
         _ => return Err(DbError::Execution(format!("unknown datepart '{}'", part))),
     };
@@ -140,10 +158,16 @@ pub(crate) fn eval_datepart(
             let dow = day_of_week_from_date(y, m, d);
             dow + 1
         }
-        "dayofyear" | "dy" => {
+        "dayofyear" | "dy" | "y" => {
             let days = date_to_days(y, m, d);
             let jan1 = date_to_days(y, 1, 1);
             ((days - jan1) + 1) as i32
+        }
+        "week" | "wk" | "ww" => {
+            let days = date_to_days(y, m, d);
+            let jan1 = date_to_days(y, 1, 1);
+            let jan1_dow = day_of_week_from_date(y, 1, 1) as i64;
+            (((days - jan1) + jan1_dow) / 7 + 1) as i32
         }
         "quarter" | "qq" | "q" => (m - 1) / 3 + 1,
         "millisecond" | "ms" => 0i32,
@@ -468,6 +492,9 @@ pub(crate) fn eval_isdate(
         return Ok(Value::Int(0));
     }
     let s = val.to_string_value();
+    if s.trim().is_empty() {
+        return Ok(Value::Int(0));
+    }
     let is_valid = parse_datetime_parts(&s, &ctx.options.dateformat).is_ok();
     Ok(Value::Int(if is_valid { 1 } else { 0 }))
 }

@@ -30,3 +30,20 @@ pub(crate) fn eval_error_state(ctx: &ExecutionContext) -> Result<Value, DbError>
         None => Value::Null,
     })
 }
+
+pub(crate) fn eval_error_procedure(ctx: &ExecutionContext) -> Result<Value, DbError> {
+    if ctx.frame.last_error.is_none() {
+        return Ok(Value::Null);
+    }
+    Ok(match ctx.frame.module_stack.last() {
+        Some(frame) => Value::VarChar(frame.name.clone()),
+        None => Value::Null,
+    })
+}
+
+pub(crate) fn eval_error_line(ctx: &ExecutionContext) -> Result<Value, DbError> {
+    Ok(match &ctx.frame.last_error {
+        Some(_) => Value::Int(1),
+        None => Value::Null,
+    })
+}

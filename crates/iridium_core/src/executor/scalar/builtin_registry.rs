@@ -135,6 +135,12 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("ERROR_STATE" => |_args, _row, ctx, _catalog, _storage, _clock| {
         system::diagnostics::eval_error_state(ctx)
     }),
+    builtin!("ERROR_PROCEDURE" => |_args, _row, ctx, _catalog, _storage, _clock| {
+        system::diagnostics::eval_error_procedure(ctx)
+    }),
+    builtin!("ERROR_LINE" => |_args, _row, ctx, _catalog, _storage, _clock| {
+        system::diagnostics::eval_error_line(ctx)
+    }),
     builtin!("DB_NAME" => |args, _row, ctx, _catalog, _storage, _clock| {
         tsql_metadata::eval_db_name(args, ctx)
     }),

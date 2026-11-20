@@ -26,14 +26,20 @@ impl FrameState {
         }
 
         let mut dropped_physical = Vec::new();
+        let readonly_in_scope = if self.readonly_table_vars.len() > 1 {
+            self.readonly_table_vars.pop().unwrap_or_default()
+        } else {
+            HashSet::new()
+        };
         if self.table_vars.len() > 1 {
             if let Some(scope) = self.table_vars.pop() {
                 for (logical, physical) in scope {
+                    let is_borrowed_tvp = readonly_in_scope.contains(&logical);
                     let owned_by_outer = self
                         .table_vars
                         .iter()
                         .any(|outer| outer.values().any(|p| p.eq_ignore_ascii_case(&physical)));
-                    if !owned_by_outer {
+                    if !is_borrowed_tvp && !owned_by_outer {
                         dropped_physical.push(physical.clone());
                     }
                     if session
@@ -57,9 +63,6 @@ impl FrameState {
                     }
                 }
             }
-        }
-        if self.readonly_table_vars.len() > 1 {
-            let _ = self.readonly_table_vars.pop();
         }
         if let Some(val) = session.identity_stack.pop() {
             if let Some(last) = session.identity_stack.last_mut() {

@@ -13,6 +13,7 @@ pub(crate) fn from_session<'a, C, S>(
     session_id: super::locks::SessionId,
     dirty_buffer: Option<Arc<Mutex<super::dirty_buffer::DirtyBuffer>>>,
 ) -> ExecutionContext<'a> {
+    let initial_table_vars = session.tables.var_map.clone();
     ExecutionContext {
         session: SessionStateRefs {
             variables: &mut session.variables,
@@ -52,7 +53,7 @@ pub(crate) fn from_session<'a, C, S>(
             trigger_depth: 0,
             module_stack: vec![],
             scope_vars: vec![vec![]],
-            table_vars: vec![HashMap::new()],
+            table_vars: vec![initial_table_vars],
             readonly_table_vars: vec![HashSet::new()],
             skip_instead_of: false,
             last_error: None,
@@ -98,6 +99,7 @@ pub(crate) fn legacy_new<'a>(
     app_name: Option<String>,
     host_name: Option<String>,
 ) -> ExecutionContext<'a> {
+    let initial_table_vars = session_table_var_map.clone();
     ExecutionContext {
         session: SessionStateRefs {
             variables,
@@ -137,7 +139,7 @@ pub(crate) fn legacy_new<'a>(
             trigger_depth: 0,
             module_stack: vec![],
             scope_vars: vec![vec![]],
-            table_vars: vec![HashMap::new()],
+            table_vars: vec![initial_table_vars],
             readonly_table_vars: vec![HashSet::new()],
             skip_instead_of: false,
             last_error: None,

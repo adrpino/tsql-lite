@@ -227,21 +227,53 @@ pub(super) fn bind_inline_tvf(
         )));
     }
 
+    enum TvfArgValue {
+        Scalar {
+            name: String,
+            ty: crate::types::DataType,
+            val: Value,
+        },
+        Tvp {
+            name: String,
+            physical: String,
+            is_readonly: bool,
+        },
+    }
+
     // Evaluate argument expressions in the caller's variable scope first.
     let mut evaluated_args = Vec::with_capacity(params.len());
     for (param, arg_raw) in params.iter().zip(arg_exprs.iter()) {
-        let RoutineParamType::Scalar(dt) = &param.param_type else {
-            return Err(DbError::Execution(format!(
-                "TVF '{}.{}' has unsupported non-scalar parameter '{}'",
-                schema, fname, param.name
-            )));
-        };
-        let expr = parse_expr_subquery_aware(arg_raw)?;
-        let val = eval_expr(&expr, &[], ctx, catalog, storage, clock)?;
-        let ty = type_mapping::data_type_spec_to_runtime(dt);
-        let coerced =
-            value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
-        evaluated_args.push((param.name.clone(), ty, coerced));
+        match &param.param_type {
+            RoutineParamType::Scalar(dt) => {
+                let expr = parse_expr_subquery_aware(arg_raw)?;
+                let val = eval_expr(&expr, &[], ctx, catalog, storage, clock)?;
+                let ty = type_mapping::data_type_spec_to_runtime(dt);
+                let coerced = value_ops::coerce_value_to_type_with_dateformat(
+                    val,
+                    &ty,
+                    &ctx.options.dateformat,
+                )?;
+                evaluated_args.push(TvfArgValue::Scalar {
+                    name: param.name.clone(),
+                    ty,
+                    val: coerced,
+                });
+            }
+            RoutineParamType::TableType(_) => {
+                let logical = arg_raw.trim().to_string();
+                let Some(physical) = ctx.resolve_table_name(&logical) else {
+                    return Err(DbError::Execution(format!(
+                        "TVF '{}.{}' TVP argument '{}' is not a table variable",
+                        schema, fname, logical
+                    )));
+                };
+                evaluated_args.push(TvfArgValue::Tvp {
+                    name: param.name.clone(),
+                    physical,
+                    is_readonly: param.is_readonly,
+                });
+            }
+        }
     }
 
     ctx.push_module(ModuleFrame {
@@ -259,9 +291,23 @@ pub(super) fn bind_inline_tvf(
     let scope_depth = ctx.frame.scope_vars.len();
     let result = (|| {
         ctx.enter_scope();
-        for (name, ty, val) in evaluated_args {
-            ctx.session.variables.insert(name.clone(), (ty, val));
-            ctx.register_declared_var(&name);
+        for arg_val in evaluated_args {
+            match arg_val {
+                TvfArgValue::Scalar { name, ty, val } => {
+                    ctx.session.variables.insert(name.clone(), (ty, val));
+                    ctx.register_declared_var(&name);
+                }
+                TvfArgValue::Tvp {
+                    name,
+                    physical,
+                    is_readonly,
+                } => {
+                    ctx.register_table_var(&name, &physical);
+                    if is_readonly {
+                        ctx.mark_table_var_readonly(&name);
+                    }
+                }
+            }
         }
 
         let res = match body {

@@ -682,3 +682,42 @@ fn procedural_temp_unaliased_join_return_after_select_and_declare_hoisting() {
     let r_hoist = query(&mut e, "EXEC dbo.p_hoisted @flag = 2");
     assert_eq!(r_hoist.rows[0][0], Value::VarChar("branch2".to_string()));
 }
+
+#[test]
+fn procedural_top_level_tvp_reusable_across_exec_and_tvf_tvp_param() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TYPE dbo.IntList AS TABLE (n INT)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_count_tvp @items dbo.IntList READONLY
+        AS
+        BEGIN
+            SELECT COUNT(*) AS cnt FROM @items;
+        END",
+    );
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.fn_double_tvp (@items dbo.IntList READONLY)
+        RETURNS TABLE
+        AS
+        RETURN (SELECT n * 2 AS doubled FROM @items)",
+    );
+
+    exec(&mut e, "DECLARE @vals dbo.IntList");
+    exec(&mut e, "INSERT INTO @vals VALUES (3), (7)");
+
+    // Call procedure twice with the same top-level TVP
+    let r1 = query(&mut e, "EXEC dbo.p_count_tvp @items = @vals");
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(2));
+    let r2 = query(&mut e, "EXEC dbo.p_count_tvp @items = @vals");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(2));
+
+    // Pass TVP to a table-valued function
+    let r3 = query(
+        &mut e,
+        "SELECT doubled FROM dbo.fn_double_tvp(@vals) ORDER BY doubled",
+    );
+    assert_eq!(r3.rows.len(), 2);
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(6));
+    assert_eq!(r3.rows[1][0].to_integer_i64(), Some(14));
+}

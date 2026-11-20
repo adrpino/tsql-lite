@@ -386,6 +386,24 @@ fn test_uniqueidentifier_and_datetime_string_comparisons() {
     assert_eq!(r_dt.rows[0][0], Value::Int(1));
 }
 
+#[test]
+fn test_sqlserver_default_ci_as_and_trailing_space_string_equality() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.codes (id INT, code VARCHAR(20))");
+    exec(
+        &mut e,
+        "INSERT INTO dbo.codes VALUES (1, 'ABC'), (2, 'xyz  ')",
+    );
+
+    let r1 = query(&mut e, "SELECT id FROM dbo.codes WHERE code = 'abc   '");
+    assert_eq!(r1.rows.len(), 1);
+    assert_eq!(r1.rows[0][0], Value::Int(1));
+
+    let r2 = query(&mut e, "SELECT id FROM dbo.codes WHERE code = 'XYZ'");
+    assert_eq!(r2.rows.len(), 1);
+    assert_eq!(r2.rows[0][0], Value::Int(2));
+}
+
 // ─── String concatenation with + ──────────────────────────────────────
 
 #[test]

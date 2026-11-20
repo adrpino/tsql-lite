@@ -97,7 +97,7 @@ pub fn compare_values(a: &Value, b: &Value) -> Ordering {
         }
 
         (ValueCategory::String, ValueCategory::String) => {
-            extract_string(&a).cmp(&extract_string(&b))
+            compare_sql_strings(&extract_string(&a), &extract_string(&b))
         }
 
         (ValueCategory::Integer, ValueCategory::String)
@@ -232,6 +232,29 @@ pub fn value_key(v: &Value) -> String {
         Value::DateTimeOffset(v) => format!("DATETIMEOFFSET:{}", v),
         Value::UniqueIdentifier(v) => format!("UNIQUEIDENTIFIER:{}", v),
         Value::SqlVariant(inner) => format!("SQL_VARIANT:{}", value_key(inner)),
+    }
+}
+
+fn compare_sql_strings(a: &str, b: &str) -> Ordering {
+    let a = a.trim_end_matches(' ');
+    let b = b.trim_end_matches(' ');
+    let mut ai = a.chars();
+    let mut bi = b.chars();
+    loop {
+        match (ai.next(), bi.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(ca), Some(cb)) => {
+                if ca == cb {
+                    continue;
+                }
+                let ord = ca.to_lowercase().cmp(cb.to_lowercase());
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
     }
 }
 

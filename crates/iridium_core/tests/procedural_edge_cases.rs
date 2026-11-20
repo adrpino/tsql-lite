@@ -325,3 +325,70 @@ fn procedural_insert_exec_sp_executesql_named_args_and_initial_rowcount() {
     let r_rc = query(&mut e, "SELECT @rc");
     assert_eq!(r_rc.rows[0][0], Value::Int(0));
 }
+
+#[test]
+fn procedural_transactions_commit_rollback_savepoint_and_isolation_level() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.ledger (id INT, note VARCHAR(50))");
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_tx_commit
+        AS
+        BEGIN
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            BEGIN TRANSACTION;
+            INSERT INTO dbo.ledger VALUES (1, 'committed');
+            COMMIT TRANSACTION;
+        END",
+    );
+    e.execute_batch(iridium_core::parse_batch("EXEC dbo.p_tx_commit").unwrap())
+        .unwrap();
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_tx_rollback
+        AS
+        BEGIN
+            DECLARE @log TABLE (step INT);
+            BEGIN TRY
+                BEGIN TRANSACTION;
+                INSERT INTO @log VALUES (100);
+                INSERT INTO dbo.ledger VALUES (2, 'rolled_back');
+                RAISERROR('fail inside tx', 16, 1);
+                COMMIT TRANSACTION;
+            END TRY
+            BEGIN CATCH
+                IF @@TRANCOUNT > 0
+                    ROLLBACK TRANSACTION;
+            END CATCH
+            SELECT COUNT(*) FROM @log;
+        END",
+    );
+    let log_cnt = query(&mut e, "EXEC dbo.p_tx_rollback");
+    assert_eq!(log_cnt.rows[0][0].to_integer_i64(), Some(1));
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_tx_savepoint
+        AS
+        BEGIN
+            BEGIN TRANSACTION;
+            INSERT INTO dbo.ledger VALUES (3, 'kept');
+            SAVE TRANSACTION sp1;
+            INSERT INTO dbo.ledger VALUES (4, 'reverted');
+            ROLLBACK TRANSACTION sp1;
+            COMMIT TRANSACTION;
+        END",
+    );
+    e.execute_batch(iridium_core::parse_batch("EXEC dbo.p_tx_savepoint").unwrap())
+        .unwrap();
+
+    let r = query(&mut e, "SELECT id, note FROM dbo.ledger ORDER BY id");
+    assert_eq!(r.rows.len(), 2);
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r.rows[1][0].to_integer_i64(), Some(3));
+
+    let tc = query(&mut e, "SELECT @@TRANCOUNT");
+    assert_eq!(tc.rows[0][0], Value::Int(0));
+}

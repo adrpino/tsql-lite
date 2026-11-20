@@ -57,6 +57,13 @@ pub struct SessionMetadata {
     pub(crate) datefirst: i32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ScriptTransactionState {
+    pub(crate) base_depth: u32,
+    pub(crate) root_snapshot: Option<HashMap<u32, Vec<crate::storage::StoredRow>>>,
+    pub(crate) savepoints: Vec<(String, HashMap<u32, Vec<crate::storage::StoredRow>>)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FrameState {
     pub(crate) depth: usize,
@@ -70,6 +77,7 @@ pub struct FrameState {
     pub(crate) scope_vars: Vec<Vec<String>>,
     pub(crate) skip_instead_of: bool,
     pub(crate) last_error: Option<DbError>,
+    pub(crate) script_tx: ScriptTransactionState,
 }
 
 #[derive(Debug, Clone)]
@@ -105,10 +113,10 @@ impl WindowContext {
     }
 }
 
-#[path = "context_impl.rs"]
-mod context_impl;
 #[path = "context_frame.rs"]
 mod context_frame;
+#[path = "context_impl.rs"]
+mod context_impl;
 #[path = "context_row.rs"]
 mod context_row;
 #[path = "session_state_impl.rs"]

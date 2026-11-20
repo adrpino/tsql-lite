@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::context::{ExecutionContext, FrameState, RowContext, SessionMetadata, SessionStateRefs, Variables};
+use super::context::{
+    ExecutionContext, FrameState, RowContext, SessionMetadata, SessionStateRefs, Variables,
+};
 use super::cte::CteStorage;
 
 pub(crate) fn from_session<'a, C, S>(
@@ -54,6 +56,7 @@ pub(crate) fn from_session<'a, C, S>(
             readonly_table_vars: vec![HashSet::new()],
             skip_instead_of: false,
             last_error: None,
+            script_tx: super::context::ScriptTransactionState::default(),
         },
         row: RowContext {
             outer_stack: vec![],
@@ -136,6 +139,7 @@ pub(crate) fn legacy_new<'a>(
             readonly_table_vars: vec![HashSet::new()],
             skip_instead_of: false,
             last_error: None,
+            script_tx: super::context::ScriptTransactionState::default(),
         },
         row: RowContext {
             outer_stack: vec![],

@@ -90,6 +90,41 @@ impl<'a> ScriptExecutor<'a> {
         );
     }
 
+    fn snapshot_transactional_tables(
+        &self,
+        ctx: &ExecutionContext<'_>,
+    ) -> Result<std::collections::HashMap<u32, Vec<crate::storage::StoredRow>>, DbError> {
+        let mut table_var_physicals: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for scope in &ctx.frame.table_vars {
+            for phys in scope.values() {
+                table_var_physicals.insert(phys.to_ascii_lowercase());
+            }
+        }
+        for phys in ctx.session.var_map.values() {
+            table_var_physicals.insert(phys.to_ascii_lowercase());
+        }
+        let mut snapshot = std::collections::HashMap::new();
+        for table in self.catalog.get_tables() {
+            if table_var_physicals.contains(&table.name.to_ascii_lowercase()) {
+                continue;
+            }
+            let rows = self.storage.get_rows(table.id)?;
+            snapshot.insert(table.id, rows);
+        }
+        Ok(snapshot)
+    }
+
+    fn restore_transactional_tables(
+        &mut self,
+        snapshot: &std::collections::HashMap<u32, Vec<crate::storage::StoredRow>>,
+    ) -> Result<(), DbError> {
+        for (&table_id, rows) in snapshot {
+            self.storage.replace_table(table_id, rows.clone())?;
+        }
+        Ok(())
+    }
+
     fn schema<'b>(&'b mut self, ctx: &'b ExecutionContext<'_>) -> SchemaExecutor<'b> {
         SchemaExecutor {
             catalog: self.catalog,
@@ -103,17 +138,81 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
     fn visit_transaction(
         &mut self,
         stmt: TransactionStatement,
-        _ctx: &mut ExecutionContext<'_>,
+        ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
         match stmt {
-            TransactionStatement::Begin(_)
-            | TransactionStatement::Commit(_)
-            | TransactionStatement::Rollback(_)
-            | TransactionStatement::Save(_) => Err(DbError::Execution(
-                "transaction control statements are only supported at top-level execution".into(),
-            )),
+            TransactionStatement::Begin(_) => {
+                if ctx.frame.script_tx.root_snapshot.is_none() {
+                    ctx.frame.script_tx.base_depth = ctx.frame.trancount;
+                    ctx.frame.script_tx.root_snapshot =
+                        Some(self.snapshot_transactional_tables(ctx)?);
+                    ctx.frame.script_tx.savepoints.clear();
+                }
+                ctx.frame.trancount += 1;
+                ctx.frame.xact_state = 1;
+                Ok(StmtOutcome::Ok(None))
+            }
+            TransactionStatement::Save(name) => {
+                if ctx.frame.trancount == 0 {
+                    return Err(DbError::Execution(
+                        "Cannot roll back or save transaction without an active transaction".into(),
+                    ));
+                }
+                let snap = self.snapshot_transactional_tables(ctx)?;
+                ctx.frame
+                    .script_tx
+                    .savepoints
+                    .push((name.to_ascii_lowercase(), snap));
+                Ok(StmtOutcome::Ok(None))
+            }
+            TransactionStatement::Commit(_) => {
+                if ctx.frame.trancount == 0 {
+                    return Err(DbError::Execution(
+                        "COMMIT without active transaction".into(),
+                    ));
+                }
+                ctx.frame.trancount -= 1;
+                if ctx.frame.trancount <= ctx.frame.script_tx.base_depth {
+                    ctx.frame.script_tx.root_snapshot = None;
+                    ctx.frame.script_tx.savepoints.clear();
+                    if ctx.frame.trancount == 0 {
+                        ctx.frame.xact_state = 0;
+                    }
+                }
+                Ok(StmtOutcome::Ok(None))
+            }
+            TransactionStatement::Rollback(savepoint) => {
+                if ctx.frame.trancount == 0 {
+                    return Err(DbError::Execution(
+                        "ROLLBACK without active transaction".into(),
+                    ));
+                }
+                if let Some(ref sp_name) = savepoint {
+                    let target = sp_name.to_ascii_lowercase();
+                    if let Some(pos) = ctx
+                        .frame
+                        .script_tx
+                        .savepoints
+                        .iter()
+                        .rposition(|(n, _)| *n == target)
+                    {
+                        let snap = ctx.frame.script_tx.savepoints[pos].1.clone();
+                        self.restore_transactional_tables(&snap)?;
+                        ctx.frame.script_tx.savepoints.truncate(pos + 1);
+                        return Ok(StmtOutcome::Ok(None));
+                    }
+                }
+                if let Some(root_snap) = ctx.frame.script_tx.root_snapshot.take() {
+                    self.restore_transactional_tables(&root_snap)?;
+                }
+                ctx.frame.script_tx.savepoints.clear();
+                ctx.frame.trancount = ctx.frame.script_tx.base_depth;
+                if ctx.frame.trancount == 0 {
+                    ctx.frame.xact_state = 0;
+                }
+                Ok(StmtOutcome::Ok(None))
+            }
         }
-        .map(StmtOutcome::Ok)
     }
 
     fn visit_cursor(
@@ -149,14 +248,22 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                 ctx.metadata.datefirst = ctx.options.datefirst;
                 Ok(StmtOutcome::Ok(None))
             }
-            SessionStatement::SetIdentityInsert(_) => Err(DbError::Execution(
-                "SET IDENTITY_INSERT is handled at engine level".into(),
-            )),
+            SessionStatement::SetIdentityInsert(stmt) => {
+                let table_upper = stmt.table.name.to_uppercase();
+                if stmt.on {
+                    ctx.options.identity_insert.clear();
+                    ctx.options.identity_insert.insert(table_upper);
+                } else {
+                    ctx.options.identity_insert.remove(&table_upper);
+                }
+                ctx.session.identity_insert = ctx.options.identity_insert.clone();
+                Ok(StmtOutcome::Ok(None))
+            }
             SessionStatement::UseDatabase(_) => {
                 Err(DbError::Execution("USE is handled at engine level".into()))
             }
-            SessionStatement::SetTransactionIsolationLevel(_)
-            | SessionStatement::SetContextInfo(_) => Err(DbError::Execution(
+            SessionStatement::SetTransactionIsolationLevel(_) => Ok(StmtOutcome::Ok(None)),
+            SessionStatement::SetContextInfo(_) => Err(DbError::Execution(
                 "session option statements are handled at engine level".into(),
             )),
         }

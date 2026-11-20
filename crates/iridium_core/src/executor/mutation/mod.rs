@@ -230,6 +230,7 @@ impl<'a> MutationExecutor<'a> {
     pub(crate) fn insert_output_into(
         &mut self,
         target: &crate::ast::ObjectName,
+        into_columns: &[String],
         output_result: &crate::executor::result::QueryResult,
         ctx: &mut super::context::ExecutionContext<'_>,
     ) -> Result<(), crate::error::DbError> {
@@ -247,11 +248,32 @@ impl<'a> MutationExecutor<'a> {
             .ok_or_else(|| DbError::table_not_found(&target_schema, &target_name))?
             .clone();
 
+        let target_col_indices: Option<Vec<usize>> = if into_columns.is_empty() {
+            None
+        } else {
+            let mut indices = Vec::with_capacity(into_columns.len());
+            for col_name in into_columns {
+                let idx = table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(col_name))
+                    .ok_or_else(|| DbError::column_not_found(col_name))?;
+                indices.push(idx);
+            }
+            Some(indices)
+        };
+
         for row_values in &output_result.rows {
             let mut final_values = vec![crate::types::Value::Null; table.columns.len()];
-            for (idx, val) in row_values.iter().enumerate() {
-                if idx < table.columns.len() {
-                    final_values[idx] = val.clone();
+            if let Some(ref col_indices) = target_col_indices {
+                for (val, &dest_idx) in row_values.iter().zip(col_indices.iter()) {
+                    final_values[dest_idx] = val.clone();
+                }
+            } else {
+                for (idx, val) in row_values.iter().enumerate() {
+                    if idx < table.columns.len() {
+                        final_values[idx] = val.clone();
+                    }
                 }
             }
 

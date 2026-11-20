@@ -187,6 +187,8 @@ pub(crate) fn merge_apply_update_action(
         merge_output_rows.push(crate::executor::mutation::MergeOutputRow {
             inserted_values: Some(temp_row.values.clone()),
             deleted_values: Some(old_values),
+            source_row: combined_ctx.clone(),
+            action: "UPDATE",
         });
     }
     inserted_rows_for_trigger.push(temp_row);
@@ -216,6 +218,8 @@ pub(crate) fn merge_apply_delete_action(
         merge_output_rows.push(crate::executor::mutation::MergeOutputRow {
             inserted_values: None,
             deleted_values: Some(target_row.values.clone()),
+            source_row: Vec::new(),
+            action: "DELETE",
         });
     }
     deleted_rows_for_trigger.push(target_row.clone());
@@ -287,6 +291,8 @@ pub(crate) fn merge_apply_insert_action(
         merge_output_rows.push(crate::executor::mutation::MergeOutputRow {
             inserted_values: Some(final_values),
             deleted_values: None,
+            source_row: source_ctx.clone(),
+            action: "INSERT",
         });
     }
     inserted_rows_for_trigger.push(temp_row.clone());

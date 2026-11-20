@@ -95,11 +95,13 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
 
     let mut output = None;
     let mut output_into = None;
+    let mut output_into_columns = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
         let _ = parser.next();
-        let (out_cols, out_into) = parse_output_clause(parser)?;
+        let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
         output = Some(out_cols);
         output_into = out_into;
+        output_into_columns = out_into_cols;
     }
 
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Default))) {
@@ -111,6 +113,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             source: InsertSource::DefaultValues,
             output,
             output_into,
+            output_into_columns,
         });
     }
 
@@ -161,6 +164,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
         source,
         output,
         output_into,
+        output_into_columns,
     })
 }
 
@@ -180,11 +184,13 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
 
     let mut output = None;
     let mut output_into = None;
+    let mut output_into_columns = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
         let _ = parser.next();
-        let (out_cols, out_into) = parse_output_clause(parser)?;
+        let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
         output = Some(out_cols);
         output_into = out_into;
+        output_into_columns = out_into_cols;
     }
 
     let mut from = None;
@@ -218,6 +224,7 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
         selection,
         output,
         output_into,
+        output_into_columns,
     })
 }
 
@@ -280,11 +287,13 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
 
     let mut output = None;
     let mut output_into = None;
+    let mut output_into_columns = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
         let _ = parser.next();
-        let (out_cols, out_into) = parse_output_clause(parser)?;
+        let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
         output = Some(out_cols);
         output_into = out_into;
+        output_into_columns = out_into_cols;
     }
 
     let mut selection = None;
@@ -303,69 +312,127 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         selection,
         output,
         output_into,
+        output_into_columns,
     })
 }
 
+#[allow(clippy::type_complexity)]
 pub fn parse_output_clause(
     parser: &mut Parser,
-) -> ParseResult<(Vec<OutputColumn>, Option<Vec<String>>)> {
+) -> ParseResult<(Vec<OutputColumn>, Option<Vec<String>>, Vec<String>)> {
     let columns = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
-        let source = match p.peek() {
-            Some(Token::Keyword(Keyword::Inserted)) => {
-                let _ = p.next();
-                OutputSource::Inserted
-            }
-            Some(Token::Keyword(Keyword::Deleted)) => {
-                let _ = p.next();
-                OutputSource::Deleted
-            }
+        let saved = p.save();
+        let fast_source = match p.peek() {
+            Some(Token::Keyword(Keyword::Inserted)) => Some(OutputSource::Inserted),
+            Some(Token::Keyword(Keyword::Deleted)) => Some(OutputSource::Deleted),
             Some(Token::Identifier(k)) if k.eq_ignore_ascii_case("INSERTED") => {
-                let _ = p.next();
-                OutputSource::Inserted
+                Some(OutputSource::Inserted)
             }
             Some(Token::Identifier(k)) if k.eq_ignore_ascii_case("DELETED") => {
+                Some(OutputSource::Deleted)
+            }
+            _ => None,
+        };
+        if let Some(source) = fast_source {
+            if matches!(p.peek_at(1), Some(Token::Dot)) {
                 let _ = p.next();
-                OutputSource::Deleted
+                let _ = p.next();
+                let col_parsed = if matches!(p.peek(), Some(Token::Star)) {
+                    let _ = p.next();
+                    Some(("*".to_string(), true))
+                } else {
+                    match p.next() {
+                        Some(Token::Identifier(id)) => Some((id.clone(), false)),
+                        Some(Token::Keyword(kw)) => Some((kw.as_ref().to_string(), false)),
+                        _ => None,
+                    }
+                };
+                if let Some((column, is_wildcard)) = col_parsed {
+                    let is_simple_boundary = p.is_empty()
+                        || matches!(
+                            p.peek(),
+                            Some(Token::Comma)
+                                | Some(Token::Semicolon)
+                                | Some(Token::Go)
+                                | Some(Token::Keyword(
+                                    Keyword::As
+                                        | Keyword::Into
+                                        | Keyword::Values
+                                        | Keyword::Select
+                                        | Keyword::Exec
+                                        | Keyword::Execute
+                                        | Keyword::From
+                                        | Keyword::Where
+                                        | Keyword::Default
+                                ))
+                        );
+                    if is_simple_boundary {
+                        let alias = if let Some(Token::Keyword(Keyword::As)) = p.peek() {
+                            let _ = p.next();
+                            match p.next() {
+                                Some(Token::Identifier(id)) => Some(id.clone()),
+                                Some(Token::Keyword(kw)) => Some(kw.as_ref().to_string()),
+                                _ => return p.backtrack(Expected::Description("alias")),
+                            }
+                        } else {
+                            None
+                        };
+                        return Ok(OutputColumn {
+                            source,
+                            column,
+                            expr: None,
+                            alias,
+                            is_wildcard,
+                        });
+                    }
+                }
             }
-            _ => return p.backtrack(Expected::Description("INSERTED or DELETED")),
-        };
-        if !matches!(p.peek(), Some(Token::Dot)) {
-            return p.backtrack(Expected::Description("."));
+            p.restore(saved);
         }
-        let _ = p.next();
-        let (column, is_wildcard) = if matches!(p.peek(), Some(Token::Star)) {
-            let _ = p.next();
-            ("*".to_string(), true)
-        } else {
-            match p.next() {
-                Some(Token::Identifier(id)) => (id.clone(), false),
-                Some(Token::Keyword(kw)) => (kw.as_ref().to_string(), false),
-                _ => return p.backtrack(Expected::Description("column name")),
-            }
-        };
+
+        // General OUTPUT expression ($action, SOURCE.col, GETUTCDATE(), literals, @vars, etc.)
+        let expr = crate::parser::parse::expressions::parse_expr(p)?;
         let alias = if let Some(Token::Keyword(Keyword::As)) = p.peek() {
             let _ = p.next();
             match p.next() {
                 Some(Token::Identifier(id)) => Some(id.clone()),
                 Some(Token::Keyword(kw)) => Some(kw.as_ref().to_string()),
+                Some(Token::String(s)) => Some(s.clone()),
                 _ => return p.backtrack(Expected::Description("alias")),
             }
         } else {
             None
         };
+        let col_label = alias.clone().unwrap_or_else(|| match &expr {
+            Expr::Identifier(id) => id.clone(),
+            Expr::QualifiedIdentifier(parts) => parts.last().cloned().unwrap_or_default(),
+            _ => String::new(),
+        });
         Ok(OutputColumn {
-            source,
-            column,
+            source: OutputSource::Expr,
+            column: col_label,
+            expr: Some(expr),
             alias,
-            is_wildcard,
+            is_wildcard: false,
         })
     })?;
     let mut output_into = None;
+    let mut output_into_columns = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Into))) {
         let _ = parser.next();
         output_into = Some(super::parse_multipart_name(parser)?);
+        if matches!(parser.peek(), Some(Token::LParen)) {
+            let _ = parser.next();
+            output_into_columns =
+                crate::parser::parse::expressions::parse_comma_list(parser, |p| match p.next() {
+                    Some(Token::Identifier(id)) => Ok(id.clone()),
+                    Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
+                    _ => p.backtrack(Expected::Description("column name")),
+                })?;
+            parser.expect_rparen()?;
+        }
     }
-    Ok((columns, output_into))
+    Ok((columns, output_into, output_into_columns))
 }
 
 pub fn parse_bulk_insert(parser: &mut Parser) -> ParseResult<BulkInsertStmt> {
@@ -581,8 +648,15 @@ pub fn parse_merge(parser: &mut Parser) -> ParseResult<MergeStmt> {
             parser.expect_keyword(Keyword::Matched)?;
             if matches!(parser.peek(), Some(Token::Keyword(Keyword::By))) {
                 let _ = parser.next();
-                parser.expect_keyword(Keyword::Source)?;
-                MergeWhen::NotMatchedBySource
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TARGET"))
+                    || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("TARGET"))
+                {
+                    let _ = parser.next();
+                    MergeWhen::NotMatched
+                } else {
+                    parser.expect_keyword(Keyword::Source)?;
+                    MergeWhen::NotMatchedBySource
+                }
             } else {
                 MergeWhen::NotMatched
             }
@@ -651,11 +725,13 @@ pub fn parse_merge(parser: &mut Parser) -> ParseResult<MergeStmt> {
 
     let mut output = None;
     let mut output_into = None;
+    let mut output_into_columns = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
         let _ = parser.next();
-        let (out_cols, out_into) = parse_output_clause(parser)?;
+        let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
         output = Some(out_cols);
         output_into = out_into;
+        output_into_columns = out_into_cols;
     }
 
     crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
@@ -667,5 +743,6 @@ pub fn parse_merge(parser: &mut Parser) -> ParseResult<MergeStmt> {
         when_clauses,
         output,
         output_into,
+        output_into_columns,
     })
 }

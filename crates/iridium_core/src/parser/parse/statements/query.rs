@@ -338,7 +338,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     hints: Vec::new(),
                 });
             }
-            let alias = parse_optional_alias(parser);
+            let mut alias = parse_optional_alias(parser);
             let mut hints = Vec::new();
             if let Some(Token::Keyword(Keyword::With)) = parser.peek() {
                 let saved = parser.save();
@@ -360,6 +360,9 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                 } else {
                     parser.restore(saved);
                 }
+            }
+            if alias.is_none() {
+                alias = parse_optional_alias(parser);
             }
             (TableFactor::Named(parse_object_name(name)), alias, hints)
         }

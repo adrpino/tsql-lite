@@ -68,10 +68,19 @@ impl<'a> MutationExecutor<'a> {
 
             if let Some(output) = stmt.output {
                 let inserted: Vec<&crate::storage::StoredRow> = rows.iter().collect();
-                let result = build_output_result(&output, &table, &inserted, &[])?;
+                let result = build_output_result(
+                    &output,
+                    &table,
+                    &inserted,
+                    &[],
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
                 if let Some(target) = stmt.output_into {
                     if let Some(result) = result.as_ref() {
-                        self.insert_output_into(&target, result, ctx)?;
+                        self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
                     } else {
                         return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                     }
@@ -105,10 +114,19 @@ impl<'a> MutationExecutor<'a> {
         if let Some(output) = stmt.output {
             let inserted: Vec<&crate::storage::StoredRow> =
                 inserted_rows_for_output.iter().collect();
-            let result = build_output_result(&output, &table, &inserted, &[])?;
+            let result = build_output_result(
+                &output,
+                &table,
+                &inserted,
+                &[],
+                ctx,
+                self.catalog,
+                self.storage,
+                self.clock,
+            )?;
             if let Some(target) = stmt.output_into {
                 if let Some(result) = result.as_ref() {
-                    self.insert_output_into(&target, result, ctx)?;
+                    self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
                 } else {
                     return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                 }

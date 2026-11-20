@@ -595,8 +595,14 @@ pub fn lower_insert(
         },
         output: s
             .output
-            .map(|cols| cols.into_iter().map(lower_output_column).collect()),
+            .map(|cols| {
+                cols.into_iter()
+                    .map(lower_output_column)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?,
         output_into: s.output_into.map(lower_object_name),
+        output_into_columns: s.output_into_columns,
     })
 }
 
@@ -654,8 +660,14 @@ pub fn lower_update(
         selection: s.selection.map(lower_expr).transpose()?,
         output: s
             .output
-            .map(|cols| cols.into_iter().map(lower_output_column).collect()),
+            .map(|cols| {
+                cols.into_iter()
+                    .map(lower_output_column)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?,
         output_into: s.output_into.map(lower_object_name),
+        output_into_columns: s.output_into_columns,
     })
 }
 
@@ -687,8 +699,14 @@ pub fn lower_delete(
         selection: s.selection.map(lower_expr).transpose()?,
         output: s
             .output
-            .map(|cols| cols.into_iter().map(lower_output_column).collect()),
+            .map(|cols| {
+                cols.into_iter()
+                    .map(lower_output_column)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?,
         output_into: s.output_into.map(lower_object_name),
+        output_into_columns: s.output_into_columns,
     })
 }
 
@@ -838,19 +856,29 @@ pub fn lower_merge(s: ast::MergeStmt) -> Result<executor_ast::statements::dml::M
             .collect::<Result<Vec<_>, _>>()?,
         output: s
             .output
-            .map(|cols| cols.into_iter().map(lower_output_column).collect()),
+            .map(|cols| {
+                cols.into_iter()
+                    .map(lower_output_column)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?,
         output_into: s.output_into.map(lower_object_name),
+        output_into_columns: s.output_into_columns,
     })
 }
 
-pub fn lower_output_column(c: ast::OutputColumn) -> executor_ast::statements::dml::OutputColumn {
-    executor_ast::statements::dml::OutputColumn {
+pub fn lower_output_column(
+    c: ast::OutputColumn,
+) -> Result<executor_ast::statements::dml::OutputColumn, DbError> {
+    Ok(executor_ast::statements::dml::OutputColumn {
         source: match c.source {
             ast::OutputSource::Inserted => executor_ast::statements::dml::OutputSource::Inserted,
             ast::OutputSource::Deleted => executor_ast::statements::dml::OutputSource::Deleted,
+            ast::OutputSource::Expr => executor_ast::statements::dml::OutputSource::Expr,
         },
         column: c.column,
+        expr: c.expr.map(lower_expr).transpose()?,
         alias: c.alias,
         is_wildcard: c.is_wildcard,
-    }
+    })
 }

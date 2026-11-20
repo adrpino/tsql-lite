@@ -860,3 +860,67 @@ fn ddl_dml_inline_index_trailing_comma_table_hints_option_and_nocheck() {
     assert_eq!(r.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r.rows[0][1], Value::VarChar("A".to_string()));
 }
+
+#[test]
+fn merge_not_matched_by_target_and_general_output_expressions() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.dst (id INT PRIMARY KEY, val VARCHAR(20))",
+    );
+    exec(&mut e, "INSERT INTO dbo.dst VALUES (1, 'old')");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.src (id INT, val VARCHAR(20), tag VARCHAR(20))",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO dbo.src VALUES (1, 'updated', 't1'), (2, 'added', 't2')",
+    );
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.audit_log (
+            seq INT IDENTITY(1,1) PRIMARY KEY,
+            act VARCHAR(10),
+            item_id INT,
+            src_tag VARCHAR(20),
+            label VARCHAR(20),
+            ts DATETIME
+        )",
+    );
+
+    exec(
+        &mut e,
+        "MERGE dbo.dst WITH (HOLDLOCK) AS TARGET
+        USING dbo.src AS SOURCE
+            ON TARGET.id = SOURCE.id
+        WHEN MATCHED THEN
+            UPDATE SET val = SOURCE.val
+        WHEN NOT MATCHED BY TARGET THEN
+            INSERT (id, val) VALUES (SOURCE.id, SOURCE.val)
+        OUTPUT $action, inserted.id, SOURCE.tag, 'MERGE', GETUTCDATE()
+        INTO dbo.audit_log (act, item_id, src_tag, label, ts);",
+    );
+
+    let r = query(
+        &mut e,
+        "SELECT act, item_id, src_tag, label FROM dbo.audit_log ORDER BY item_id",
+    );
+    assert_eq!(r.rows.len(), 2);
+    assert_eq!(r.rows[0][0], Value::VarChar("UPDATE".to_string()));
+    assert_eq!(r.rows[0][1].to_integer_i64(), Some(1));
+    assert_eq!(r.rows[0][2], Value::VarChar("t1".to_string()));
+    assert_eq!(r.rows[0][3], Value::VarChar("MERGE".to_string()));
+    assert_eq!(r.rows[1][0], Value::VarChar("INSERT".to_string()));
+    assert_eq!(r.rows[1][1].to_integer_i64(), Some(2));
+    assert_eq!(r.rows[1][2], Value::VarChar("t2".to_string()));
+
+    // DELETE ... OUTPUT DELETED.id, GETUTCDATE(), 'DEL'
+    let rd = query(
+        &mut e,
+        "DELETE FROM dbo.dst OUTPUT DELETED.id, 'DEL' AS kind WHERE id = 2",
+    );
+    assert_eq!(rd.rows.len(), 1);
+    assert_eq!(rd.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(rd.rows[0][1], Value::VarChar("DEL".to_string()));
+}

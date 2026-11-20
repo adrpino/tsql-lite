@@ -12,6 +12,8 @@ pub struct InsertStmt {
     pub source: InsertSource,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<ObjectName>,
+    #[serde(default)]
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,8 @@ pub struct UpdateStmt {
     pub from: Option<FromClause>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<ObjectName>,
+    #[serde(default)]
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +45,8 @@ pub struct DeleteStmt {
     pub from: Option<FromClause>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<ObjectName>,
+    #[serde(default)]
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +57,8 @@ pub struct MergeStmt {
     pub when_clauses: Vec<MergeWhenClause>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<ObjectName>,
+    #[serde(default)]
+    pub output_into_columns: Vec<String>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -104,6 +112,8 @@ pub struct Assignment {
 pub struct OutputColumn {
     pub source: OutputSource,
     pub column: String,
+    #[serde(default)]
+    pub expr: Option<Expr>,
     pub alias: Option<String>,
     #[serde(default)]
     pub is_wildcard: bool,
@@ -113,6 +123,7 @@ pub struct OutputColumn {
 pub enum OutputSource {
     Inserted,
     Deleted,
+    Expr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

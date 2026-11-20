@@ -218,6 +218,7 @@ pub struct MergeStmt {
     pub when_clauses: Vec<MergeWhenClause>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<Vec<String>>,
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -260,6 +261,7 @@ pub struct InsertStmt {
     pub source: InsertSource,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<Vec<String>>,
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -312,6 +314,7 @@ pub struct UpdateStmt {
     pub selection: Option<Expr>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<Vec<String>>,
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -329,6 +332,7 @@ pub struct DeleteStmt {
     pub selection: Option<Expr>,
     pub output: Option<Vec<OutputColumn>>,
     pub output_into: Option<Vec<String>>,
+    pub output_into_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -525,6 +529,7 @@ pub struct ExecArg {
 pub struct OutputColumn {
     pub source: OutputSource,
     pub column: String,
+    pub expr: Option<Expr>,
     pub alias: Option<String>,
     pub is_wildcard: bool,
 }
@@ -533,6 +538,7 @@ pub struct OutputColumn {
 pub enum OutputSource {
     Inserted,
     Deleted,
+    Expr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

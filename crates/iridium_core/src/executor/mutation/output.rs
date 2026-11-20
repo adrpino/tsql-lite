@@ -1,8 +1,12 @@
 use crate::ast::{OutputColumn, OutputSource};
-use crate::catalog::TableDef;
+use crate::catalog::{Catalog, ColumnDef, TableDef};
 use crate::error::DbError;
-use crate::storage::StoredRow;
-use crate::types::Value;
+use crate::executor::clock::Clock;
+use crate::executor::context::ExecutionContext;
+use crate::executor::evaluator::eval_expr;
+use crate::executor::model::{ContextTable, JoinedRow};
+use crate::storage::{Storage, StoredRow};
+use crate::types::{DataType, Value};
 
 use super::super::result::QueryResult;
 
@@ -10,12 +14,10 @@ fn build_output_columns(output: &[OutputColumn]) -> Vec<String> {
     output
         .iter()
         .map(|col| {
-            col.alias.clone().unwrap_or_else(|| {
-                let source_prefix = match col.source {
-                    OutputSource::Inserted => "INSERTED.",
-                    OutputSource::Deleted => "DELETED.",
-                };
-                format!("{}{}", source_prefix, col.column)
+            col.alias.clone().unwrap_or_else(|| match col.source {
+                OutputSource::Inserted => format!("INSERTED.{}", col.column),
+                OutputSource::Deleted => format!("DELETED.{}", col.column),
+                OutputSource::Expr => col.column.clone(),
             })
         })
         .collect()
@@ -32,6 +34,7 @@ fn expand_wildcards(output: &[OutputColumn], table: &TableDef) -> Vec<OutputColu
                 expanded.push(OutputColumn {
                     source: col.source,
                     column: tcol.name.clone(),
+                    expr: None,
                     alias: None,
                     is_wildcard: false,
                 });
@@ -41,6 +44,74 @@ fn expand_wildcards(output: &[OutputColumn], table: &TableDef) -> Vec<OutputColu
         }
     }
     expanded
+}
+
+fn build_output_eval_env(
+    table: &TableDef,
+    inserted: Option<&[Value]>,
+    deleted: Option<&[Value]>,
+    extra: &[ContextTable],
+    action: Option<&'static str>,
+) -> JoinedRow {
+    let mut env: JoinedRow = extra.to_vec();
+    if let Some(act) = action {
+        let action_table = TableDef {
+            id: 0,
+            schema_id: 0,
+            schema_name: String::new(),
+            name: "__output_meta".to_string(),
+            columns: vec![ColumnDef {
+                id: 1,
+                name: "$action".to_string(),
+                data_type: DataType::VarChar { max_len: 10 },
+                nullable: false,
+                default: None,
+                default_constraint_name: None,
+                identity: None,
+                primary_key: false,
+                unique: false,
+                check: None,
+                check_constraint_name: None,
+                computed_expr: None,
+                collation: None,
+                ansi_padding_on: true,
+                is_clustered: false,
+            }],
+            check_constraints: Vec::new(),
+            foreign_keys: Vec::new(),
+        };
+        env.push(ContextTable {
+            table: action_table,
+            alias: "__output_meta".to_string(),
+            row: Some(StoredRow {
+                values: vec![Value::VarChar(act.to_string())],
+                deleted: false,
+            }),
+            storage_index: None,
+            source_aliases: Vec::new(),
+        });
+    }
+    env.push(ContextTable {
+        table: table.clone(),
+        alias: "INSERTED".to_string(),
+        row: inserted.map(|vals| StoredRow {
+            values: vals.to_vec(),
+            deleted: false,
+        }),
+        storage_index: None,
+        source_aliases: Vec::new(),
+    });
+    env.push(ContextTable {
+        table: table.clone(),
+        alias: "DELETED".to_string(),
+        row: deleted.map(|vals| StoredRow {
+            values: vals.to_vec(),
+            deleted: false,
+        }),
+        storage_index: None,
+        source_aliases: Vec::new(),
+    });
+    env
 }
 
 fn extract_output_value(
@@ -64,11 +135,16 @@ fn resolve_col_idx(col_name: &str, table: &TableDef) -> Result<usize, DbError> {
         .ok_or_else(|| DbError::column_not_found(col_name))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_output_result(
     output: &[OutputColumn],
     table: &TableDef,
     inserted_rows: &[&StoredRow],
     deleted_rows: &[&StoredRow],
+    ctx: &mut ExecutionContext<'_>,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
 ) -> Result<Option<QueryResult>, DbError> {
     if output.is_empty() {
         return Ok(None);
@@ -76,6 +152,7 @@ pub fn build_output_result(
 
     let expanded = expand_wildcards(output, table);
     let columns = build_output_columns(&expanded);
+    let has_expr = expanded.iter().any(|c| c.source == OutputSource::Expr);
     let mut rows = Vec::new();
 
     if inserted_rows.is_empty() && deleted_rows.is_empty() {
@@ -92,11 +169,26 @@ pub fn build_output_result(
 
     if !inserted_rows.is_empty() && !deleted_rows.is_empty() {
         for (inserted, deleted) in inserted_rows.iter().zip(deleted_rows.iter()) {
+            let env = if has_expr {
+                build_output_eval_env(
+                    table,
+                    Some(&inserted.values),
+                    Some(&deleted.values),
+                    &[],
+                    Some("UPDATE"),
+                )
+            } else {
+                Vec::new()
+            };
             let mut row = Vec::new();
             for col in &expanded {
                 let val = match col.source {
                     OutputSource::Inserted => extract_output_value(col, table, inserted)?,
                     OutputSource::Deleted => extract_output_value(col, table, deleted)?,
+                    OutputSource::Expr => match &col.expr {
+                        Some(expr) => eval_expr(expr, &env, ctx, catalog, storage, clock)?,
+                        None => Value::Null,
+                    },
                 };
                 row.push(val);
             }
@@ -115,11 +207,20 @@ pub fn build_output_result(
 
     if !inserted_rows.is_empty() {
         for inserted in inserted_rows {
+            let env = if has_expr {
+                build_output_eval_env(table, Some(&inserted.values), None, &[], Some("INSERT"))
+            } else {
+                Vec::new()
+            };
             let mut row = Vec::new();
             for col in &expanded {
                 let val = match col.source {
                     OutputSource::Inserted => extract_output_value(col, table, inserted)?,
                     OutputSource::Deleted => Value::Null,
+                    OutputSource::Expr => match &col.expr {
+                        Some(expr) => eval_expr(expr, &env, ctx, catalog, storage, clock)?,
+                        None => Value::Null,
+                    },
                 };
                 row.push(val);
             }
@@ -137,11 +238,20 @@ pub fn build_output_result(
     }
 
     for deleted in deleted_rows {
+        let env = if has_expr {
+            build_output_eval_env(table, None, Some(&deleted.values), &[], Some("DELETE"))
+        } else {
+            Vec::new()
+        };
         let mut row = Vec::new();
         for col in &expanded {
             let val = match col.source {
                 OutputSource::Inserted => Value::Null,
                 OutputSource::Deleted => extract_output_value(col, table, deleted)?,
+                OutputSource::Expr => match &col.expr {
+                    Some(expr) => eval_expr(expr, &env, ctx, catalog, storage, clock)?,
+                    None => Value::Null,
+                },
             };
             row.push(val);
         }
@@ -162,12 +272,19 @@ pub fn build_output_result(
 pub struct MergeOutputRow {
     pub inserted_values: Option<Vec<Value>>,
     pub deleted_values: Option<Vec<Value>>,
+    pub source_row: JoinedRow,
+    pub action: &'static str,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_output_result_merge(
     output: &[OutputColumn],
     table: &TableDef,
     merge_rows: &[MergeOutputRow],
+    ctx: &mut ExecutionContext<'_>,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
 ) -> Result<Option<QueryResult>, DbError> {
     if output.is_empty() {
         return Ok(None);
@@ -175,9 +292,21 @@ pub fn build_output_result_merge(
 
     let expanded = expand_wildcards(output, table);
     let columns = build_output_columns(&expanded);
+    let has_expr = expanded.iter().any(|c| c.source == OutputSource::Expr);
     let mut rows = Vec::new();
 
     for merge_row in merge_rows {
+        let env = if has_expr {
+            build_output_eval_env(
+                table,
+                merge_row.inserted_values.as_deref(),
+                merge_row.deleted_values.as_deref(),
+                &merge_row.source_row,
+                Some(merge_row.action),
+            )
+        } else {
+            Vec::new()
+        };
         let mut row = Vec::new();
         for col in &expanded {
             let val = match col.source {
@@ -187,6 +316,10 @@ pub fn build_output_result_merge(
                 },
                 OutputSource::Deleted => match &merge_row.deleted_values {
                     Some(deleted) => deleted[resolve_col_idx(&col.column, table)?].clone(),
+                    None => Value::Null,
+                },
+                OutputSource::Expr => match &col.expr {
+                    Some(expr) => eval_expr(expr, &env, ctx, catalog, storage, clock)?,
                     None => Value::Null,
                 },
             };

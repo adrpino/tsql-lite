@@ -91,10 +91,19 @@ impl<'a> MutationExecutor<'a> {
 
             if let Some(output) = stmt.output {
                 let output_rows: Vec<&crate::storage::StoredRow> = deleted_rows.iter().collect();
-                let result = build_output_result(&output, &table, &[], &output_rows)?;
+                let result = build_output_result(
+                    &output,
+                    &table,
+                    &[],
+                    &output_rows,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
                 if let Some(target) = stmt.output_into {
                     if let Some(result) = result.as_ref() {
-                        self.insert_output_into(&target, result, ctx)?;
+                        self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
                     } else {
                         return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                     }
@@ -173,10 +182,19 @@ impl<'a> MutationExecutor<'a> {
         if let Some(output) = stmt.output {
             let output_rows: Vec<&crate::storage::StoredRow> =
                 deleted_rows_for_output.iter().collect();
-            let result = build_output_result(&output, &table, &[], &output_rows)?;
+            let result = build_output_result(
+                &output,
+                &table,
+                &[],
+                &output_rows,
+                ctx,
+                self.catalog,
+                self.storage,
+                self.clock,
+            )?;
             if let Some(target) = stmt.output_into {
                 if let Some(result) = result.as_ref() {
-                    self.insert_output_into(&target, result, ctx)?;
+                    self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
                 } else {
                     return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                 }

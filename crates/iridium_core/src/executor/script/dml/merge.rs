@@ -172,10 +172,14 @@ impl<'a> ScriptExecutor<'a> {
                 output,
                 &target_table,
                 &merge_output_rows,
+                ctx,
+                mut_exec.catalog,
+                mut_exec.storage,
+                mut_exec.clock,
             )?;
             if let Some(ref target) = stmt.output_into {
                 if let Some(result) = result.as_ref() {
-                    mut_exec.insert_output_into(target, result, ctx)?;
+                    mut_exec.insert_output_into(target, &stmt.output_into_columns, result, ctx)?;
                 } else {
                     return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                 }

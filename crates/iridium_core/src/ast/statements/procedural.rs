@@ -93,6 +93,12 @@ pub enum FunctionBody {
     ScalarReturn(Expr),
     Scalar(Vec<crate::ast::Statement>),
     InlineTable(SelectStmt),
+    MultiStatementTable {
+        table_var: String,
+        columns: Vec<crate::ast::ColumnSpec>,
+        constraints: Vec<crate::ast::TableConstraintSpec>,
+        body: Vec<crate::ast::Statement>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

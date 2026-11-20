@@ -651,6 +651,15 @@ pub(crate) fn format_statement(stmt: &Statement) -> String {
                     out.push_str(" AS RETURN ");
                     out.push_str(&format_select_stmt(select));
                 }
+                FunctionBody::MultiStatementTable {
+                    table_var, body, ..
+                } => {
+                    out.push_str(" RETURNS ");
+                    out.push_str(table_var);
+                    out.push_str(" TABLE AS BEGIN ");
+                    out.push_str(&format_statement_list(body));
+                    out.push_str(" END");
+                }
             }
             out
         }
@@ -764,6 +773,15 @@ pub fn format_routine_definition(routine: &crate::catalog::RoutineDef) -> String
                 FunctionBody::InlineTable(select) => {
                     s.push_str(" AS RETURN ");
                     s.push_str(&format_select_stmt(select));
+                }
+                FunctionBody::MultiStatementTable {
+                    table_var, body, ..
+                } => {
+                    s.push_str(" RETURNS ");
+                    s.push_str(table_var);
+                    s.push_str(" TABLE AS BEGIN ");
+                    s.push_str(&format_statement_list(body));
+                    s.push_str(" END");
                 }
             }
             s

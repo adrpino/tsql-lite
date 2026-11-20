@@ -289,6 +289,26 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                                 lower_select(sel)?,
                             )
                         }
+                        ast::FunctionBody::MultiStatementTable {
+                            table_var,
+                            columns,
+                            constraints,
+                            body,
+                        } => executor_ast::statements::procedural::FunctionBody::MultiStatementTable {
+                            table_var,
+                            columns: columns
+                                .into_iter()
+                                .map(lower_column_def)
+                                .collect::<Result<Vec<_>, _>>()?,
+                            constraints: constraints
+                                .into_iter()
+                                .map(lower_table_constraint)
+                                .collect::<Result<Vec<_>, _>>()?,
+                            body: body
+                                .into_iter()
+                                .map(lower_statement)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        },
                     },
                 },
             ),

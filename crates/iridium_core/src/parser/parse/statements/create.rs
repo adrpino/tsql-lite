@@ -147,6 +147,63 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
     Ok(CreateStmt::Procedure { name, params, body })
 }
 
+fn parse_function_with_options(parser: &mut Parser) -> ParseResult<()> {
+    if !parser.at_keyword(Keyword::With) {
+        return Ok(());
+    }
+    let _ = parser.next();
+    let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.peek() {
+        Some(Token::Keyword(Keyword::Execute)) | Some(Token::Keyword(Keyword::Exec)) => {
+            let _ = p.next();
+            p.expect_keyword(Keyword::As)?;
+            match p.next() {
+                Some(Token::String(_))
+                | Some(Token::NString(_))
+                | Some(Token::Identifier(_))
+                | Some(Token::Keyword(_)) => Ok(()),
+                _ => p.backtrack(Expected::Description("EXECUTE AS principal")),
+            }
+        }
+        Some(Token::Keyword(Keyword::Returns)) => {
+            // RETURNS NULL ON NULL INPUT
+            let _ = p.next();
+            for _ in 0..4 {
+                let _ = p.next();
+            }
+            Ok(())
+        }
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CALLED") => {
+            // CALLED ON NULL INPUT
+            let _ = p.next();
+            for _ in 0..3 {
+                let _ = p.next();
+            }
+            Ok(())
+        }
+        Some(Token::Identifier(id))
+            if id.eq_ignore_ascii_case("SCHEMABINDING")
+                || id.eq_ignore_ascii_case("ENCRYPTION")
+                || id.eq_ignore_ascii_case("INLINE") =>
+        {
+            let _ = p.next();
+            if matches!(p.peek(), Some(Token::Operator(op)) if op == "=") {
+                let _ = p.next();
+                let _ = p.next();
+            }
+            Ok(())
+        }
+        Some(Token::Keyword(k))
+            if k.as_ref().eq_ignore_ascii_case("SCHEMABINDING")
+                || k.as_ref().eq_ignore_ascii_case("ENCRYPTION") =>
+        {
+            let _ = p.next();
+            Ok(())
+        }
+        _ => p.backtrack(Expected::Description("function option")),
+    })?;
+    Ok(())
+}
+
 pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
     let name = super::parse_multipart_name(parser)?;
     let mut params = Vec::new();
@@ -164,16 +221,41 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
     parser.expect_keyword(Keyword::Returns)?;
     let mut returns = None;
     let mut is_table_return = false;
+    let mut multi_stmt_table: Option<(String, Vec<ColumnDef>, Vec<TableConstraint>)> = None;
     if parser.at_keyword(Keyword::Table) {
         let _ = parser.next();
         is_table_return = true;
+    } else if let Some(Token::Variable(var_name)) = parser.peek().cloned() {
+        if matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::Table))) {
+            let _ = parser.next();
+            let _ = parser.next();
+            parser.expect_lparen()?;
+            let (cols, cons) = super::ddl::parse_table_body(parser)?;
+            parser.expect_rparen()?;
+            multi_stmt_table = Some((var_name, cols, cons));
+        } else {
+            returns = Some(crate::parser::parse::expressions::parse_data_type(parser)?);
+        }
     } else {
         returns = Some(crate::parser::parse::expressions::parse_data_type(parser)?);
     }
 
+    parse_function_with_options(parser)?;
     parser.expect_keyword(Keyword::As)?;
 
-    let body = if parser.at_keyword(Keyword::Begin) {
+    let body = if let Some((table_var, columns, constraints)) = multi_stmt_table {
+        parser.expect_keyword(Keyword::Begin)?;
+        let stmts = match super::other::parse_begin_end(parser)? {
+            Statement::Procedural(ProceduralStatement::BeginEnd(stmts)) => stmts,
+            _ => unreachable!(),
+        };
+        FunctionBody::MultiStatementTable {
+            table_var,
+            columns,
+            constraints,
+            body: stmts,
+        }
+    } else if parser.at_keyword(Keyword::Begin) {
         let _ = parser.next();
         match super::other::parse_begin_end(parser)? {
             Statement::Procedural(ProceduralStatement::BeginEnd(stmts)) => {
@@ -183,9 +265,15 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
         }
     } else if is_table_return {
         parser.expect_keyword(Keyword::Return)?;
-        parser.expect_lparen()?;
+        let mut paren_depth = 0usize;
+        while matches!(parser.peek(), Some(Token::LParen)) {
+            let _ = parser.next();
+            paren_depth += 1;
+        }
         let query = crate::parser::parse::statements::query::parse_select(parser)?;
-        parser.expect_rparen()?;
+        for _ in 0..paren_depth {
+            parser.expect_rparen()?;
+        }
         FunctionBody::Table(query)
     } else if parser.at_keyword(Keyword::Return) {
         let _ = parser.next();

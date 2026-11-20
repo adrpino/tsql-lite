@@ -209,9 +209,13 @@ pub(super) fn bind_inline_tvf(
     let RoutineKind::Function { body, .. } = kind else {
         return Ok(None);
     };
-    let crate::ast::FunctionBody::InlineTable(query) = body else {
+    if !matches!(
+        body,
+        crate::ast::FunctionBody::InlineTable(_)
+            | crate::ast::FunctionBody::MultiStatementTable { .. }
+    ) {
         return Ok(None);
-    };
+    }
     let arg_exprs = split_csv_top_level_local(args_raw);
     if arg_exprs.len() != params.len() {
         return Err(DbError::Execution(format!(
@@ -223,40 +227,108 @@ pub(super) fn bind_inline_tvf(
         )));
     }
 
+    // Evaluate argument expressions in the caller's variable scope first.
+    let mut evaluated_args = Vec::with_capacity(params.len());
+    for (param, arg_raw) in params.iter().zip(arg_exprs.iter()) {
+        let RoutineParamType::Scalar(dt) = &param.param_type else {
+            return Err(DbError::Execution(format!(
+                "TVF '{}.{}' has unsupported non-scalar parameter '{}'",
+                schema, fname, param.name
+            )));
+        };
+        let expr = parse_expr_subquery_aware(arg_raw)?;
+        let val = eval_expr(&expr, &[], ctx, catalog, storage, clock)?;
+        let ty = type_mapping::data_type_spec_to_runtime(dt);
+        let coerced =
+            value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
+        evaluated_args.push((param.name.clone(), ty, coerced));
+    }
+
     ctx.push_module(ModuleFrame {
         object_id,
         schema: routine_schema.clone(),
         name: routine_name.clone(),
         kind: ModuleKind::Function,
     });
+    let saved_caller_vars = std::mem::take(ctx.session.variables);
+    for (k, v) in &saved_caller_vars {
+        if k.starts_with("@@") {
+            ctx.session.variables.insert(k.clone(), v.clone());
+        }
+    }
     let scope_depth = ctx.frame.scope_vars.len();
     let result = (|| {
         ctx.enter_scope();
-        for (param, arg_raw) in params.iter().zip(arg_exprs.iter()) {
-            let RoutineParamType::Scalar(dt) = &param.param_type else {
-                return Err(DbError::Execution(format!(
-                    "TVF '{}.{}' has unsupported non-scalar parameter '{}'",
-                    schema, fname, param.name
-                )));
-            };
-            let expr = parse_expr_subquery_aware(arg_raw)?;
-            let val = eval_expr(&expr, &[], ctx, catalog, storage, clock)?;
-            let ty = type_mapping::data_type_spec_to_runtime(dt);
-            let coerced =
-                value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
-            ctx.session
-                .variables
-                .insert(param.name.clone(), (ty, coerced));
-            ctx.register_declared_var(&param.name);
+        for (name, ty, val) in evaluated_args {
+            ctx.session.variables.insert(name.clone(), (ty, val));
+            ctx.register_declared_var(&name);
         }
 
-        let result = executor.execute_select(query.into(), ctx)?;
+        let res = match body {
+            crate::ast::FunctionBody::InlineTable(query) => {
+                executor.execute_select(query.into(), ctx)?
+            }
+            crate::ast::FunctionBody::MultiStatementTable {
+                table_var,
+                columns,
+                constraints,
+                body: stmts,
+            } => {
+                let mut scratch_catalog = catalog.clone_boxed();
+                let mut scratch_storage = storage.clone_boxed();
+                let mut script_exec = crate::executor::script::ScriptExecutor {
+                    catalog: scratch_catalog.as_mut(),
+                    storage: scratch_storage.as_mut(),
+                    clock,
+                };
+                let decl_stmt = crate::ast::Statement::Procedural(
+                    crate::ast::ProceduralStatement::DeclareTableVar(
+                        crate::ast::DeclareTableVarStmt {
+                            name: table_var.clone(),
+                            columns,
+                            table_constraints: constraints,
+                        },
+                    ),
+                );
+                let _ = script_exec.execute(decl_stmt, ctx)?;
+                let _ = script_exec.execute_batch(&stmts, ctx)?;
+
+                let physical = ctx.resolve_table_name(&table_var).ok_or_else(|| {
+                    DbError::Execution(format!(
+                        "multi-statement TVF return table '{}' not found",
+                        table_var
+                    ))
+                })?;
+                let tbl = scratch_catalog
+                    .find_table("dbo", &physical)
+                    .ok_or_else(|| DbError::table_not_found("dbo", &physical))?;
+                let stored_rows = scratch_storage.get_rows(tbl.id)?;
+                let rows = stored_rows
+                    .into_iter()
+                    .filter(|r| !r.deleted)
+                    .map(|r| r.values)
+                    .collect();
+                let col_names = tbl.columns.iter().map(|c| c.name.clone()).collect();
+                let col_types = tbl.columns.iter().map(|c| c.data_type.clone()).collect();
+                let col_nulls = tbl.columns.iter().map(|c| c.nullable).collect();
+                crate::executor::result::QueryResult {
+                    columns: col_names,
+                    column_types: col_types,
+                    column_nullabilities: col_nulls,
+                    rows,
+                    is_procedure: false,
+                    return_status: None,
+                }
+            }
+            _ => unreachable!(),
+        };
         ctx.leave_scope();
-        Ok(result)
+        Ok(res)
     })();
     while ctx.frame.scope_vars.len() > scope_depth {
         ctx.leave_scope();
     }
+    *ctx.session.variables = saved_caller_vars;
     ctx.pop_module();
     let result = result?;
 

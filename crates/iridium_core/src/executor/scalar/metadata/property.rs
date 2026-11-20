@@ -151,7 +151,8 @@ fn eval_objectproperty_common(
             "ISTABLEFUNCTION" => Value::Int(matches!(
                 &routine.kind,
                 RoutineKind::Function {
-                    body: crate::ast::FunctionBody::InlineTable(_),
+                    body: crate::ast::FunctionBody::InlineTable(_)
+                        | crate::ast::FunctionBody::MultiStatementTable { .. },
                     ..
                 }
             ) as i32),

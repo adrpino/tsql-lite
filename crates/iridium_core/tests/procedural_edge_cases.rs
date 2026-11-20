@@ -501,3 +501,37 @@ fn procedural_create_and_drop_index_on_temp_table() {
     let r = query(&mut e, "SELECT COUNT(*) FROM #stage");
     assert_eq!(r.rows[0][0].to_integer_i64(), Some(2));
 }
+
+#[test]
+fn procedural_multi_statement_tvf_with_identity_and_schemabinding() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.split_ints (@list NVARCHAR(4000))
+        RETURNS @tbl TABLE (pos INT IDENTITY(1, 1) NOT NULL, num INT NOT NULL)
+        WITH SCHEMABINDING
+        AS
+        BEGIN
+            DECLARE @pos INT;
+            DECLARE @rest NVARCHAR(4000) = LTRIM(RTRIM(@list));
+            SET @pos = CHARINDEX(',', @rest);
+            WHILE @pos > 0
+            BEGIN
+                INSERT @tbl (num) VALUES (CONVERT(INT, SUBSTRING(@rest, 1, @pos - 1)));
+                SET @rest = LTRIM(SUBSTRING(@rest, @pos + 1, LEN(@rest)));
+                SET @pos = CHARINDEX(',', @rest);
+            END
+            IF @rest <> ''
+                INSERT @tbl (num) VALUES (CONVERT(INT, @rest));
+            RETURN;
+        END",
+    );
+    let r = query(
+        &mut e,
+        "SELECT pos, num FROM dbo.split_ints('10, 20, 30') ORDER BY pos",
+    );
+    assert_eq!(r.rows.len(), 3);
+    assert_eq!(r.rows[0], vec![Value::Int(1), Value::Int(10)]);
+    assert_eq!(r.rows[1], vec![Value::Int(2), Value::Int(20)]);
+    assert_eq!(r.rows[2], vec![Value::Int(3), Value::Int(30)]);
+}

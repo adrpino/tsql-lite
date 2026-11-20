@@ -384,6 +384,12 @@ pub enum FunctionBody {
     ScalarReturn(Expr),
     Block(Vec<Statement>),
     Table(SelectStmt),
+    MultiStatementTable {
+        table_var: String,
+        columns: Vec<ColumnDef>,
+        constraints: Vec<TableConstraint>,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

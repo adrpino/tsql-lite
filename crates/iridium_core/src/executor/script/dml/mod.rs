@@ -102,11 +102,7 @@ impl<'a> ScriptExecutor<'a> {
         if let Some(mut target) = into_table {
             if target.name.starts_with('#') {
                 let logical = target.name.clone();
-                let physical = format!("__temp_{}", logical.trim_start_matches('#'));
-                ctx.session.temp_map.insert(
-                    crate::executor::string_norm::normalize_identifier(&logical),
-                    physical.clone(),
-                );
+                let physical = ctx.register_temp_table(&logical);
                 target.schema = Some("dbo".to_string());
                 target.name = physical;
             }

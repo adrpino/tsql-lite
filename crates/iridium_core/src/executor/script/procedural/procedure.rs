@@ -400,7 +400,11 @@ impl<'a> ScriptExecutor<'a> {
         while ctx.frame.scope_vars.len() > scope_depth {
             ctx.leave_scope();
         }
-        ctx.pop_module();
+        for physical in ctx.pop_module_collect_temp_tables() {
+            if let Ok(tid) = self.catalog.drop_table("dbo", &physical) {
+                let _ = self.storage.remove_table(tid);
+            }
+        }
         result
     }
 

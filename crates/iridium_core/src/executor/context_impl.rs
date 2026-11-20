@@ -138,10 +138,17 @@ impl<'a> ExecutionContext<'a> {
 
     pub fn push_module(&mut self, frame: crate::executor::context::ModuleFrame) {
         self.frame.module_stack.push(frame);
+        self.frame.scoped_temp_tables.push(vec![]);
     }
 
     pub fn pop_module(&mut self) {
         self.frame.module_stack.pop();
+        let _ = self.frame.pop_module_temp_tables(&mut self.session);
+    }
+
+    pub fn pop_module_collect_temp_tables(&mut self) -> Vec<String> {
+        self.frame.module_stack.pop();
+        self.frame.pop_module_temp_tables(&mut self.session)
     }
 
     pub fn current_group(&self) -> &Option<Group> {
@@ -258,6 +265,11 @@ impl<'a> ExecutionContext<'a> {
 
     pub fn register_declared_var(&mut self, name: &str) {
         self.frame.register_declared_var(name);
+    }
+
+    pub fn register_temp_table(&mut self, logical_name: &str) -> String {
+        self.frame
+            .register_temp_table(&mut self.session, logical_name)
     }
 
     pub fn register_table_var(&mut self, logical_name: &str, physical_name: &str) {

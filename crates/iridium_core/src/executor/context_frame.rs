@@ -74,9 +74,57 @@ impl FrameState {
         dropped_physical
     }
 
+    pub fn pop_module_temp_tables<'a>(
+        &mut self,
+        session: &mut SessionStateRefs<'a>,
+    ) -> Vec<String> {
+        let mut dropped = Vec::new();
+        if self.scoped_temp_tables.len() > 1 {
+            if let Some(temps) = self.scoped_temp_tables.pop() {
+                for (norm_logical, prev_physical, physical) in temps.into_iter().rev() {
+                    if session
+                        .temp_map
+                        .get(&norm_logical)
+                        .is_some_and(|cur| cur.eq_ignore_ascii_case(&physical))
+                    {
+                        if let Some(prev) = prev_physical {
+                            session.temp_map.insert(norm_logical, prev);
+                        } else {
+                            session.temp_map.remove(&norm_logical);
+                        }
+                    }
+                    dropped.push(physical);
+                }
+            }
+        }
+        dropped
+    }
+
     pub fn register_declared_var(&mut self, name: &str) {
         if let Some(scope) = self.scope_vars.last_mut() {
             scope.push(name.to_string());
+        }
+    }
+
+    pub fn register_temp_table<'a>(
+        &mut self,
+        session: &mut SessionStateRefs<'a>,
+        logical_name: &str,
+    ) -> String {
+        let norm = normalize_identifier(logical_name);
+        let base = logical_name.trim_start_matches('#');
+        if self.scoped_temp_tables.len() > 1 {
+            *session.var_counter += 1;
+            let physical = format!("__temp_{}_{}", base, *session.var_counter);
+            let prev = session.temp_map.insert(norm.clone(), physical.clone());
+            if let Some(scope) = self.scoped_temp_tables.last_mut() {
+                scope.push((norm, prev, physical.clone()));
+            }
+            physical
+        } else {
+            let physical = format!("__temp_{}", base);
+            session.temp_map.insert(norm, physical.clone());
+            physical
         }
     }
 

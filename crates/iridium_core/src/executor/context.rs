@@ -74,6 +74,7 @@ pub struct FrameState {
     pub(crate) module_stack: Vec<ModuleFrame>,
     pub(crate) table_vars: Vec<HashMap<String, String>>,
     pub(crate) readonly_table_vars: Vec<HashSet<String>>,
+    pub(crate) scoped_temp_tables: Vec<Vec<(String, Option<String>, String)>>,
     pub(crate) scope_vars: Vec<Vec<String>>,
     pub(crate) skip_instead_of: bool,
     pub(crate) last_error: Option<DbError>,

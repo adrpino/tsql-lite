@@ -1275,3 +1275,34 @@ fn select_assign_joins_sp_executesql_named_stmt_convert_trunc_and_dateadd_null()
     assert_eq!(r4.rows[0][2].to_string_value(), "2026-01-03");
     assert_eq!(r4.rows[0][3], Value::Null);
 }
+
+#[test]
+fn procedural_temp_table_auto_drops_on_exit_and_isolates_nested_scope() {
+    let mut e = Engine::new();
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_make_temp @val INT
+        AS
+        BEGIN
+            CREATE TABLE #work (n INT);
+            INSERT INTO #work VALUES (@val);
+            SELECT n * 10 AS scaled INTO #work2 FROM #work;
+            SELECT scaled FROM #work2;
+        END",
+    );
+
+    // Caller also has its own #work table — procedure's #work must neither collide nor clobber it
+    exec(&mut e, "CREATE TABLE #work (n INT)");
+    exec(&mut e, "INSERT INTO #work VALUES (777)");
+
+    // Calling the procedure twice must not fail with duplicate table error
+    let r1 = query(&mut e, "EXEC dbo.p_make_temp @val = 3");
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(30));
+    let r2 = query(&mut e, "EXEC dbo.p_make_temp @val = 4");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(40));
+
+    // Caller's #work table is still intact
+    let r3 = query(&mut e, "SELECT n FROM #work");
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(777));
+}

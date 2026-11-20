@@ -12,10 +12,7 @@ pub(crate) fn map_create_temp_table(
         return;
     }
     let logical = stmt.name.name.clone();
-    let physical = format!("__temp_{}", logical.trim_start_matches('#'));
-    ctx.session
-        .temp_map
-        .insert(normalize_identifier(&logical), physical.clone());
+    let physical = ctx.register_temp_table(&logical);
     stmt.name.schema = Some("dbo".to_string());
     stmt.name.name = physical;
 }

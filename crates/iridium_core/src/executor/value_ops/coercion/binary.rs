@@ -1,8 +1,8 @@
-use crate::error::DbError;
-use crate::types::{DataType, Value};
-use crate::executor::value_helpers::pad_binary_right;
-use uuid::Uuid;
 use super::numeric::coerce_int;
+use crate::error::DbError;
+use crate::executor::value_helpers::pad_binary_right;
+use crate::types::{DataType, Value};
+use uuid::Uuid;
 
 pub(crate) fn coerce_binary(data: &[u8], ty: &DataType) -> Result<Value, DbError> {
     match ty {
@@ -31,17 +31,12 @@ pub(crate) fn coerce_binary(data: &[u8], ty: &DataType) -> Result<Value, DbError
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Binary(data.to_vec())))),
         DataType::UniqueIdentifier => {
-            if data.len() == 16 {
-                let arr: [u8; 16] = data[..16].try_into().map_err(|_| {
-                    DbError::Execution("cannot convert BINARY to UNIQUEIDENTIFIER".into())
-                })?;
-                let uuid = uuid::Uuid::from_bytes_le(arr);
-                Ok(Value::UniqueIdentifier(uuid))
-            } else {
-                Err(DbError::Execution(
-                    "cannot convert BINARY to UNIQUEIDENTIFIER: expected 16 bytes".into(),
-                ))
-            }
+            let padded = pad_binary_right(data, 16);
+            let arr: [u8; 16] = padded[..16].try_into().map_err(|_| {
+                DbError::Execution("cannot convert BINARY to UNIQUEIDENTIFIER".into())
+            })?;
+            let uuid = uuid::Uuid::from_bytes_le(arr);
+            Ok(Value::UniqueIdentifier(uuid))
         }
         DataType::DateTime
         | DataType::DateTime2

@@ -101,6 +101,13 @@ fn split_date_time(s: &str) -> (&str, &str) {
 
 fn parse_date_part(date_part: &str, dateformat: &str) -> Result<(i32, i32, i32), DbError> {
     let cleaned = date_part.trim();
+    // SQL Server allows integer day offsets relative to 1900-01-01 (e.g., DATEADD/DATEDIFF with 0).
+    if let Ok(days) = cleaned.parse::<i64>() {
+        if let Some(epoch) = NaiveDate::from_ymd_opt(1900, 1, 1) {
+            let shifted = epoch + chrono::Duration::days(days);
+            return Ok((shifted.year(), shifted.month() as i32, shifted.day() as i32));
+        }
+    }
     let segments: Vec<&str> = cleaned
         .split(['-', '/', '.'])
         .filter(|s| !s.is_empty())

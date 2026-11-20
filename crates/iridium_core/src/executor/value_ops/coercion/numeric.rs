@@ -1,7 +1,7 @@
 use crate::error::DbError;
+use crate::executor::value_helpers::rescale_raw;
 use crate::types::{DataType, Value};
 use std::fmt::Debug;
-use crate::executor::value_helpers::rescale_raw;
 
 pub(crate) fn coerce_int(v: i64, ty: &DataType) -> Result<Value, DbError> {
     match ty {
@@ -21,12 +21,24 @@ pub(crate) fn coerce_int(v: i64, ty: &DataType) -> Result<Value, DbError> {
         DataType::NChar { .. } | DataType::NVarChar { .. } => Ok(Value::NVarChar(v.to_string())),
         DataType::Binary { .. } => Ok(Value::Binary(v.to_le_bytes().to_vec())),
         DataType::VarBinary { .. } => Ok(Value::VarBinary(v.to_le_bytes().to_vec())),
-        DataType::DateTime
-        | DataType::DateTime2
-        | DataType::SmallDateTime
-        | DataType::DateTimeOffset
-        | DataType::Date
-        | DataType::Time => Err(DbError::Execution(format!(
+        DataType::DateTime | DataType::DateTime2 | DataType::SmallDateTime => {
+            let epoch = chrono::NaiveDate::from_ymd_opt(1900, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let shifted = epoch + chrono::Duration::days(v);
+            match ty {
+                DataType::DateTime => Ok(Value::DateTime(shifted)),
+                DataType::DateTime2 => Ok(Value::DateTime2(shifted)),
+                DataType::SmallDateTime => Ok(Value::SmallDateTime(shifted)),
+                _ => unreachable!(),
+            }
+        }
+        DataType::Date => {
+            let epoch = chrono::NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+            Ok(Value::Date(epoch + chrono::Duration::days(v)))
+        }
+        DataType::DateTimeOffset | DataType::Time => Err(DbError::Execution(format!(
             "cannot convert integer to {:?}",
             ty
         ))),

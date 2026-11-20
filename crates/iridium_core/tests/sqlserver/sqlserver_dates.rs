@@ -69,3 +69,19 @@ fn test_temporal_and_float_type_precision_parameters() {
     assert_eq!(r.rows.len(), 1);
     assert_eq!(r.rows[0].len(), 5);
 }
+
+#[test]
+fn test_sqlserver_epoch_zero_datetime_and_binary_to_uuid() {
+    let mut engine = Engine::new();
+    let r = engine_exec(
+        &mut engine,
+        "SELECT DATEADD(day, DATEDIFF(day, 0, '2026-04-15 14:35:20'), 0), CAST(0 AS DATETIME), CAST(0x0 AS UNIQUEIDENTIFIER)",
+    )
+    .unwrap();
+    assert_eq!(r.rows[0][0].to_string_value(), "2026-04-15 00:00:00");
+    assert_eq!(r.rows[0][1].to_string_value(), "1900-01-01 00:00:00");
+    assert_eq!(
+        r.rows[0][2].to_string_value().to_ascii_lowercase(),
+        "00000000-0000-0000-0000-000000000000"
+    );
+}

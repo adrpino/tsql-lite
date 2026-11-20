@@ -423,6 +423,7 @@ where
         &qe,
         &query_plan,
         fake_rows,
+        None,
         ctx,
     ) {
         Ok(mut r) => {

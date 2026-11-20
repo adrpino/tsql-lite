@@ -17,12 +17,14 @@ pub(crate) fn execute_flat_select(
     clock: &dyn Clock,
     projection: Vec<SelectItem>,
     rows: Vec<JoinedRow>,
+    source_shape: Option<&JoinedRow>,
     ctx: &mut ExecutionContext,
 ) -> Result<QueryResult, DbError> {
-    let columns = expand_projection_columns(&projection, rows.first());
+    let schema_row = rows.first().or(source_shape);
+    let columns = expand_projection_columns(&projection, schema_row);
     let projected_rows = project_flat_rows(catalog, storage, clock, &projection, &rows, ctx)?;
 
-    let expr_types = expand_projection_types(&projection, rows.first());
+    let expr_types = expand_projection_types(&projection, schema_row);
     let row_types = derive_types_from_rows(&projected_rows, columns.len());
 
     let mut column_types = Vec::with_capacity(columns.len());

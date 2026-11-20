@@ -11,7 +11,8 @@ pub(crate) fn finalize_rows(
     executor: &QueryExecutor<'_>,
     query: &RelationalQuery,
     source_rows: Vec<JoinedRow>,
+    source_shape: Option<&JoinedRow>,
     ctx: &mut ExecutionContext,
 ) -> Result<result::QueryResult, DbError> {
-    pipeline::execute_rows_to_result(executor, query, source_rows, ctx)
+    pipeline::execute_rows_to_result(executor, query, source_rows, source_shape, ctx)
 }

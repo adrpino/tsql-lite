@@ -20,6 +20,7 @@ pub(crate) fn execute_rows_to_result(
     executor: &QueryExecutor<'_>,
     query: &RelationalQuery,
     mut source_rows: Vec<JoinedRow>,
+    source_shape: Option<&JoinedRow>,
     ctx: &mut ExecutionContext,
 ) -> Result<result::QueryResult, DbError> {
     let state = analysis::PipelineState::new(query);
@@ -28,7 +29,14 @@ pub(crate) fn execute_rows_to_result(
         order::apply_source_ordering(executor, query, &mut source_rows, ctx)?;
     }
 
-    let result = projection::execute_projection_stage(executor, query, source_rows, ctx, &state)?;
+    let result = projection::execute_projection_stage(
+        executor,
+        query,
+        source_rows,
+        source_shape,
+        ctx,
+        &state,
+    )?;
     let result_columns = result.columns.clone();
     let result_column_types = result.column_types.clone();
     let result_column_nullabilities = result.column_nullabilities.clone();

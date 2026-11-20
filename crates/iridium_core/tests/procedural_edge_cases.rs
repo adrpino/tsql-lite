@@ -1138,3 +1138,43 @@ fn tsql_recursive_cte_without_keyword_and_merge_subquery_source() {
     assert_eq!(r2.rows[1][1].to_string_value(), "new2");
     assert_eq!(r2.rows[2][1].to_string_value(), "from_vals");
 }
+
+#[test]
+fn nested_aggregates_in_select_and_empty_wildcard_union_all() {
+    let mut e = Engine::new();
+
+    // 1. Nested aggregate inside CAST(DATEADD(..., CAST(MIN(col) AS DATE)) AS DATETIME2(0))
+    exec(&mut e, "CREATE TABLE #events (ts DATETIME)");
+    exec(
+        &mut e,
+        "INSERT INTO #events VALUES ('2026-03-10 08:00:00'), ('2026-03-15 12:00:00')",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_nested_agg
+        AS
+        BEGIN
+            DECLARE @min_d DATETIME2(0), @max_d DATETIME2(0);
+            SELECT @min_d = CAST(DATEADD(DAY, -1, CAST(MIN(ts) AS DATE)) AS DATETIME2(0)),
+                   @max_d = CAST(DATEADD(DAY,  1, CAST(MAX(ts) AS DATE)) AS DATETIME2(0))
+            FROM #events;
+            SELECT CAST(@min_d AS DATE) AS d1, CAST(@max_d AS DATE) AS d2;
+        END",
+    );
+    let r1 = query(&mut e, "EXEC dbo.p_nested_agg");
+    assert_eq!(r1.rows[0][0].to_string_value(), "2026-03-09");
+    assert_eq!(r1.rows[0][1].to_string_value(), "2026-03-16");
+
+    // 2. UNION ALL of SELECT * where one side is empty (0 rows) and the other has rows
+    exec(&mut e, "CREATE TABLE #part_a (id INT, label VARCHAR(20))");
+    exec(&mut e, "CREATE TABLE #part_b (id INT, label VARCHAR(20))");
+    exec(&mut e, "INSERT INTO #part_b VALUES (1, 'ok')");
+    let r2 = query(
+        &mut e,
+        "SELECT * FROM (SELECT * FROM #part_a UNION ALL SELECT * FROM #part_b) u",
+    );
+    assert_eq!(r2.rows.len(), 1);
+    assert_eq!(r2.columns, vec!["id", "label"]);
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r2.rows[0][1].to_string_value(), "ok");
+}

@@ -12,13 +12,64 @@ pub(crate) struct PipelineState {
     pub(crate) needs_pre_sort: bool,
 }
 
+fn expr_contains_aggregate(expr: &Expr) -> bool {
+    match expr {
+        Expr::FunctionCall { name, args, .. } => {
+            is_aggregate_function(name) || args.iter().any(expr_contains_aggregate)
+        }
+        Expr::Binary { left, right, .. } => {
+            expr_contains_aggregate(left) || expr_contains_aggregate(right)
+        }
+        Expr::Unary { expr, .. }
+        | Expr::Cast { expr, .. }
+        | Expr::TryCast { expr, .. }
+        | Expr::Convert { expr, .. }
+        | Expr::TryConvert { expr, .. }
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr) => expr_contains_aggregate(expr),
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            operand.as_deref().is_some_and(expr_contains_aggregate)
+                || when_clauses.iter().any(|wc| {
+                    expr_contains_aggregate(&wc.condition) || expr_contains_aggregate(&wc.result)
+                })
+                || else_result.as_deref().is_some_and(expr_contains_aggregate)
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            expr_contains_aggregate(expr)
+                || expr_contains_aggregate(low)
+                || expr_contains_aggregate(high)
+        }
+        Expr::InList { expr, list, .. } => {
+            expr_contains_aggregate(expr) || list.iter().any(expr_contains_aggregate)
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            expr_contains_aggregate(expr)
+                || expr_contains_aggregate(pattern)
+                || escape.as_deref().is_some_and(expr_contains_aggregate)
+        }
+        Expr::WindowFunction { .. } | Expr::Subquery(_) | Expr::Exists { .. } => false,
+        _ => false,
+    }
+}
+
 impl PipelineState {
     pub(crate) fn new(query: &RelationalQuery) -> Self {
         let has_aggregate = query
             .projection
             .items
             .iter()
-            .any(|item| matches!(&item.expr, Expr::FunctionCall { name, .. } if is_aggregate_function(name)));
+            .any(|item| expr_contains_aggregate(&item.expr));
 
         let has_window = query
             .projection

@@ -15,6 +15,12 @@ pub(crate) fn execute_select_internal(
 ) -> Result<QueryResult, DbError> {
     from_tree::enforce_query_governor_cost_limit(query, ctx)?;
     let mut source_eval = source::execute_source(executor, query, ctx)?;
+    let source_shape = source_eval.shape.clone();
     let rows = source_eval.materialize(ctx, executor.catalog, executor.storage, executor.clock)?;
-    finalize::finalize_rows(executor, query, rows, ctx)
+    let shape_opt = if source_shape.is_empty() {
+        None
+    } else {
+        Some(&source_shape)
+    };
+    finalize::finalize_rows(executor, query, rows, shape_opt, ctx)
 }

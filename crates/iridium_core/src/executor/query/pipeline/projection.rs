@@ -14,6 +14,7 @@ pub(crate) fn execute_projection_stage(
     executor: &QueryExecutor<'_>,
     query: &RelationalQuery,
     source_rows: Vec<JoinedRow>,
+    source_shape: Option<&JoinedRow>,
     ctx: &mut ExecutionContext,
     state: &PipelineState,
 ) -> Result<result::QueryResult, DbError> {
@@ -41,6 +42,7 @@ pub(crate) fn execute_projection_stage(
             executor.clock,
             query.projection.items.clone(),
             source_rows,
+            source_shape,
             ctx,
         )
     }

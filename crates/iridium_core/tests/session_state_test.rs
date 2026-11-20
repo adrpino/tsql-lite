@@ -146,3 +146,26 @@ fn test_new_identity_functions() {
         panic!("Expected USER_SID() to be binary");
     }
 }
+
+#[test]
+fn test_multi_option_set_statements() {
+    let engine = Engine::new();
+    engine.exec("SET NOCOUNT, XACT_ABORT ON").unwrap();
+    let opts = engine.session_options();
+    assert!(opts.nocount);
+    assert!(opts.xact_abort);
+
+    engine
+        .exec("SET NOCOUNT, XACT_ABORT, ANSI_WARNINGS OFF")
+        .unwrap();
+    let opts_off = engine.session_options();
+    assert!(!opts_off.nocount);
+    assert!(!opts_off.xact_abort);
+    assert!(!opts_off.ansi_warnings);
+
+    engine
+        .exec("CREATE PROCEDURE dbo.multi_set_proc AS BEGIN SET NOCOUNT, XACT_ABORT ON; SELECT 1 AS v; END")
+        .unwrap();
+    let r = engine.query("EXEC dbo.multi_set_proc").unwrap();
+    assert_eq!(r.rows[0][0], Value::Int(1));
+}

@@ -140,9 +140,15 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
     fn visit_session(
         &mut self,
         stmt: SessionStatement,
-        _ctx: &mut ExecutionContext<'_>,
+        ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
         match stmt {
+            SessionStatement::SetOption(opt) => {
+                crate::executor::tooling::apply_set_option(&opt, &mut ctx.options)?;
+                ctx.metadata.ansi_nulls = ctx.options.ansi_nulls;
+                ctx.metadata.datefirst = ctx.options.datefirst;
+                Ok(StmtOutcome::Ok(None))
+            }
             SessionStatement::SetIdentityInsert(_) => Err(DbError::Execution(
                 "SET IDENTITY_INSERT is handled at engine level".into(),
             )),
@@ -150,12 +156,10 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                 Err(DbError::Execution("USE is handled at engine level".into()))
             }
             SessionStatement::SetTransactionIsolationLevel(_)
-            | SessionStatement::SetOption(_)
             | SessionStatement::SetContextInfo(_) => Err(DbError::Execution(
                 "session option statements are handled at engine level".into(),
             )),
         }
-        .map(StmtOutcome::Ok)
     }
 
     fn visit_dml(

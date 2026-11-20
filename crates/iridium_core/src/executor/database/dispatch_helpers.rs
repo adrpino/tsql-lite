@@ -10,8 +10,8 @@ use super::super::result::QueryResult;
 use super::super::session::{SessionSnapshot, SharedState};
 use super::super::string_norm::normalize_identifier;
 use super::super::table_util::collect_read_tables;
-use super::super::tooling::SessionOptions;
 use super::super::tooling::apply_set_option;
+use super::super::tooling::SessionOptions;
 use super::super::transaction::TransactionManager;
 use super::{EngineCatalog, EngineStorage};
 use crate::storage::Storage;
@@ -29,7 +29,10 @@ pub(crate) fn should_start_implicit_transaction(stmt: &Statement) -> bool {
     )
 }
 
-pub(crate) fn lookup_session_deadlock_priority<C, S>(state: &SharedState<C, S>, session_id: SessionId) -> i32
+pub(crate) fn lookup_session_deadlock_priority<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+) -> i32
 where
     C: EngineCatalog,
     S: EngineStorage,
@@ -56,9 +59,10 @@ where
     if let Statement::Session(SessionStatement::UseDatabase(database)) = stmt {
         match super::super::database_catalog::database_id_for_name(database) {
             Some(database_id) => {
-                let canonical_name = super::super::database_catalog::database_name_for_id(database_id)
-                    .unwrap_or(database.as_str())
-                    .to_string();
+                let canonical_name =
+                    super::super::database_catalog::database_name_for_id(database_id)
+                        .unwrap_or(database.as_str())
+                        .to_string();
                 ctx.metadata.database = Some(canonical_name);
                 Some(Ok(StmtOutcome::Ok(None)))
             }
@@ -82,6 +86,34 @@ where
                 Some(Ok(StmtOutcome::Ok(None)))
             }
             Err(e) => Some(Err(e)),
+        }
+    } else if let Statement::Procedural(crate::ast::ProceduralStatement::BeginEnd(stmts)) = stmt {
+        if !stmts.is_empty()
+            && stmts
+                .iter()
+                .all(|s| matches!(s, Statement::Session(SessionStatement::SetOption(_))))
+        {
+            for s in stmts {
+                if let Statement::Session(SessionStatement::SetOption(opt)) = s {
+                    match apply_set_option(opt, session_options) {
+                        Ok(apply) => {
+                            for warn in apply.warnings {
+                                journal.record(JournalEvent::Info { message: warn });
+                            }
+                        }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+            }
+            ctx.options = session_options.clone();
+            ctx.metadata.ansi_nulls = session_options.ansi_nulls;
+            ctx.metadata.datefirst = session_options.datefirst;
+            state
+                .deadlock_priorities
+                .insert(session_id, session_options.deadlock_priority);
+            Some(Ok(StmtOutcome::Ok(None)))
+        } else {
+            None
         }
     } else if let Statement::Session(SessionStatement::SetIdentityInsert(ref id_stmt)) = stmt {
         let storage_guard = state.storage.read();

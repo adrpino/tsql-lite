@@ -437,11 +437,73 @@ fn parse_set_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
         }
     }
 
+    fn match_bool_session_option(tok: Option<&Token>) -> Option<crate::parser::ast::SessionOption> {
+        let name = match tok {
+            Some(Token::Identifier(id)) => id.as_str(),
+            Some(Token::Keyword(k)) => k.as_ref(),
+            _ => return None,
+        };
+        if name.eq_ignore_ascii_case("ANSI_DEFAULTS") {
+            Some(crate::parser::ast::SessionOption::AnsiDefaults)
+        } else if name.eq_ignore_ascii_case("ANSI_NULLS") {
+            Some(crate::parser::ast::SessionOption::AnsiNulls)
+        } else if name.eq_ignore_ascii_case("QUOTED_IDENTIFIER") {
+            Some(crate::parser::ast::SessionOption::QuotedIdentifier)
+        } else if name.eq_ignore_ascii_case("NOCOUNT") {
+            Some(crate::parser::ast::SessionOption::NoCount)
+        } else if name.eq_ignore_ascii_case("XACT_ABORT") {
+            Some(crate::parser::ast::SessionOption::XactAbort)
+        } else if name.eq_ignore_ascii_case("FMTONLY") {
+            Some(crate::parser::ast::SessionOption::FmtOnly)
+        } else if name.eq_ignore_ascii_case("NOEXEC") {
+            Some(crate::parser::ast::SessionOption::NoExec)
+        } else if name.eq_ignore_ascii_case("SHOWPLAN_XML") {
+            Some(crate::parser::ast::SessionOption::ShowplanXml)
+        } else if name.eq_ignore_ascii_case("STATISTICS_XML") {
+            Some(crate::parser::ast::SessionOption::StatisticsXml)
+        } else if name.eq_ignore_ascii_case("ANSI_NULL_DFLT_ON") {
+            Some(crate::parser::ast::SessionOption::AnsiNullDfltOn)
+        } else if name.eq_ignore_ascii_case("ANSI_PADDING") {
+            Some(crate::parser::ast::SessionOption::AnsiPadding)
+        } else if name.eq_ignore_ascii_case("ANSI_WARNINGS") {
+            Some(crate::parser::ast::SessionOption::AnsiWarnings)
+        } else if name.eq_ignore_ascii_case("ARITHABORT") {
+            Some(crate::parser::ast::SessionOption::ArithAbort)
+        } else if name.eq_ignore_ascii_case("CONCAT_NULL_YIELDS_NULL") {
+            Some(crate::parser::ast::SessionOption::ConcatNullYieldsNull)
+        } else if name.eq_ignore_ascii_case("CURSOR_CLOSE_ON_COMMIT") {
+            Some(crate::parser::ast::SessionOption::CursorCloseOnCommit)
+        } else if name.eq_ignore_ascii_case("IMPLICIT_TRANSACTIONS") {
+            Some(crate::parser::ast::SessionOption::ImplicitTransactions)
+        } else if name.eq_ignore_ascii_case("NUMERIC_ROUNDABORT")
+            || name.eq_ignore_ascii_case("ARITHIGNORE")
+            || name.eq_ignore_ascii_case("ANSI_NULL_DFLT_OFF")
+            || name.eq_ignore_ascii_case("FORCEPLAN")
+            || name.eq_ignore_ascii_case("PARSEONLY")
+            || name.eq_ignore_ascii_case("REMOTE_PROC_TRANSACTIONS")
+        {
+            Some(crate::parser::ast::SessionOption::Unsupported(
+                name.to_string(),
+            ))
+        } else {
+            None
+        }
+    }
+
     fn parse_bool_setting(
         parser: &mut Parser,
-        option: crate::parser::ast::SessionOption,
+        first_option: crate::parser::ast::SessionOption,
     ) -> ParseResult<Statement> {
         let _ = parser.next();
+        let mut options = vec![first_option];
+        while matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+            let Some(next_opt) = match_bool_session_option(parser.peek()) else {
+                return parser.backtrack(Expected::Description("SET option name"));
+            };
+            let _ = parser.next();
+            options.push(next_opt);
+        }
         let val = match parser.next() {
             Some(Token::Keyword(k)) if *k == Keyword::On => true,
             Some(Token::Keyword(k)) if *k == Keyword::Off => false,
@@ -449,10 +511,23 @@ fn parse_set_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
             Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("OFF") => false,
             _ => return parser.backtrack(Expected::Description("ON or OFF")),
         };
-        Ok(Statement::Session(SessionStatement::SetOption {
-            option,
-            value: crate::parser::ast::SessionOptionValue::Bool(val),
-        }))
+        if options.len() == 1 {
+            Ok(Statement::Session(SessionStatement::SetOption {
+                option: options.into_iter().next().unwrap(),
+                value: crate::parser::ast::SessionOptionValue::Bool(val),
+            }))
+        } else {
+            let stmts = options
+                .into_iter()
+                .map(|option| {
+                    Statement::Session(SessionStatement::SetOption {
+                        option,
+                        value: crate::parser::ast::SessionOptionValue::Bool(val),
+                    })
+                })
+                .collect();
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
+        }
     }
 
     fn parse_text_setting(

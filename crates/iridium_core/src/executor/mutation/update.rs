@@ -7,7 +7,10 @@ use crate::types::Value;
 use super::super::context::ExecutionContext;
 use super::super::query::QueryExecutor;
 use super::super::result::QueryResult;
-use super::query_source::{build_mutation_query, resolve_table_for_mutation};
+use super::query_source::{
+    attach_base_rows_from_cte, build_mutation_query, resolve_cte_for_mutation,
+    resolve_table_for_mutation,
+};
 
 use super::output::build_output_result;
 use super::shared::{rowcount_limit, visit_target_rows};
@@ -30,16 +33,87 @@ impl<'a> MutationExecutor<'a> {
                 stmt.table.schema = Some("dbo".to_string());
             }
         }
-        let (table, resolved_name) =
+        let target_alias = stmt.table.name.clone();
+        let resolved_direct =
             resolve_table_for_mutation(stmt.from.as_ref(), &stmt.table, |schema, name| {
                 self.catalog.find_table(schema, name).cloned().or_else(|| {
                     ctx.resolve_table_name(name)
                         .and_then(|mapped| self.catalog.find_table("dbo", &mapped).cloned())
                 })
-            })?;
+            });
+
+        let (table, joined_rows) = match resolved_direct {
+            Ok((table, resolved_name)) => {
+                let query = build_mutation_query(
+                    stmt.from.as_ref(),
+                    &stmt.table,
+                    &table,
+                    &resolved_name,
+                    stmt.selection.clone(),
+                    stmt.top.clone(),
+                );
+                let query_executor = QueryExecutor {
+                    catalog: self.catalog,
+                    storage: self.storage,
+                    clock: self.clock,
+                };
+                let joined_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                (table, joined_rows)
+            }
+            Err(orig_err) => {
+                let Some((cte, cte_name)) =
+                    resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
+                else {
+                    return Err(orig_err);
+                };
+                let base_target = cte
+                    .base_targets
+                    .iter()
+                    .find(|bt| {
+                        stmt.assignments.iter().all(|a| {
+                            a.column.starts_with('@')
+                                || bt
+                                    .table_def
+                                    .columns
+                                    .iter()
+                                    .any(|c| c.name.eq_ignore_ascii_case(&a.column))
+                        })
+                    })
+                    .or_else(|| cte.base_targets.first())
+                    .cloned()
+                    .ok_or_else(|| {
+                        DbError::Execution(format!(
+                            "CTE '{}' is not updatable: no underlying base table found",
+                            cte_name
+                        ))
+                    })?;
+
+                let query = build_mutation_query(
+                    stmt.from.as_ref(),
+                    &stmt.table,
+                    &cte.table_def,
+                    &cte_name,
+                    stmt.selection.clone(),
+                    stmt.top.clone(),
+                );
+                let query_executor = QueryExecutor {
+                    catalog: self.catalog,
+                    storage: self.storage,
+                    clock: self.clock,
+                };
+                let cte_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                let mapped = attach_base_rows_from_cte(
+                    cte_rows,
+                    &cte_name,
+                    &target_alias,
+                    &base_target,
+                    self.storage,
+                )?;
+                (base_target.table_def, mapped)
+            }
+        };
 
         let table_id = table.id;
-        let target_alias = stmt.table.name.clone();
 
         // Check for INSTEAD OF UPDATE trigger
         let instead_of_triggers = if ctx.frame.skip_instead_of {
@@ -50,23 +124,6 @@ impl<'a> MutationExecutor<'a> {
                 .filter(|t| t.is_instead_of)
                 .collect::<Vec<_>>()
         };
-
-        let query = build_mutation_query(
-            stmt.from.as_ref(),
-            &stmt.table,
-            &table,
-            &resolved_name,
-            stmt.selection.clone(),
-            stmt.top.clone(),
-        );
-
-        let query_executor = QueryExecutor {
-            catalog: self.catalog,
-            storage: self.storage,
-            clock: self.clock,
-        };
-
-        let joined_rows = query_executor.execute_to_joined_rows(query, ctx)?;
 
         if !instead_of_triggers.is_empty() {
             let mut inserted_rows = Vec::new();

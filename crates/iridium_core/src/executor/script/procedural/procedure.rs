@@ -216,9 +216,49 @@ impl<'a> ScriptExecutor<'a> {
             }
 
             let mut prepared: Vec<PreparedArg> = Vec::with_capacity(params.len());
+            let mut default_tvp_physicals: Vec<String> = Vec::new();
             for (idx, param) in params.iter().enumerate() {
                 let arg = bound_args[idx];
                 let Some(arg) = arg else {
+                    if let RoutineParamType::TableType(type_name) = &param.param_type {
+                        // In T-SQL, omitted table-valued parameters default to an empty table
+                        // matching the parameter's declared table type.
+                        let tdef = self
+                            .catalog
+                            .find_table_type(type_name.schema_or_dbo(), &type_name.name)
+                            .cloned()
+                            .ok_or_else(|| {
+                                DbError::Execution(format!(
+                                    "table type '{}.{}' not found",
+                                    type_name.schema_or_dbo(),
+                                    type_name.name
+                                ))
+                            })?;
+                        let unique = ctx.next_table_var_id();
+                        let physical = format!(
+                            "__tvp_default_{}_{}_{}",
+                            ctx.frame.depth,
+                            param.name.trim_start_matches('@'),
+                            unique
+                        );
+                        let create = crate::ast::CreateTableStmt {
+                            name: crate::ast::ObjectName {
+                                database: None,
+                                schema: Some("dbo".to_string()),
+                                name: physical.clone(),
+                            },
+                            columns: tdef.columns,
+                            table_constraints: tdef.table_constraints,
+                        };
+                        self.schema(ctx).create_table(create)?;
+                        default_tvp_physicals.push(physical.clone());
+                        prepared.push(PreparedArg::Tvp {
+                            name: param.name.clone(),
+                            physical,
+                            is_readonly: param.is_readonly,
+                        });
+                        continue;
+                    }
                     if let Some(def) = &param.default {
                         let RoutineParamType::Scalar(dt) = &param.param_type else {
                             return Err(DbError::Execution(format!(
@@ -359,6 +399,16 @@ impl<'a> ScriptExecutor<'a> {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             let cleanup_res = self.leave_scope_and_cleanup(ctx);
+            for physical in default_tvp_physicals {
+                let _ = self.schema(ctx).drop_table(crate::ast::DropTableStmt {
+                    name: crate::ast::ObjectName {
+                        database: None,
+                        schema: Some("dbo".to_string()),
+                        name: physical,
+                    },
+                    if_exists: true,
+                });
+            }
             for (k, v) in updated_sys_vars {
                 saved_caller_vars.insert(k, v);
             }

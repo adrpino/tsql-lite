@@ -60,6 +60,79 @@ pub(crate) fn resolve_table_for_mutation(
     Ok((t, table_name))
 }
 
+pub(crate) fn resolve_cte_for_mutation(
+    from: Option<&FromClause>,
+    target: &ObjectName,
+    ctes: &crate::executor::cte::CteStorage,
+) -> Option<(crate::executor::cte::CteTable, String)> {
+    let target_name = &target.name;
+    if let Some(from_clause) = from {
+        for tref in from_clause
+            .tables
+            .iter()
+            .chain(from_clause.joins.iter().map(|j| &j.table))
+        {
+            if let Some(obj) = tref.factor.as_object_name() {
+                let alias = tref.alias.as_deref().unwrap_or(obj.name.as_str());
+                if alias.eq_ignore_ascii_case(target_name)
+                    || obj.name.eq_ignore_ascii_case(target_name)
+                {
+                    if let Some(cte) = ctes.get(&obj.name) {
+                        return Some((cte.clone(), obj.name.clone()));
+                    }
+                }
+            }
+        }
+    }
+    if target.schema.is_none() || target.schema_or_dbo().eq_ignore_ascii_case("dbo") {
+        if let Some(cte) = ctes.get(target_name) {
+            return Some((cte.clone(), target_name.clone()));
+        }
+    }
+    None
+}
+
+pub(crate) fn attach_base_rows_from_cte(
+    joined_rows: Vec<crate::executor::model::JoinedRow>,
+    cte_name: &str,
+    target_alias: &str,
+    base_target: &crate::executor::cte::CteBaseTarget,
+    storage: &dyn crate::storage::Storage,
+) -> Result<Vec<crate::executor::model::JoinedRow>, crate::error::DbError> {
+    let mut mapped = Vec::with_capacity(joined_rows.len());
+    for mut jr in joined_rows {
+        let cte_idx = jr
+            .iter()
+            .find(|ct| {
+                ct.table.id == 0
+                    && (ct.alias.eq_ignore_ascii_case(target_alias)
+                        || ct.table.name.eq_ignore_ascii_case(cte_name))
+            })
+            .and_then(|ct| ct.storage_index);
+        let Some(cte_idx) = cte_idx else {
+            continue;
+        };
+        let Some(base_idx) = base_target.row_indices.get(cte_idx).copied().flatten() else {
+            continue;
+        };
+        let Some(stored) = storage.get_row(base_target.table_def.id, base_idx)? else {
+            continue;
+        };
+        if stored.deleted {
+            continue;
+        }
+        jr.push(crate::executor::model::ContextTable {
+            table: base_target.table_def.clone(),
+            alias: target_alias.to_string(),
+            row: Some(stored),
+            storage_index: Some(base_idx),
+            source_aliases: Vec::new(),
+        });
+        mapped.push(jr);
+    }
+    Ok(mapped)
+}
+
 fn find_in_from_clause(
     from_clause: &FromClause,
     target_name: &str,

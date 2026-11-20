@@ -1306,3 +1306,74 @@ fn procedural_temp_table_auto_drops_on_exit_and_isolates_nested_scope() {
     let r3 = query(&mut e, "SELECT n FROM #work");
     assert_eq!(r3.rows[0][0].to_integer_i64(), Some(777));
 }
+
+#[test]
+fn updatable_cte_update_and_delete_with_window_functions() {
+    let mut e = Engine::new();
+
+    exec(
+        &mut e,
+        "CREATE TABLE #staging (id INT, grp VARCHAR(10), status VARCHAR(20))",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO #staging VALUES (1, 'A', 'New'), (2, 'A', 'New'), (3, 'B', 'New'), (4, 'A', 'New')",
+    );
+
+    exec(
+        &mut e,
+        "WITH ranked AS (
+            SELECT id, grp, status,
+                   ROW_NUMBER() OVER (PARTITION BY grp ORDER BY id) AS rn
+            FROM #staging
+        )
+        UPDATE ranked SET status = 'Duplicate' WHERE rn > 1;",
+    );
+
+    let r1 = query(&mut e, "SELECT id, status FROM #staging ORDER BY id");
+    assert_eq!(r1.rows.len(), 4);
+    assert_eq!(r1.rows[0][1].to_string_value(), "New");
+    assert_eq!(r1.rows[1][1].to_string_value(), "Duplicate");
+    assert_eq!(r1.rows[2][1].to_string_value(), "New");
+    assert_eq!(r1.rows[3][1].to_string_value(), "Duplicate");
+
+    exec(
+        &mut e,
+        "WITH dups AS (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY grp ORDER BY id) AS rn
+            FROM #staging
+        )
+        DELETE FROM dups WHERE rn > 1;",
+    );
+
+    let r2 = query(&mut e, "SELECT id FROM #staging ORDER BY id");
+    assert_eq!(r2.rows.len(), 2);
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r2.rows[1][0].to_integer_i64(), Some(3));
+}
+
+#[test]
+fn optional_omitted_tvp_parameter_and_bit_severity_raiserror() {
+    let mut e = Engine::new();
+
+    exec(&mut e, "CREATE TYPE dbo.IntList AS TABLE (Val INT)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_opt_tvp
+            @tag VARCHAR(20),
+            @items dbo.IntList READONLY,
+            @debug BIT = 0
+        AS
+        BEGIN
+            RAISERROR('%s', @debug, 1, @tag) WITH NOWAIT;
+            SELECT COUNT(*) AS cnt FROM @items;
+        END",
+    );
+
+    // Omitting @items defaults to an empty table; @debug = 0 and 1 are informational severities
+    let r1 = query(&mut e, "EXEC dbo.p_opt_tvp @tag = 'ok', @debug = 0");
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(0));
+
+    let r2 = query(&mut e, "EXEC dbo.p_opt_tvp @tag = 'debug', @debug = 1");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(0));
+}

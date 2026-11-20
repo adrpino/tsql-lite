@@ -51,6 +51,73 @@ impl<'a> QueryExecutor<'a> {
         let mut source_eval = source::execute_source(self, &query, ctx)?;
         source_eval.materialize(ctx, self.catalog, self.storage, self.clock)
     }
+
+    /// Executes a simple non-grouped, non-distinct SELECT and also captures
+    /// the underlying base-table row indices for each output row so that
+    /// updatable CTEs (`WITH cte AS (...) UPDATE/DELETE cte`) can map rows
+    /// back to storage.
+    pub fn execute_select_with_base_targets(
+        &self,
+        query: RelationalQuery,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(QueryResult, Vec<crate::executor::cte::CteBaseTarget>), DbError> {
+        let can_track = query.set_op.is_none()
+            && query.into_table.is_none()
+            && query.for_xml.is_none()
+            && query.filter.group_by.is_empty()
+            && !query.projection.distinct
+            && query.sort.order_by.is_empty()
+            && query.pagination.top.is_none()
+            && query.pagination.offset.is_none()
+            && query.pagination.fetch.is_none();
+
+        if !can_track {
+            let res = self.execute_select(query, ctx)?;
+            return Ok((res, Vec::new()));
+        }
+
+        super::from_tree::enforce_query_governor_cost_limit(&query, ctx)?;
+        let mut source_eval = source::execute_source(self, &query, ctx)?;
+        let source_shape = source_eval.shape.clone();
+        let source_rows =
+            source_eval.materialize(ctx, self.catalog, self.storage, self.clock)?;
+
+        // Collect base-table storage indices aligned 1:1 with source_rows before projection.
+        let mut base_targets: Vec<crate::executor::cte::CteBaseTarget> = Vec::new();
+        for (pos, ct) in source_shape.iter().enumerate() {
+            if ct.table.id > 0 {
+                let row_indices = source_rows
+                    .iter()
+                    .map(|jr| jr.get(pos).and_then(|c| c.storage_index))
+                    .collect();
+                base_targets.push(crate::executor::cte::CteBaseTarget {
+                    table_def: ct.table.clone(),
+                    row_indices,
+                });
+            }
+        }
+
+        let shape_opt = if source_shape.is_empty() {
+            None
+        } else {
+            Some(&source_shape)
+        };
+        let mut result = super::finalize::finalize_rows(self, &query, source_rows, shape_opt, ctx)?;
+        if ctx.options.rowcount > 0 && result.rows.len() > ctx.options.rowcount as usize {
+            result.rows.truncate(ctx.options.rowcount as usize);
+            for bt in &mut base_targets {
+                bt.row_indices.truncate(result.rows.len());
+            }
+        }
+        // Only expose base targets when row count stayed 1:1 (no implicit aggregate collapse).
+        if base_targets
+            .first()
+            .is_some_and(|bt| bt.row_indices.len() != result.rows.len())
+        {
+            base_targets.clear();
+        }
+        Ok((result, base_targets))
+    }
 }
 
 fn format_for_xml_result(

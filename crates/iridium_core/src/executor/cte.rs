@@ -5,9 +5,16 @@ use std::collections::HashMap;
 use super::string_norm::normalize_identifier;
 
 #[derive(Debug, Clone)]
+pub struct CteBaseTarget {
+    pub table_def: TableDef,
+    pub row_indices: Vec<Option<usize>>,
+}
+
+#[derive(Debug, Clone)]
 pub struct CteTable {
     pub table_def: TableDef,
     pub rows: Vec<StoredRow>,
+    pub base_targets: Vec<CteBaseTarget>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -21,8 +28,24 @@ impl CteStorage {
     }
 
     pub fn insert(&mut self, name: &str, table_def: TableDef, rows: Vec<StoredRow>) {
-        self.tables
-            .insert(normalize_identifier(name), CteTable { table_def, rows });
+        self.insert_with_base(name, table_def, rows, Vec::new());
+    }
+
+    pub fn insert_with_base(
+        &mut self,
+        name: &str,
+        table_def: TableDef,
+        rows: Vec<StoredRow>,
+        base_targets: Vec<CteBaseTarget>,
+    ) {
+        self.tables.insert(
+            normalize_identifier(name),
+            CteTable {
+                table_def,
+                rows,
+                base_targets,
+            },
+        );
     }
 
     pub fn get(&self, name: &str) -> Option<&CteTable> {

@@ -36,9 +36,14 @@ impl<'a> ScriptExecutor<'a> {
         )?;
 
         let severity = match severity_val {
-            crate::types::Value::Int(v) => v,
+            crate::types::Value::Bit(b) => i32::from(b),
             crate::types::Value::TinyInt(v) => v as i32,
             crate::types::Value::SmallInt(v) => v as i32,
+            crate::types::Value::Int(v) => v,
+            crate::types::Value::BigInt(v) => v as i32,
+            crate::types::Value::Decimal(raw, scale) => {
+                (raw / 10i128.pow(scale as u32)) as i32
+            }
             _ => 16,
         };
 
@@ -54,18 +59,18 @@ impl<'a> ScriptExecutor<'a> {
             format_raiserror_message(&msg_val.to_string_value(), &formatted_args)
         };
 
-        if severity >= 16 {
-            // For now, we'll treat high severity as an execution error
+        if severity >= 11 {
+            // Severities 11+ are user errors; 0-10 are informational messages.
             Err(DbError::Execution(msg))
         } else {
-            // Low severity just prints
+            // Informational severity prints without aborting execution.
             ctx.session.print_output.push(msg);
             Ok(None)
         }
     }
 }
 
-fn format_raiserror_message(template: &str, args: &[String]) -> String {
+pub(crate) fn format_raiserror_message(template: &str, args: &[String]) -> String {
     let mut out = String::with_capacity(template.len());
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;

@@ -208,21 +208,66 @@ impl<'a> ScriptExecutor<'a> {
                 ));
             } else {
                 // Standard non-recursive CTE
-                let saved_sink = ctx.frame.result_set_sink.take();
-                let saved_last = ctx.frame.last_proc_result.take();
-                let cte_outcome = self.execute(cte_def.query.clone(), ctx);
-                ctx.frame.result_set_sink = saved_sink;
-                ctx.frame.last_proc_result = saved_last;
-                let cte_outcome = cte_outcome?;
-                let result = match cte_outcome {
-                    StmtOutcome::Ok(Some(r)) => r,
-                    StmtOutcome::Ok(None) => {
-                        return Err(DbError::Execution(
-                            "CTE query must return a result set".into(),
-                        ))
+                let track_base = matches!(
+                    stmt.body.as_ref(),
+                    crate::ast::Statement::Dml(
+                        crate::ast::DmlStatement::Update(_)
+                            | crate::ast::DmlStatement::Delete(_)
+                            | crate::ast::DmlStatement::Merge(_)
+                    )
+                );
+                let (result, base_targets) = if track_base {
+                    if let crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(
+                        select_stmt,
+                    )) = &cte_def.query
+                    {
+                        let qe = crate::executor::query::QueryExecutor {
+                            catalog: self.catalog,
+                            storage: self.storage,
+                            clock: self.clock,
+                        };
+                        qe.execute_select_with_base_targets(
+                            crate::executor::query::plan::RelationalQuery::from(
+                                select_stmt.clone(),
+                            ),
+                            ctx,
+                        )?
+                    } else {
+                        let saved_sink = ctx.frame.result_set_sink.take();
+                        let saved_last = ctx.frame.last_proc_result.take();
+                        let cte_outcome = self.execute(cte_def.query.clone(), ctx);
+                        ctx.frame.result_set_sink = saved_sink;
+                        ctx.frame.last_proc_result = saved_last;
+                        let cte_outcome = cte_outcome?;
+                        let r = match cte_outcome {
+                            StmtOutcome::Ok(Some(r)) => r,
+                            StmtOutcome::Ok(None) => {
+                                return Err(DbError::Execution(
+                                    "CTE query must return a result set".into(),
+                                ))
+                            }
+                            other => return other.into_result(),
+                        };
+                        (r, Vec::new())
                     }
-                    // Propagate control flow
-                    other => return other.into_result(),
+                } else {
+                    let saved_sink = ctx.frame.result_set_sink.take();
+                    let saved_last = ctx.frame.last_proc_result.take();
+                    let cte_outcome = self.execute(cte_def.query.clone(), ctx);
+                    ctx.frame.result_set_sink = saved_sink;
+                    ctx.frame.last_proc_result = saved_last;
+                    let cte_outcome = cte_outcome?;
+                    let r = match cte_outcome {
+                        StmtOutcome::Ok(Some(r)) => r,
+                        StmtOutcome::Ok(None) => {
+                            return Err(DbError::Execution(
+                                "CTE query must return a result set".into(),
+                            ))
+                        }
+                        // Propagate control flow
+                        other => return other.into_result(),
+                    };
+                    (r, Vec::new())
                 };
 
                 let table_def = TableDef {
@@ -265,7 +310,9 @@ impl<'a> ScriptExecutor<'a> {
                     })
                     .collect();
 
-                ctx.row.ctes.insert(&cte_def.name, table_def, rows);
+                ctx.row
+                    .ctes
+                    .insert_with_base(&cte_def.name, table_def, rows, base_targets);
             }
         }
 

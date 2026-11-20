@@ -18,6 +18,15 @@ pub struct SelectStmt {
     pub offset: Option<Expr>,
     pub fetch: Option<Expr>,
     pub set_op: Option<Box<SetOp>>,
+    pub for_xml: Option<Box<ForXmlClause>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ForXmlClause {
+    pub mode: String,
+    pub path: Option<String>,
+    pub root: Option<String>,
+    pub type_directive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

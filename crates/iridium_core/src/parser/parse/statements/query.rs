@@ -42,8 +42,104 @@ pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
         target.set_op = Some(Box::new(SetOp { kind, right }));
     }
 
+    if let Some(for_xml) = parse_for_xml_clause(parser)? {
+        current.for_xml = Some(Box::new(for_xml));
+    }
+
     skip_query_option_clause(parser)?;
     Ok(current)
+}
+
+fn parse_for_xml_clause(parser: &mut Parser) -> ParseResult<Option<ForXmlClause>> {
+    if !parser.at_keyword(Keyword::For) {
+        return Ok(None);
+    }
+    let is_xml = match parser.peek_at(1) {
+        Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("XML"),
+        Some(Token::Keyword(k)) => k.as_sql().eq_ignore_ascii_case("XML"),
+        _ => false,
+    };
+    if !is_xml {
+        return Ok(None);
+    }
+    let _ = parser.next(); // FOR
+    let _ = parser.next(); // XML
+
+    let mode = match parser.next() {
+        Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+        Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+        _ => return parser.backtrack(Expected::Description("XML mode (PATH, RAW, AUTO, EXPLICIT)")),
+    };
+
+    let mut path = None;
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        if let Some(Token::String(s)) | Some(Token::NString(s)) = parser.peek() {
+            path = Some(s.clone());
+            let _ = parser.next();
+        }
+        parser.expect_rparen()?;
+    }
+
+    let mut root = None;
+    let mut type_directive = false;
+    while matches!(parser.peek(), Some(Token::Comma)) {
+        let _ = parser.next();
+        let dir = match parser.peek() {
+            Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+            Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+            _ => break,
+        };
+        let _ = parser.next();
+        match dir.as_str() {
+            "TYPE" => type_directive = true,
+            "ROOT" => {
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    if let Some(Token::String(s)) | Some(Token::NString(s)) = parser.peek() {
+                        root = Some(s.clone());
+                        let _ = parser.next();
+                    }
+                    parser.expect_rparen()?;
+                } else {
+                    root = Some("root".to_string());
+                }
+            }
+            "ELEMENTS" => {
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("XSINIL") || id.eq_ignore_ascii_case("ABSENT"))
+                {
+                    let _ = parser.next();
+                }
+            }
+            "BINARY" => {
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("BASE64"))
+                {
+                    let _ = parser.next();
+                }
+            }
+            _ => {
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    let mut depth = 1usize;
+                    while depth > 0 {
+                        match parser.next() {
+                            Some(Token::LParen) => depth += 1,
+                            Some(Token::RParen) => depth -= 1,
+                            Some(_) => {}
+                            None => return parser.backtrack(Expected::Description(")")),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Some(ForXmlClause {
+        mode,
+        path,
+        root,
+        type_directive,
+    }))
 }
 
 pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
@@ -155,6 +251,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
                     offset: None,
                     fetch: None,
                     set_op: None,
+                    for_xml: None,
                 };
                 applies.push(ApplyClause {
                     apply_type,
@@ -268,6 +365,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         offset,
         fetch,
         set_op: None,
+        for_xml: None,
     })
 }
 

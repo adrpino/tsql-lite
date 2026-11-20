@@ -107,6 +107,7 @@ impl<'a> ScriptExecutor<'a> {
             },
             into_table: None,
             set_op: None,
+            for_xml: None,
         };
         let has_agg = stmt
             .targets

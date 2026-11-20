@@ -991,3 +991,56 @@ fn query_join_after_apply_inline_tvf_cte_and_keyword_aliases() {
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r2.rows[0][1], Value::VarChar("Beta".to_string()));
 }
+
+#[test]
+fn query_for_xml_path_stuff_concatenation_and_type_value() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.groups (id INT, title VARCHAR(20))");
+    exec(&mut e, "CREATE TABLE dbo.tags (group_id INT, tag VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.groups VALUES (1, 'G1'), (2, 'G2')");
+    exec(
+        &mut e,
+        "INSERT INTO dbo.tags VALUES (1, 'b'), (1, 'a'), (1, 'c')",
+    );
+
+    // 1. Classic STUFF + FOR XML PATH('') string aggregation
+    let r1 = query(
+        &mut e,
+        "SELECT g.id,
+                STUFF((
+                    SELECT ',' + t.tag
+                    FROM dbo.tags t
+                    WHERE t.group_id = g.id
+                    ORDER BY t.tag
+                    FOR XML PATH('')
+                ), 1, 1, '') AS csv
+         FROM dbo.groups g
+         ORDER BY g.id",
+    );
+    assert_eq!(r1.rows.len(), 2);
+    assert_eq!(r1.rows[0][1].to_string_value(), "a,b,c");
+    assert_eq!(r1.rows[1][1], Value::Null);
+
+    // 2. FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)')
+    let r2 = query(
+        &mut e,
+        "SELECT STUFF((
+             SELECT ';' + t.tag
+             FROM dbo.tags t
+             WHERE t.group_id = 1
+             ORDER BY t.tag
+             FOR XML PATH(''), TYPE
+         ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') AS semi",
+    );
+    assert_eq!(r2.rows[0][0].to_string_value(), "a;b;c");
+
+    // 3. Named row element + ROOT
+    let r3 = query(
+        &mut e,
+        "SELECT t.tag FROM dbo.tags t ORDER BY t.tag FOR XML PATH('item'), ROOT('items')",
+    );
+    assert_eq!(
+        r3.rows[0][0].to_string_value(),
+        "<items><item><tag>a</tag></item><item><tag>b</tag></item><item><tag>c</tag></item></items>"
+    );
+}

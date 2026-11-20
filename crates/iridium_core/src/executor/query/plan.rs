@@ -1,6 +1,6 @@
 use crate::ast::{
-    ApplyClause, Expr, FromNode, ObjectName, OrderByExpr, SelectItem, SelectStmt, SetOpClause,
-    TopSpec,
+    ApplyClause, Expr, ForXmlClause, FromNode, ObjectName, OrderByExpr, SelectItem, SelectStmt,
+    SetOpClause, TopSpec,
 };
 
 #[derive(Debug, Clone)]
@@ -38,6 +38,7 @@ pub(crate) struct RelationalQuery {
     pub(crate) pagination: PaginationPlan,
     pub(crate) into_table: Option<ObjectName>,
     pub(crate) set_op: Option<Box<SetOpClause>>,
+    pub(crate) for_xml: Option<Box<ForXmlClause>>,
 }
 
 impl From<SelectStmt> for RelationalQuery {
@@ -64,6 +65,7 @@ impl From<SelectStmt> for RelationalQuery {
             },
             into_table: stmt.into_table,
             set_op: stmt.set_op,
+            for_xml: stmt.for_xml,
         }
     }
 }

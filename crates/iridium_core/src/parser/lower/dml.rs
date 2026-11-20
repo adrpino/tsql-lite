@@ -143,6 +143,7 @@ pub fn lower_select(
                         offset: None,
                         fetch: None,
                         set_op: None,
+                        for_xml: None,
                     },
                 };
                 Ok(executor_ast::statements::query::ApplyClause {
@@ -170,6 +171,14 @@ pub fn lower_select(
         offset: s.offset.map(lower_expr).transpose()?,
         fetch: s.fetch.map(lower_expr).transpose()?,
         set_op: lower_set_op(s.set_op)?,
+        for_xml: s.for_xml.map(|fx| {
+            Box::new(executor_ast::statements::query::ForXmlClause {
+                mode: fx.mode,
+                path: fx.path,
+                root: fx.root,
+                type_directive: fx.type_directive,
+            })
+        }),
     })
 }
 
@@ -246,6 +255,7 @@ fn lower_joined_group_as_select(
         offset: None,
         fetch: None,
         set_op: None,
+        for_xml: None,
     })
 }
 

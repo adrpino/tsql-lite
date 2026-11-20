@@ -209,6 +209,28 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
                 parse_expr(parser)?
             };
             parser.expect_rparen()?;
+            // Support SQL Server XML .value(xpath, sqltype) postfix on parenthesized subqueries/expressions,
+            // e.g. (SELECT ',' + name FROM t FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)')
+            if matches!(parser.peek(), Some(Token::Dot))
+                && matches!(
+                    parser.peek_at(1),
+                    Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("VALUE")
+                ) || (matches!(parser.peek(), Some(Token::Dot))
+                    && matches!(
+                        parser.peek_at(1),
+                        Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("VALUE")
+                    ))
+            {
+                if matches!(parser.peek_at(2), Some(Token::LParen)) {
+                    let _ = parser.next(); // .
+                    let _ = parser.next(); // value
+                    let _ = parser.next(); // (
+                    let _xpath = parse_expr(parser)?;
+                    parser.expect_comma()?;
+                    let _sql_type = parse_expr(parser)?;
+                    parser.expect_rparen()?;
+                }
+            }
             Ok(expr)
         }
         Some(Token::Star) => {

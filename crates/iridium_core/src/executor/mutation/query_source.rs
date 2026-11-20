@@ -37,6 +37,7 @@ pub(crate) fn build_mutation_query(
             fetch: None,
         },
         set_op: None,
+        for_xml: None,
     }
 }
 

@@ -346,6 +346,7 @@ pub enum CreateStmt {
     },
     View {
         name: Vec<String>,
+        columns: Vec<String>,
         query: SelectStmt,
     },
     Procedure {

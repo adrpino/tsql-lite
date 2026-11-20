@@ -203,14 +203,42 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                 },
             ),
         )),
-        ast::CreateStmt::View { name, query } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::CreateView(
-                executor_ast::statements::ddl::CreateViewStmt {
-                    name: lower_object_name(name),
-                    query: lower_select(query)?,
-                },
-            ),
-        )),
+        ast::CreateStmt::View {
+            name,
+            columns,
+            query,
+        } => {
+            let mut lowered_query = lower_select(query)?;
+            if !columns.is_empty() {
+                let has_wildcard = lowered_query.projection.iter().any(|item| {
+                    matches!(
+                        item.expr,
+                        executor_ast::expressions::Expr::Wildcard
+                            | executor_ast::expressions::Expr::QualifiedWildcard(_)
+                    )
+                });
+                if !has_wildcard {
+                    if columns.len() != lowered_query.projection.len() {
+                        return Err(DbError::Semantic(format!(
+                            "CREATE VIEW column list specifies {} column(s), but SELECT list has {}",
+                            columns.len(),
+                            lowered_query.projection.len()
+                        )));
+                    }
+                    for (item, col_name) in lowered_query.projection.iter_mut().zip(columns) {
+                        item.alias = Some(col_name);
+                    }
+                }
+            }
+            Ok(executor_ast::Statement::Procedural(
+                executor_ast::statements::ProceduralStatement::CreateView(
+                    executor_ast::statements::ddl::CreateViewStmt {
+                        name: lower_object_name(name),
+                        query: lowered_query,
+                    },
+                ),
+            ))
+        }
         ast::CreateStmt::Procedure { name, params, body } => {
             Ok(executor_ast::Statement::Procedural(
                 executor_ast::statements::ProceduralStatement::CreateProcedure(

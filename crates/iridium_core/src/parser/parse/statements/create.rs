@@ -17,9 +17,43 @@ pub fn parse_create_table(parser: &mut Parser) -> ParseResult<CreateStmt> {
 
 pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
     let name = super::parse_multipart_name(parser)?;
+    let mut columns = Vec::new();
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        columns = crate::parser::parse::parse_comma_list(parser, |p| match p.next() {
+            Some(Token::Identifier(id)) => Ok(id.clone()),
+            Some(Token::Keyword(k)) => Ok(k.as_ref().to_string()),
+            _ => p.backtrack(Expected::Description("column name")),
+        })?;
+        parser.expect_rparen()?;
+    }
+    if parser.at_keyword(Keyword::With) {
+        let _ = parser.next();
+        let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.next() {
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("SCHEMABINDING")
+                    || id.eq_ignore_ascii_case("ENCRYPTION")
+                    || id.eq_ignore_ascii_case("VIEW_METADATA") =>
+            {
+                Ok(())
+            }
+            Some(Token::Keyword(k))
+                if k.as_ref().eq_ignore_ascii_case("SCHEMABINDING")
+                    || k.as_ref().eq_ignore_ascii_case("ENCRYPTION")
+                    || k.as_ref().eq_ignore_ascii_case("VIEW_METADATA") =>
+            {
+                Ok(())
+            }
+            _ => p.backtrack(Expected::Description("view attribute")),
+        })?;
+    }
     parser.expect_keyword(Keyword::As)?;
     let query = crate::parser::parse::statements::query::parse_select(parser)?;
-    Ok(CreateStmt::View { name, query })
+    Ok(CreateStmt::View {
+        name,
+        columns,
+        query,
+    })
 }
 
 pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {

@@ -29,7 +29,13 @@ impl FrameState {
         if self.table_vars.len() > 1 {
             if let Some(scope) = self.table_vars.pop() {
                 for (logical, physical) in scope {
-                    dropped_physical.push(physical.clone());
+                    let owned_by_outer = self
+                        .table_vars
+                        .iter()
+                        .any(|outer| outer.values().any(|p| p.eq_ignore_ascii_case(&physical)));
+                    if !owned_by_outer {
+                        dropped_physical.push(physical.clone());
+                    }
                     if session
                         .var_map
                         .get(&logical)

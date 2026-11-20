@@ -444,3 +444,43 @@ fn procedural_select_assign_accumulates_row_by_row() {
     let r2 = query(&mut e, "SELECT @max_id");
     assert_eq!(r2.rows[0][0], Value::Int(103));
 }
+
+#[test]
+fn procedural_nested_exec_preserves_caller_variables_and_tvp() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TYPE dbo.IntList AS TABLE (n INT)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_inner @id INT, @items dbo.IntList READONLY, @sum INT OUTPUT
+        AS
+        BEGIN
+            SELECT @sum = SUM(n) FROM @items;
+            SET @sum = @id + ISNULL(@sum, 0);
+        END",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_outer @id INT, @items dbo.IntList READONLY
+        AS
+        BEGIN
+            DECLARE @inner_sum INT = 0;
+            EXEC dbo.p_inner @id = @id, @items = @items, @sum = @inner_sum OUTPUT;
+            DECLARE @item_cnt INT = 0;
+            SELECT @item_cnt = COUNT(*) FROM @items;
+            SELECT @id AS outer_id, @inner_sum AS inner_sum, @item_cnt AS item_cnt;
+        END",
+    );
+    exec(
+        &mut e,
+        "BEGIN
+            DECLARE @vals dbo.IntList;
+            INSERT INTO @vals VALUES (10), (20);
+            CREATE TABLE #out (outer_id INT, inner_sum INT, item_cnt INT);
+            INSERT INTO #out EXEC dbo.p_outer @id = 5, @items = @vals;
+        END",
+    );
+    let r = query(&mut e, "SELECT outer_id, inner_sum, item_cnt FROM #out");
+    assert_eq!(r.rows[0][0], Value::Int(5));
+    assert_eq!(r.rows[0][1], Value::Int(35));
+    assert_eq!(r.rows[0][2], Value::Int(2));
+}

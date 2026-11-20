@@ -166,8 +166,21 @@ impl<'a> ScriptExecutor<'a> {
                 }
             }
 
-            ctx.enter_scope();
-            let mut output_bindings: Vec<(String, String)> = vec![];
+            enum PreparedArg {
+                Scalar {
+                    name: String,
+                    ty: crate::types::DataType,
+                    val: Value,
+                    output_caller: Option<String>,
+                },
+                Tvp {
+                    name: String,
+                    physical: String,
+                    is_readonly: bool,
+                },
+            }
+
+            let mut prepared: Vec<PreparedArg> = Vec::with_capacity(params.len());
             for (idx, param) in params.iter().enumerate() {
                 let arg = bound_args[idx];
                 let Some(arg) = arg else {
@@ -185,10 +198,12 @@ impl<'a> ScriptExecutor<'a> {
                             &ty,
                             &ctx.options.dateformat,
                         )?;
-                        ctx.session
-                            .variables
-                            .insert(param.name.clone(), (ty, coerced));
-                        ctx.register_declared_var(&param.name);
+                        prepared.push(PreparedArg::Scalar {
+                            name: param.name.clone(),
+                            ty,
+                            val: coerced,
+                            output_caller: None,
+                        });
                         continue;
                     }
                     return Err(DbError::Execution(format!(
@@ -206,15 +221,21 @@ impl<'a> ScriptExecutor<'a> {
                             &ty,
                             &ctx.options.dateformat,
                         )?;
-                        ctx.session
-                            .variables
-                            .insert(param.name.clone(), (ty, coerced));
-                        ctx.register_declared_var(&param.name);
-                        if param.is_output && arg.is_output {
+                        let output_caller = if param.is_output && arg.is_output {
                             if let crate::ast::Expr::Identifier(ref caller) = arg.expr {
-                                output_bindings.push((param.name.clone(), caller.clone()));
+                                Some(caller.clone())
+                            } else {
+                                None
                             }
-                        }
+                        } else {
+                            None
+                        };
+                        prepared.push(PreparedArg::Scalar {
+                            name: param.name.clone(),
+                            ty,
+                            val: coerced,
+                            output_caller,
+                        });
                     }
                     RoutineParamType::TableType(type_name) => {
                         let logical = resolve_table_identifier(&arg.expr)?.to_string();
@@ -238,9 +259,47 @@ impl<'a> ScriptExecutor<'a> {
                                 ))
                             })?;
                         validate_table_matches_type(self.catalog, table, tdef)?;
-                        ctx.register_table_var(&param.name, &physical);
-                        if param.is_readonly {
-                            ctx.mark_table_var_readonly(&param.name);
+                        prepared.push(PreparedArg::Tvp {
+                            name: param.name.clone(),
+                            physical,
+                            is_readonly: param.is_readonly,
+                        });
+                    }
+                }
+            }
+
+            // Isolate callee variable scope from caller while preserving @@ system keys.
+            let mut saved_caller_vars = std::mem::take(ctx.session.variables);
+            for (k, v) in &saved_caller_vars {
+                if k.starts_with("@@") {
+                    ctx.session.variables.insert(k.clone(), v.clone());
+                }
+            }
+
+            ctx.enter_scope();
+            let mut output_bindings: Vec<(String, String)> = vec![];
+            for item in prepared {
+                match item {
+                    PreparedArg::Scalar {
+                        name,
+                        ty,
+                        val,
+                        output_caller,
+                    } => {
+                        ctx.session.variables.insert(name.clone(), (ty, val));
+                        ctx.register_declared_var(&name);
+                        if let Some(caller) = output_caller {
+                            output_bindings.push((name, caller));
+                        }
+                    }
+                    PreparedArg::Tvp {
+                        name,
+                        physical,
+                        is_readonly,
+                    } => {
+                        ctx.register_table_var(&name, &physical);
+                        if is_readonly {
+                            ctx.mark_table_var_readonly(&name);
                         }
                     }
                 }
@@ -253,7 +312,19 @@ impl<'a> ScriptExecutor<'a> {
                     out_values.push((caller_var.clone(), v.clone()));
                 }
             }
-            self.leave_scope_and_cleanup(ctx)?;
+            let updated_sys_vars: Vec<(String, (crate::types::DataType, Value))> = ctx
+                .session
+                .variables
+                .iter()
+                .filter(|(k, _)| k.starts_with("@@"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let cleanup_res = self.leave_scope_and_cleanup(ctx);
+            for (k, v) in updated_sys_vars {
+                saved_caller_vars.insert(k, v);
+            }
+            *ctx.session.variables = saved_caller_vars;
+            cleanup_res?;
             for (caller_var, val) in out_values {
                 if let Some((ty, out_var)) = ctx.session.get_var_mut(&caller_var) {
                     *out_var =

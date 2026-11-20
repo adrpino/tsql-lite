@@ -418,6 +418,7 @@ pub(crate) fn alter_table(executor: &mut SchemaExecutor<'_>, stmt: AlterTableStm
                 .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
             apply_table_constraint(table_mut, constraint)?;
         }
+        AlterTableAction::CheckConstraint { .. } => {}
         AlterTableAction::DropConstraint(constraint_name) => {
             let table_mut = executor
                 .catalog

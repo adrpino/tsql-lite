@@ -432,6 +432,10 @@ pub enum AlterTableAction {
     },
     AddConstraint(TableConstraint),
     DropConstraint(String),
+    CheckConstraint {
+        check: bool,
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

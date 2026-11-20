@@ -7,6 +7,39 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
     if parser.at_keyword(Keyword::Table) {
         let _ = parser.next();
         let table = super::parse_multipart_name(parser)?;
+        // Optional WITH CHECK / WITH NOCHECK prefix before ADD, CHECK, or NOCHECK
+        if parser.at_keyword(Keyword::With) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if parser.at_keyword(Keyword::Check)
+                || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"))
+            {
+                let _ = parser.next();
+            } else {
+                parser.restore(saved);
+            }
+        }
+        let is_nocheck =
+            matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"));
+        if parser.at_keyword(Keyword::Check) || is_nocheck {
+            let check = !is_nocheck;
+            let _ = parser.next();
+            parser.expect_keyword(Keyword::Constraint)?;
+            let name = if parser.at_keyword(Keyword::All) {
+                let _ = parser.next();
+                None
+            } else {
+                match parser.next() {
+                    Some(Token::Identifier(id)) => Some(id.clone()),
+                    Some(Token::Keyword(k)) => Some(k.as_ref().to_string()),
+                    _ => return parser.backtrack(Expected::Description("constraint name or ALL")),
+                }
+            };
+            return Ok(Statement::Ddl(DdlStatement::AlterTable {
+                table,
+                action: AlterTableAction::CheckConstraint { check, name },
+            }));
+        }
         if parser.at_keyword(Keyword::Add) {
             let _ = parser.next();
             if parser.at_keyword(Keyword::Constraint) {

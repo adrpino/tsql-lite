@@ -56,8 +56,28 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
     }
     let table = super::parse_multipart_name(parser)?;
 
+    // Optional table hints: INSERT [INTO] tbl WITH (TABLOCK, ...)
+    if parser.at_keyword(Keyword::With) && matches!(parser.peek_at(1), Some(Token::LParen)) {
+        let _ = parser.next(); // WITH
+        let _ = parser.next(); // (
+        let mut depth = 1usize;
+        while depth > 0 {
+            match parser.next() {
+                Some(Token::LParen) => depth += 1,
+                Some(Token::RParen) => depth -= 1,
+                Some(_) => {}
+                None => return parser.backtrack(Expected::Description(")")),
+            }
+        }
+    }
+
     let mut columns = Vec::new();
-    if matches!(parser.peek(), Some(Token::LParen)) {
+    if matches!(parser.peek(), Some(Token::LParen))
+        && !matches!(
+            parser.peek_at(1),
+            Some(Token::Keyword(Keyword::Select | Keyword::With))
+        )
+    {
         let _ = parser.next();
         columns = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
             if let Some(tok) = p.next() {
@@ -133,6 +153,8 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
         _ => return parser.backtrack(Expected::Description("VALUES, SELECT, or EXEC")),
     };
 
+    crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
+
     Ok(InsertStmt {
         table,
         columns,
@@ -184,6 +206,8 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
         let _ = parser.next();
         selection = Some(crate::parser::parse::expressions::parse_expr(parser)?);
     }
+
+    crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
 
     Ok(UpdateStmt {
         table,
@@ -268,6 +292,8 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         let _ = parser.next();
         selection = Some(crate::parser::parse::expressions::parse_expr(parser)?);
     }
+
+    crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
 
     Ok(DeleteStmt {
         table,
@@ -631,6 +657,8 @@ pub fn parse_merge(parser: &mut Parser) -> ParseResult<MergeStmt> {
         output = Some(out_cols);
         output_into = out_into;
     }
+
+    crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
 
     Ok(MergeStmt {
         target,

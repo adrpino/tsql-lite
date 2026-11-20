@@ -42,7 +42,30 @@ pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
         target.set_op = Some(Box::new(SetOp { kind, right }));
     }
 
+    skip_query_option_clause(parser)?;
     Ok(current)
+}
+
+pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
+    let is_option = match parser.peek() {
+        Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("OPTION"),
+        Some(Token::Keyword(k)) => k.as_sql().eq_ignore_ascii_case("OPTION"),
+        _ => false,
+    };
+    if is_option && matches!(parser.peek_at(1), Some(Token::LParen)) {
+        let _ = parser.next(); // OPTION
+        let _ = parser.next(); // (
+        let mut depth = 1usize;
+        while depth > 0 {
+            match parser.next() {
+                Some(Token::LParen) => depth += 1,
+                Some(Token::RParen) => depth -= 1,
+                Some(_) => {}
+                None => return parser.backtrack(Expected::Description(")")),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_single_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
@@ -520,7 +543,9 @@ fn parse_optional_alias(parser: &mut Parser) -> Option<String> {
             }
         }
         Some(Token::Identifier(alias))
-            if !crate::parser::parse::expressions::is_stop_keyword(alias) =>
+            if !crate::parser::parse::expressions::is_stop_keyword(alias)
+                && !(alias.eq_ignore_ascii_case("OPTION")
+                    && matches!(parser.peek_at(1), Some(Token::LParen))) =>
         {
             let alias = alias.clone();
             let _ = parser.next();
@@ -561,7 +586,10 @@ pub fn parse_select_item(parser: &mut Parser) -> ParseResult<SelectItem> {
             None
         }
     } else if let Some(Token::Identifier(alias)) = parser.peek() {
-        if !crate::parser::parse::expressions::is_stop_keyword(alias) {
+        if !crate::parser::parse::expressions::is_stop_keyword(alias)
+            && !(alias.eq_ignore_ascii_case("OPTION")
+                && matches!(parser.peek_at(1), Some(Token::LParen)))
+        {
             let alias = alias.clone();
             let _ = parser.next();
             Some(alias)

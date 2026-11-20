@@ -449,6 +449,9 @@ pub fn lower_alter_action(
         ast::AlterTableAction::DropConstraint(c) => {
             Ok(executor_ast::statements::ddl::AlterTableAction::DropConstraint(c))
         }
+        ast::AlterTableAction::CheckConstraint { check, name } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::CheckConstraint { check, name },
+        ),
     }
 }
 

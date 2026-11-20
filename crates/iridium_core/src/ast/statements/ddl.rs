@@ -109,6 +109,10 @@ pub enum AlterTableAction {
     },
     AddConstraint(TableConstraintSpec),
     DropConstraint(String),
+    CheckConstraint {
+        check: bool,
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -813,3 +813,50 @@ fn procedural_raiserror_options_if_semicolon_else_and_cursor_options() {
     let rc = query(&mut e, "EXEC dbo.p_cursor_opts");
     assert_eq!(rc.rows[0][0].to_integer_i64(), Some(30));
 }
+
+#[test]
+fn ddl_dml_inline_index_trailing_comma_table_hints_option_and_nocheck() {
+    let mut e = Engine::new();
+
+    // 1. CREATE TABLE with trailing comma, inline INDEX, and PK without preceding comma
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_inline (
+            id INT NOT NULL,
+            code VARCHAR(20) NOT NULL,
+            INDEX IX_code UNIQUE NONCLUSTERED (code),
+        )",
+    );
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_nocomma_pk (
+            id INT NOT NULL
+            PRIMARY KEY (id)
+        )",
+    );
+
+    // 2. ALTER TABLE ... NOCHECK / CHECK CONSTRAINT
+    exec(&mut e, "ALTER TABLE dbo.t_inline NOCHECK CONSTRAINT ALL");
+    exec(&mut e, "ALTER TABLE dbo.t_inline WITH CHECK CHECK CONSTRAINT ALL");
+
+    // 3. INSERT ... WITH (TABLOCK) and trailing OPTION (RECOMPILE)
+    exec(
+        &mut e,
+        "INSERT INTO dbo.t_inline WITH (TABLOCK) (id, code)
+         SELECT 1, 'A'
+         OPTION (RECOMPILE)",
+    );
+    exec(
+        &mut e,
+        "INSERT dbo.t_nocomma_pk WITH (TABLOCK) (id)
+         SELECT id FROM dbo.t_inline
+         OPTION (MAXRECURSION 0)",
+    );
+    let r = query(
+        &mut e,
+        "SELECT id, code FROM dbo.t_inline ORDER BY id OPTION (RECOMPILE)",
+    );
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r.rows[0][1], Value::VarChar("A".to_string()));
+}

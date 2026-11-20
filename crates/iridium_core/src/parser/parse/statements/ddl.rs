@@ -86,17 +86,24 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                 is_identity = true;
             }
             Keyword::Primary => {
+                // If PRIMARY KEY [CLUSTERED|NONCLUSTERED] is followed by '(', it is a table-level
+                // constraint placed after a column definition without a separating comma.
+                let saved = parser.save();
                 let _ = parser.next();
                 parser.expect_keyword(Keyword::Key)?;
+                let mut col_clustered = true;
                 if parser.at_keyword(Keyword::Clustered) {
                     let _ = parser.next();
-                    is_clustered = true;
+                    col_clustered = true;
                 } else if parser.at_keyword(Keyword::Nonclustered) {
                     let _ = parser.next();
-                    is_clustered = false;
-                } else {
-                    is_clustered = true; // PRIMARY KEY is clustered by default
+                    col_clustered = false;
                 }
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    parser.restore(saved);
+                    break;
+                }
+                is_clustered = col_clustered;
                 is_primary_key = true;
             }
             Keyword::Unique => {
@@ -207,34 +214,125 @@ pub fn parse_table_body(
     let mut constraints = Vec::new();
 
     loop {
-        let mut is_constraint = false;
-        if let Some(Token::Keyword(kw)) = parser.peek() {
-            if matches!(
-                kw,
-                Keyword::Constraint
-                    | Keyword::Primary
-                    | Keyword::Unique
-                    | Keyword::Foreign
-                    | Keyword::Check
-            ) {
-                is_constraint = true;
-            }
+        if matches!(parser.peek(), Some(Token::RParen)) || parser.is_empty() {
+            break;
         }
 
-        if is_constraint {
-            constraints.push(parse_table_constraint(parser)?);
+        // Inline table index definition: INDEX name [UNIQUE] [CLUSTERED|NONCLUSTERED] (cols) [INCLUDE (...)] [WHERE ...] [WITH (...)]
+        let is_inline_index = matches!(parser.peek(), Some(Token::Keyword(Keyword::Index)))
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INDEX"));
+        if is_inline_index {
+            skip_inline_table_index(parser)?;
         } else {
-            columns.push(parse_column_def(parser)?);
+            let mut is_constraint = false;
+            if let Some(Token::Keyword(kw)) = parser.peek() {
+                if matches!(
+                    kw,
+                    Keyword::Constraint
+                        | Keyword::Primary
+                        | Keyword::Unique
+                        | Keyword::Foreign
+                        | Keyword::Check
+                ) {
+                    is_constraint = true;
+                }
+            }
+
+            if is_constraint {
+                constraints.push(parse_table_constraint(parser)?);
+            } else {
+                columns.push(parse_column_def(parser)?);
+            }
         }
 
         if matches!(parser.peek(), Some(Token::Comma)) {
             let _ = parser.next();
             continue;
         }
+        // T-SQL allows a table-level constraint right after a column definition without a comma.
+        if matches!(
+            parser.peek(),
+            Some(Token::Keyword(
+                Keyword::Constraint
+                    | Keyword::Primary
+                    | Keyword::Unique
+                    | Keyword::Foreign
+                    | Keyword::Check
+                    | Keyword::Index
+            ))
+        ) {
+            continue;
+        }
         break;
     }
 
     Ok((columns, constraints))
+}
+
+fn skip_balanced_parens(parser: &mut Parser) -> ParseResult<()> {
+    parser.expect_lparen()?;
+    let mut depth = 1usize;
+    while depth > 0 {
+        match parser.next() {
+            Some(Token::LParen) => depth += 1,
+            Some(Token::RParen) => depth -= 1,
+            Some(_) => {}
+            None => return parser.backtrack(Expected::Description(")")),
+        }
+    }
+    Ok(())
+}
+
+fn skip_inline_table_index(parser: &mut Parser) -> ParseResult<()> {
+    let _ = parser.next(); // INDEX
+    // Index name
+    match parser.next() {
+        Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+        _ => return parser.backtrack(Expected::Description("index name")),
+    }
+    // Optional UNIQUE / CLUSTERED / NONCLUSTERED in any order
+    loop {
+        if parser.at_keyword(Keyword::Unique)
+            || parser.at_keyword(Keyword::Clustered)
+            || parser.at_keyword(Keyword::Nonclustered)
+        {
+            let _ = parser.next();
+        } else {
+            break;
+        }
+    }
+    // Key columns (...)
+    skip_balanced_parens(parser)?;
+    // Optional INCLUDE (...), WHERE ..., WITH (...), ON filegroup
+    loop {
+        match parser.peek() {
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INCLUDE") => {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    skip_balanced_parens(parser)?;
+                }
+            }
+            Some(Token::Keyword(Keyword::With)) => {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    skip_balanced_parens(parser)?;
+                }
+            }
+            Some(Token::Keyword(Keyword::Where)) => {
+                let _ = parser.next();
+                let _ = crate::parser::parse::expressions::parse_expr(parser)?;
+            }
+            Some(Token::Keyword(Keyword::On)) => {
+                let _ = parser.next();
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    skip_balanced_parens(parser)?;
+                }
+            }
+            _ => break,
+        }
+    }
+    Ok(())
 }
 
 pub fn parse_table_constraint(parser: &mut Parser) -> ParseResult<TableConstraint> {

@@ -92,7 +92,18 @@ impl<'a> ScriptExecutor<'a> {
         }
         .execute_select(RelationalQuery::from(stmt), ctx)?;
 
-        if let Some(target) = into_table {
+        if let Some(mut target) = into_table {
+            if target.name.starts_with('#') {
+                let logical = target.name.clone();
+                let physical = format!("__temp_{}", logical.trim_start_matches('#'));
+                ctx.session.temp_map.insert(
+                    crate::executor::string_norm::normalize_identifier(&logical),
+                    physical.clone(),
+                );
+                target.schema = Some("dbo".to_string());
+                target.name = physical;
+            }
+
             let schema_name = target.schema_or_dbo();
             if self.catalog.find_table(schema_name, &target.name).is_some() {
                 return Err(DbError::duplicate_table(schema_name, &target.name));
@@ -151,6 +162,7 @@ impl<'a> ScriptExecutor<'a> {
                     );
                 }
             }
+            return Ok(None);
         }
 
         Ok(Some(result))

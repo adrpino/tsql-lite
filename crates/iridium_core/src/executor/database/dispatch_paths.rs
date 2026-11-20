@@ -115,20 +115,25 @@ where
         &|sid| dispatch_helpers::lookup_session_deadlock_priority(state, sid),
     )?;
 
-    if let Statement::Dml(DmlStatement::Select(select_stmt)) = stmt {
-        let storage_guard = state.storage.read();
-        let (cat, stor) = storage_guard.get_refs();
-        let qe = super::super::query::QueryExecutor {
-            catalog: cat,
-            storage: stor,
-            clock,
-        };
-        let result = qe.execute_select(
-            super::super::query::plan::RelationalQuery::from(select_stmt),
-            ctx,
-        )?;
-        state.table_locks.lock().release_all_for_session(session_id);
-        return Ok(StmtOutcome::Ok(Some(result)));
+    if let Statement::Dml(DmlStatement::Select(ref select_stmt)) = stmt {
+        if select_stmt.into_table.is_none() {
+            let Statement::Dml(DmlStatement::Select(select_stmt)) = stmt else {
+                unreachable!()
+            };
+            let storage_guard = state.storage.read();
+            let (cat, stor) = storage_guard.get_refs();
+            let qe = super::super::query::QueryExecutor {
+                catalog: cat,
+                storage: stor,
+                clock,
+            };
+            let result = qe.execute_select(
+                super::super::query::plan::RelationalQuery::from(select_stmt),
+                ctx,
+            )?;
+            state.table_locks.lock().release_all_for_session(session_id);
+            return Ok(StmtOutcome::Ok(Some(result)));
+        }
     }
 
     let mut storage_guard = state.storage.write();
@@ -231,7 +236,10 @@ where
         .as_ref()
         .map(|tx| tx.isolation_level)
         .unwrap_or(tx_manager.session_isolation_level);
-    let is_select = matches!(stmt, Statement::Dml(DmlStatement::Select(_)));
+    let is_select = matches!(
+        &stmt,
+        Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
+    );
     let read_uncommitted_dirty = isolation_level == IsolationLevel::ReadUncommitted && is_select;
 
     if tx_manager.active.is_some() {
@@ -312,7 +320,10 @@ where
         .as_ref()
         .map(|tx| tx.isolation_level)
         .unwrap_or(tx_manager.session_isolation_level);
-    let is_select = matches!(stmt, Statement::Dml(DmlStatement::Select(_)));
+    let is_select = matches!(
+        &stmt,
+        Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
+    );
     let read_uncommitted_dirty = isolation_level == IsolationLevel::ReadUncommitted && is_select;
     let read_committed_select = isolation_level == IsolationLevel::ReadCommitted && is_select;
 

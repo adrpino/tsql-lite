@@ -44,6 +44,7 @@ pub fn is_stop_keyword(k: &str) -> bool {
                     | Keyword::Delete
                     | Keyword::Go
                     | Keyword::From
+                    | Keyword::Into
                     | Keyword::Join
                     | Keyword::On
                     | Keyword::Union

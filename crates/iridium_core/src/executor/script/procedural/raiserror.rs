@@ -42,7 +42,17 @@ impl<'a> ScriptExecutor<'a> {
             _ => 16,
         };
 
-        let msg = msg_val.to_string_value();
+        let mut formatted_args = Vec::with_capacity(stmt.args.len());
+        for arg in &stmt.args {
+            let v = eval_expr(arg, &[], ctx, self.catalog, self.storage, self.clock)?;
+            formatted_args.push(v.to_string_value());
+        }
+
+        let msg = if formatted_args.is_empty() {
+            msg_val.to_string_value()
+        } else {
+            format_raiserror_message(&msg_val.to_string_value(), &formatted_args)
+        };
 
         if severity >= 16 {
             // For now, we'll treat high severity as an execution error
@@ -53,4 +63,43 @@ impl<'a> ScriptExecutor<'a> {
             Ok(None)
         }
     }
+}
+
+fn format_raiserror_message(template: &str, args: &[String]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let chars: Vec<char> = template.chars().collect();
+    let mut i = 0;
+    let mut arg_idx = 0;
+    while i < chars.len() {
+        if chars[i] == '%' && i + 1 < chars.len() {
+            if chars[i + 1] == '%' {
+                out.push('%');
+                i += 2;
+                continue;
+            }
+            let mut j = i + 1;
+            // Skip optional flags/width/precision and I64 length prefix
+            while j < chars.len() && matches!(chars[j], '-' | '+' | ' ' | '#' | '0'..='9' | '.') {
+                j += 1;
+            }
+            if j + 2 < chars.len()
+                && (chars[j] == 'I' || chars[j] == 'i')
+                && chars[j + 1] == '6'
+                && chars[j + 2] == '4'
+            {
+                j += 3;
+            }
+            if j < chars.len() && matches!(chars[j], 'd' | 'i' | 'o' | 's' | 'u' | 'x' | 'X') {
+                if let Some(val) = args.get(arg_idx) {
+                    out.push_str(val);
+                }
+                arg_idx += 1;
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }

@@ -753,3 +753,63 @@ fn lexer_signed_arithmetic_unary_plus_and_zero_width_whitespace() {
     let r4 = query(&mut e, "\u{FEFF}\u{200B}SELECT 42 AS v");
     assert_eq!(r4.rows[0][0].to_integer_i64(), Some(42));
 }
+
+#[test]
+fn procedural_raiserror_options_if_semicolon_else_and_cursor_options() {
+    let mut e = Engine::new();
+
+    // 1. RAISERROR with format args and WITH NOWAIT, plus IF <stmt>; ELSE <stmt>
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_raiserror_and_if @flag INT
+        AS
+        BEGIN
+            DECLARE @cnt INT = 7;
+            RAISERROR ('Processed %d items for %s.', 0, 1, @cnt, 'alpha') WITH NOWAIT;
+            IF @flag = 1
+                SELECT 'one' AS res;
+            ELSE IF @flag = 2
+                RAISERROR ('Bad flag %d', 16, 1, @flag) WITH NOWAIT, SETERROR;
+            ELSE
+                SELECT 'other' AS res;
+        END",
+    );
+    let r1 = query(&mut e, "EXEC dbo.p_raiserror_and_if @flag = 1");
+    assert_eq!(r1.rows[0][0], Value::VarChar("one".to_string()));
+    let r3 = query(&mut e, "EXEC dbo.p_raiserror_and_if @flag = 3");
+    assert_eq!(r3.rows[0][0], Value::VarChar("other".to_string()));
+    let err = e
+        .execute_batch(iridium_core::parse_batch("EXEC dbo.p_raiserror_and_if @flag = 2").unwrap())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("Bad flag 2"),
+        "expected formatted RAISERROR message, got: {err}"
+    );
+
+    // 2. DECLARE CURSOR with LOCAL FAST_FORWARD READ_ONLY options
+    exec(&mut e, "CREATE TABLE dbo.nums (n INT)");
+    exec(&mut e, "INSERT INTO dbo.nums VALUES (10), (20)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_cursor_opts
+        AS
+        BEGIN
+            DECLARE @n INT, @sum INT = 0;
+            DECLARE cur CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
+                SELECT n FROM dbo.nums ORDER BY n;
+            OPEN cur;
+            FETCH NEXT FROM cur INTO @n;
+            WHILE @@FETCH_STATUS = 0
+            BEGIN
+                SET @sum = @sum + @n;
+                FETCH NEXT FROM cur INTO @n;
+            END
+            CLOSE cur;
+            DEALLOCATE cur;
+            SELECT @sum AS total;
+        END",
+    );
+    let rc = query(&mut e, "EXEC dbo.p_cursor_opts");
+    assert_eq!(rc.rows[0][0].to_integer_i64(), Some(30));
+}

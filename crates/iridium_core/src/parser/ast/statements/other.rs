@@ -149,6 +149,7 @@ pub enum ProceduralStatement {
         message: Expr,
         severity: Expr,
         state: Expr,
+        args: Vec<Expr>,
     },
     Throw {
         error_number: Option<Expr>,

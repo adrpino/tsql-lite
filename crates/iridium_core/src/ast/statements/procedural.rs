@@ -148,6 +148,8 @@ pub struct RaiserrorStmt {
     pub message: Expr,
     pub severity: Expr,
     pub state: Expr,
+    #[serde(default)]
+    pub args: Vec<Expr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

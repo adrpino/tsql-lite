@@ -240,11 +240,45 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                 let severity = parse_expr(parser)?;
                 parser.expect_comma()?;
                 let state = parse_expr(parser)?;
+                let mut args = Vec::new();
+                while matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                    args.push(parse_expr(parser)?);
+                }
                 parser.expect_rparen()?;
+                // Optional WITH NOWAIT | LOG | SETERROR (comma-separated)
+                if parser.at_keyword(Keyword::With) {
+                    let _ = parser.next();
+                    loop {
+                        match parser.peek() {
+                            Some(Token::Identifier(id))
+                                if id.eq_ignore_ascii_case("NOWAIT")
+                                    || id.eq_ignore_ascii_case("LOG")
+                                    || id.eq_ignore_ascii_case("SETERROR") =>
+                            {
+                                let _ = parser.next();
+                            }
+                            Some(Token::Keyword(k))
+                                if k.as_sql().eq_ignore_ascii_case("NOWAIT")
+                                    || k.as_sql().eq_ignore_ascii_case("LOG")
+                                    || k.as_sql().eq_ignore_ascii_case("SETERROR") =>
+                            {
+                                let _ = parser.next();
+                            }
+                            _ => break,
+                        }
+                        if matches!(parser.peek(), Some(Token::Comma)) {
+                            let _ = parser.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 Ok(Statement::Procedural(ProceduralStatement::Raiserror {
                     message,
                     severity,
                     state,
+                    args,
                 }))
             }
             Keyword::Throw => {
@@ -385,14 +419,65 @@ fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
         }
     }
     if let Some(Token::Identifier(cursor_name)) = parser.peek() {
-        if parser
-            .peek_at(1)
-            .map(|t| matches!(t, Token::Keyword(Keyword::Cursor)))
-            .unwrap_or(false)
-        {
+        let is_cursor_decl = matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::Cursor)))
+            || (matches!(
+                parser.peek_at(1),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INSENSITIVE") || id.eq_ignore_ascii_case("SCROLL")
+            ) && matches!(parser.peek_at(2), Some(Token::Keyword(Keyword::Cursor))));
+        if is_cursor_decl {
             let cursor_name = cursor_name.clone();
             let _ = parser.next();
-            let _ = parser.next();
+            if !parser.at_keyword(Keyword::Cursor) {
+                let _ = parser.next();
+            }
+            let _ = parser.next(); // CURSOR
+            // Optional T-SQL cursor options before FOR (LOCAL, GLOBAL, FORWARD_ONLY, SCROLL,
+            // STATIC, KEYSET, DYNAMIC, FAST_FORWARD, READ_ONLY, SCROLL_LOCKS, OPTIMISTIC, TYPE_WARNING).
+            while !parser.at_keyword(Keyword::For) && !parser.is_empty() {
+                match parser.peek() {
+                    Some(Token::Identifier(id))
+                        if matches!(
+                            id.to_ascii_uppercase().as_str(),
+                            "LOCAL"
+                                | "GLOBAL"
+                                | "FORWARD_ONLY"
+                                | "SCROLL"
+                                | "STATIC"
+                                | "KEYSET"
+                                | "DYNAMIC"
+                                | "FAST_FORWARD"
+                                | "READ_ONLY"
+                                | "SCROLL_LOCKS"
+                                | "OPTIMISTIC"
+                                | "TYPE_WARNING"
+                                | "INSENSITIVE"
+                        ) =>
+                    {
+                        let _ = parser.next();
+                    }
+                    Some(Token::Keyword(k))
+                        if matches!(
+                            k.as_sql().to_ascii_uppercase().as_str(),
+                            "LOCAL"
+                                | "GLOBAL"
+                                | "FORWARD_ONLY"
+                                | "SCROLL"
+                                | "STATIC"
+                                | "KEYSET"
+                                | "DYNAMIC"
+                                | "FAST_FORWARD"
+                                | "READ_ONLY"
+                                | "SCROLL_LOCKS"
+                                | "OPTIMISTIC"
+                                | "TYPE_WARNING"
+                                | "INSENSITIVE"
+                        ) =>
+                    {
+                        let _ = parser.next();
+                    }
+                    _ => break,
+                }
+            }
             parser.expect_keyword(Keyword::For)?;
             let query = parse_select(parser)?;
             return Ok(Statement::Procedural(ProceduralStatement::DeclareCursor {

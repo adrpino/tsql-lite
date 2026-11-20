@@ -207,12 +207,17 @@ pub fn lower_procedural(
             message,
             severity,
             state,
+            args,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::Raiserror(
                 executor_ast::statements::procedural::RaiserrorStmt {
                     message: lower_expr(message)?,
                     severity: lower_expr(severity)?,
                     state: lower_expr(state)?,
+                    args: args
+                        .into_iter()
+                        .map(lower_expr)
+                        .collect::<Result<Vec<_>, _>>()?,
                 },
             ),
         )),

@@ -351,9 +351,27 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     Vec::new(),
                 )
             } else if parser.at_keyword(Keyword::Select) {
-                let subquery = Box::new(parse_select(parser)?);
+                let mut subquery = Box::new(parse_select(parser)?);
                 parser.expect_rparen()?;
                 let alias = parse_required_alias(parser)?;
+                // Optional derived-table column alias list: (SELECT ...) AS S (c1, c2, ...)
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    let col_aliases =
+                        crate::parser::parse::expressions::parse_comma_list(parser, |p| {
+                            match p.next() {
+                                Some(Token::Identifier(id)) => Ok(id.clone()),
+                                Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
+                                _ => p.backtrack(Expected::Description("column name")),
+                            }
+                        })?;
+                    parser.expect_rparen()?;
+                    for (item, col_alias) in
+                        subquery.projection.iter_mut().zip(col_aliases.into_iter())
+                    {
+                        item.alias = Some(col_alias);
+                    }
+                }
                 (TableFactor::Derived(subquery), Some(alias), Vec::new())
             } else {
                 let base = parse_table_ref(parser)?;

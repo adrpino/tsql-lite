@@ -174,6 +174,10 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
             Keyword::As => {
                 let _ = parser.next();
                 computed_expr = Some(crate::parser::parse::expressions::parse_expr(parser)?);
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("PERSISTED"))
+                {
+                    let _ = parser.next();
+                }
             }
             Keyword::Collate => {
                 let _ = parser.next();

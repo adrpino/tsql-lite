@@ -21,6 +21,30 @@ pub(crate) fn apply_assignments(
     clock: &dyn Clock,
 ) -> Result<(), DbError> {
     for assignment in assignments {
+        if assignment.column.starts_with('@') {
+            let val = super::super::super::evaluator::eval_expr(
+                &assignment.expr,
+                joined,
+                ctx,
+                catalog,
+                storage,
+                clock,
+            )?;
+            let coerced = if let Some((var_ty, _)) = ctx.session.get_var(&assignment.column) {
+                let var_ty = var_ty.clone();
+                crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                    val,
+                    &var_ty,
+                    &ctx.options.dateformat,
+                )?
+            } else {
+                val
+            };
+            if let Some((_, slot)) = ctx.session.get_var_mut(&assignment.column) {
+                *slot = coerced;
+            }
+            continue;
+        }
         let idx = table
             .columns
             .iter()

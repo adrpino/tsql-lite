@@ -213,6 +213,11 @@ pub(crate) fn parse_datetime_string(v: &str, dateformat: &str) -> Result<NaiveDa
     }
     NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.f"))
+        .or_else(|_| {
+            chrono::DateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.f %:z")
+                .or_else(|_| chrono::DateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S %:z"))
+                .map(|dt| dt.naive_local())
+        })
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M:%S"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M:%S%.f"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M"))

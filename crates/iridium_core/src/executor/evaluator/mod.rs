@@ -129,6 +129,14 @@ fn eval_expr_inner(
             if name == "__COLLATE" && !args.is_empty() {
                 return eval_expr(&args[0], row, ctx, catalog, storage, clock);
             }
+            if name == "__AT_TIME_ZONE" && args.len() == 2 {
+                let dt_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                let tz_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                if dt_val.is_null() || tz_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                return eval_at_time_zone(dt_val, &tz_val.to_string_value());
+            }
             eval_function(name, args, row, ctx, catalog, storage, clock)
         }
 
@@ -222,5 +230,64 @@ fn value_as_str(v: &Value) -> Option<&str> {
     match v {
         Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => Some(s),
         _ => None,
+    }
+}
+
+fn windows_tz_offset_minutes(tz_name: &str) -> Option<i64> {
+    match tz_name.trim().to_ascii_lowercase().as_str() {
+        "utc" | "gmt standard time" | "greenwich standard time" => Some(0),
+        "eastern standard time" | "us eastern standard time" => Some(-300),
+        "central standard time" | "central america standard time" => Some(-360),
+        "mountain standard time" | "us mountain standard time" => Some(-420),
+        "pacific standard time" => Some(-480),
+        "alaskan standard time" => Some(-540),
+        "hawaiian standard time" => Some(-600),
+        "atlantic standard time" => Some(-240),
+        "central european standard time" | "w. europe standard time" => Some(60),
+        _ => None,
+    }
+}
+
+fn eval_at_time_zone(dt_val: Value, tz_name: &str) -> Result<Value, DbError> {
+    let offset_mins = windows_tz_offset_minutes(tz_name).unwrap_or(0);
+    let sign = if offset_mins < 0 { '-' } else { '+' };
+    let abs_mins = offset_mins.abs();
+    let off_h = abs_mins / 60;
+    let off_m = abs_mins % 60;
+    match dt_val {
+        Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => {
+            Ok(Value::DateTimeOffset(format!(
+                "{} {}{:02}:{:02}",
+                dt.format("%Y-%m-%d %H:%M:%S%.f"),
+                sign,
+                off_h,
+                off_m
+            )))
+        }
+        Value::Date(d) => Ok(Value::DateTimeOffset(format!(
+            "{} 00:00:00 {}{:02}:{:02}",
+            d.format("%Y-%m-%d"),
+            sign,
+            off_h,
+            off_m
+        ))),
+        Value::DateTimeOffset(s) => {
+            // Convert existing datetimeoffset to target timezone by adjusting UTC instant.
+            let trimmed = s.trim();
+            if let Ok(fixed) = chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f %:z")
+                .or_else(|_| chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S %:z"))
+            {
+                let shifted = fixed.naive_utc() + chrono::Duration::minutes(offset_mins);
+                return Ok(Value::DateTimeOffset(format!(
+                    "{} {}{:02}:{:02}",
+                    shifted.format("%Y-%m-%d %H:%M:%S%.f"),
+                    sign,
+                    off_h,
+                    off_m
+                )));
+            }
+            Ok(Value::DateTimeOffset(s))
+        }
+        other => Ok(other),
     }
 }

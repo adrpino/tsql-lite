@@ -1490,3 +1490,80 @@ fn merge_unaliased_and_cte_target_update_apply_index_include_waitfor_and_stats()
     exec(&mut e, "UPDATE STATISTICS #acc WITH FULLSCAN;");
     exec(&mut e, "WAITFOR DELAY '00:00:00';");
 }
+
+#[test]
+fn wave11a_derived_col_list_delete_output_before_from_persisted_try_parse_compound_update_at_tz() {
+    let mut e = Engine::new();
+
+    // 1. Derived table column alias list in MERGE USING (...) AS S (c1, c2)
+    exec(&mut e, "CREATE TABLE #bal (k INT, amt INT) ON [PRIMARY]");
+    exec(&mut e, "INSERT INTO #bal VALUES (1, 10), (2, 20)");
+    exec(
+        &mut e,
+        "MERGE #bal AS T
+         USING (SELECT 1, 55 UNION ALL SELECT 2, 77) AS S (k, new_amt)
+            ON T.k = S.k
+         WHEN MATCHED THEN UPDATE SET amt = S.new_amt;",
+    );
+    let r1 = query(&mut e, "SELECT k, amt FROM #bal ORDER BY k");
+    assert_eq!(r1.rows[0][1].to_integer_i64(), Some(55));
+    assert_eq!(r1.rows[1][1].to_integer_i64(), Some(77));
+
+    // 2. DELETE alias OUTPUT ... INTO ... FROM tbl alias
+    exec(&mut e, "CREATE TABLE #del_log (k INT)");
+    exec(
+        &mut e,
+        "DELETE b
+         OUTPUT deleted.k INTO #del_log
+         FROM #bal b
+         WHERE b.k = 1;",
+    );
+    let r2 = query(&mut e, "SELECT k FROM #del_log");
+    assert_eq!(r2.rows.len(), 1);
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
+
+    // 3. Computed column PERSISTED + TRY_PARSE
+    exec(
+        &mut e,
+        "CREATE TABLE #comp (a INT, doubled AS (a * 2) PERSISTED, INDEX IX_a CLUSTERED (a));",
+    );
+    exec(&mut e, "INSERT INTO #comp (a) VALUES (7)");
+    let r3 = query(
+        &mut e,
+        "SELECT doubled, TRY_PARSE('42' AS INT), TRY_PARSE('nope' AS INT) FROM #comp",
+    );
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(14));
+    assert_eq!(r3.rows[0][1].to_integer_i64(), Some(42));
+    assert_eq!(r3.rows[0][2], Value::Null);
+
+    // 4. UPDATE compound += and chained @var = col += 1
+    exec(&mut e, "CREATE TABLE dbo.seq_counter (cid INT, last_val INT)");
+    exec(&mut e, "INSERT INTO dbo.seq_counter VALUES (1, 10)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_next_num @cid INT, @next INT OUTPUT AS
+         BEGIN
+             UPDATE dbo.seq_counter
+             SET @next = last_val += 1
+             WHERE cid = @cid;
+         END",
+    );
+    let r4 = e
+        .execute_batch(
+            iridium_core::parse_batch(
+                "DECLARE @n INT; EXEC dbo.p_next_num @cid = 1, @next = @n OUTPUT; SELECT @n, last_val FROM dbo.seq_counter WHERE cid = 1;",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(r4.rows[0][0].to_integer_i64(), Some(11));
+    assert_eq!(r4.rows[0][1].to_integer_i64(), Some(11));
+
+    // 5. AT TIME ZONE conversion
+    let r5 = query(
+        &mut e,
+        "SELECT CAST(CAST('2026-01-15 12:00:00' AS DATETIME) AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time' AS DATETIME)",
+    );
+    assert_eq!(r5.rows[0][0].to_string_value(), "2026-01-15 07:00:00");
+}

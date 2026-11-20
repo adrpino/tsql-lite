@@ -179,8 +179,9 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
 
     let table = crate::parser::parse::statements::query::parse_table_ref(parser)?;
     parser.expect_keyword(Keyword::Set)?;
-    let assignments =
-        crate::parser::parse::expressions::parse_comma_list(parser, parse_update_assignment)?;
+    let assignment_groups =
+        crate::parser::parse::expressions::parse_comma_list(parser, parse_update_assignment_group)?;
+    let assignments: Vec<UpdateAssignment> = assignment_groups.into_iter().flatten().collect();
 
     let mut output = None;
     let mut output_into = None;
@@ -232,12 +233,51 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
     })
 }
 
-fn parse_update_assignment(parser: &mut Parser) -> ParseResult<UpdateAssignment> {
+fn consume_compound_assign_op(parser: &mut Parser) -> Option<BinaryOp> {
+    let is_eq_next = matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "=");
+    if !is_eq_next {
+        return None;
+    }
+    let op = match parser.peek() {
+        Some(Token::Operator(s)) if s == "+" => Some(BinaryOp::Add),
+        Some(Token::Operator(s)) if s == "-" => Some(BinaryOp::Subtract),
+        Some(Token::Star) => Some(BinaryOp::Multiply),
+        Some(Token::Operator(s)) if s == "/" => Some(BinaryOp::Divide),
+        Some(Token::Operator(s)) if s == "%" => Some(BinaryOp::Modulo),
+        _ => None,
+    }?;
+    let _ = parser.next();
+    let _ = parser.next();
+    Some(op)
+}
+
+fn parse_update_assignment_group(parser: &mut Parser) -> ParseResult<Vec<UpdateAssignment>> {
     let parts = super::parse_multipart_name(parser)?;
-    let column = parts
+    let lhs = parts
         .last()
         .cloned()
         .ok_or_else(|| parser.error(Expected::Description("column name")))?;
+
+    // Compound assignment: col += expr, @v += expr, etc.
+    if let Some(bin_op) = consume_compound_assign_op(parser) {
+        let rhs = crate::parser::parse::expressions::parse_expr(parser)?;
+        let lhs_expr = if parts.len() > 1 {
+            Expr::QualifiedIdentifier(parts)
+        } else if lhs.starts_with('@') {
+            Expr::Variable(lhs.clone())
+        } else {
+            Expr::Identifier(lhs.clone())
+        };
+        return Ok(vec![UpdateAssignment {
+            column: lhs,
+            expr: Expr::Binary {
+                left: Box::new(lhs_expr),
+                op: bin_op,
+                right: Box::new(rhs),
+            },
+        }]);
+    }
+
     if let Some(Token::Operator(op)) = parser.next() {
         if *op != "=" {
             return parser.backtrack(Expected::Description("="));
@@ -245,8 +285,61 @@ fn parse_update_assignment(parser: &mut Parser) -> ParseResult<UpdateAssignment>
     } else {
         return parser.backtrack(Expected::Description("="));
     }
+
+    // Chained variable + column assignment: SET @var = col = expr  or  SET @var = col += expr
+    if lhs.starts_with('@') {
+        let saved = parser.save();
+        if let Ok(col_parts) = super::parse_multipart_name(parser) {
+            let col_name = col_parts.last().cloned().unwrap_or_default();
+            if !col_name.is_empty() && !col_name.starts_with('@') {
+                if let Some(bin_op) = consume_compound_assign_op(parser) {
+                    let rhs = crate::parser::parse::expressions::parse_expr(parser)?;
+                    let col_expr = if col_parts.len() > 1 {
+                        Expr::QualifiedIdentifier(col_parts)
+                    } else {
+                        Expr::Identifier(col_name.clone())
+                    };
+                    let combined = Expr::Binary {
+                        left: Box::new(col_expr),
+                        op: bin_op,
+                        right: Box::new(rhs),
+                    };
+                    return Ok(vec![
+                        UpdateAssignment {
+                            column: col_name,
+                            expr: combined.clone(),
+                        },
+                        UpdateAssignment {
+                            column: lhs,
+                            expr: combined,
+                        },
+                    ]);
+                } else if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                    let _ = parser.next();
+                    let rhs = crate::parser::parse::expressions::parse_expr(parser)?;
+                    return Ok(vec![
+                        UpdateAssignment {
+                            column: col_name,
+                            expr: rhs.clone(),
+                        },
+                        UpdateAssignment {
+                            column: lhs,
+                            expr: rhs,
+                        },
+                    ]);
+                }
+            }
+        }
+        parser.restore(saved);
+    }
+
     let expr = crate::parser::parse::expressions::parse_expr(parser)?;
-    Ok(UpdateAssignment { column, expr })
+    Ok(vec![UpdateAssignment { column: lhs, expr }])
+}
+
+fn parse_update_assignment(parser: &mut Parser) -> ParseResult<UpdateAssignment> {
+    let mut group = parse_update_assignment_group(parser)?;
+    Ok(group.remove(0))
 }
 
 pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
@@ -275,6 +368,18 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         })
         .ok_or_else(|| parser.error(Expected::Description("table name")))?;
 
+    let mut output = None;
+    let mut output_into = None;
+    let mut output_into_columns = Vec::new();
+    // T-SQL places OUTPUT before the second FROM in `DELETE alias OUTPUT ... FROM tbl alias`
+    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
+        let _ = parser.next();
+        let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
+        output = Some(out_cols);
+        output_into = out_into;
+        output_into_columns = out_into_cols;
+    }
+
     let mut from = vec![target.clone()];
     let mut joins = Vec::new();
     let mut applies = Vec::new();
@@ -292,10 +397,7 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         &mut applies,
     )?;
 
-    let mut output = None;
-    let mut output_into = None;
-    let mut output_into_columns = Vec::new();
-    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
+    if output.is_none() && matches!(parser.peek(), Some(Token::Keyword(Keyword::Output))) {
         let _ = parser.next();
         let (out_cols, out_into, out_into_cols) = parse_output_clause(parser)?;
         output = Some(out_cols);

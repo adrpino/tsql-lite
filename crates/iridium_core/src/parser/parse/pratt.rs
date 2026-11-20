@@ -16,6 +16,25 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
         let mut left = parse_primary(parser)?;
 
         loop {
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("AT"))
+                && matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::Time)))
+                && matches!(parser.peek_at(2), Some(Token::Identifier(z)) if z.eq_ignore_ascii_case("ZONE"))
+            {
+                let l_bp = 15u8;
+                if l_bp < min_bp {
+                    break;
+                }
+                let _ = parser.next(); // AT
+                let _ = parser.next(); // TIME
+                let _ = parser.next(); // ZONE
+                let tz_expr = parse_pratt_expr(parser, 16)?;
+                left = Expr::FunctionCall {
+                    name: "__AT_TIME_ZONE".to_string(),
+                    args: vec![left, tz_expr],
+                    within_group: vec![],
+                };
+                continue;
+            }
             if let Some(Token::Keyword(k)) = parser.peek() {
                 if *k == Keyword::Collate {
                     let l_bp = 15u8;

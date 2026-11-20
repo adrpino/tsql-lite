@@ -357,6 +357,32 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
     }
 
     if matches!(parser.peek(), Some(Token::LParen)) {
+        if parts.len() == 1
+            && (parts[0].eq_ignore_ascii_case("TRY_PARSE")
+                || parts[0].eq_ignore_ascii_case("PARSE"))
+        {
+            let is_try = parts[0].eq_ignore_ascii_case("TRY_PARSE");
+            let _ = parser.next();
+            let expr = parse_expr(parser)?;
+            parser.expect_keyword(Keyword::As)?;
+            let target = parse_data_type(parser)?;
+            if parser.at_keyword(Keyword::Using) {
+                let _ = parser.next();
+                let _ = parse_expr(parser)?;
+            }
+            parser.expect_rparen()?;
+            return Ok(if is_try {
+                Expr::TryCast {
+                    expr: Box::new(expr),
+                    target,
+                }
+            } else {
+                Expr::Cast {
+                    expr: Box::new(expr),
+                    target,
+                }
+            });
+        }
         let _ = parser.next();
         let mut has_distinct = false;
         if parser.at_keyword(Keyword::Distinct) {

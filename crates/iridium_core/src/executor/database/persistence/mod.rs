@@ -516,7 +516,7 @@ where
         catalog: C,
         storage: S,
         commit_ts: u64,
-        table_versions: HashMap<String, u64>,
+        table_versions: std::collections::HashMap<String, u64>,
     ) -> Self {
         Self {
             storage: parking_lot::RwLock::new(SharedStorage {

@@ -166,7 +166,9 @@ fn convert_string_to_datetime(
 }
 
 fn parse_date_string(v: &str, dateformat: &str) -> Result<NaiveDate, ()> {
+    let v = v.trim();
     NaiveDate::parse_from_str(v, "%Y-%m-%d")
+        .or_else(|_| NaiveDate::parse_from_str(v, "%Y%m%d"))
         .or_else(|_| NaiveDate::parse_from_str(v, "%m/%d/%Y"))
         .or_else(|_| NaiveDate::parse_from_str(v, "%d/%m/%Y"))
         .or_else(|_| NaiveDate::parse_from_str(v, "%m-%d-%Y"))
@@ -187,10 +189,17 @@ fn parse_date_string(v: &str, dateformat: &str) -> Result<NaiveDate, ()> {
 }
 
 pub(crate) fn parse_datetime_string(v: &str, dateformat: &str) -> Result<NaiveDateTime, ()> {
+    let v = v.trim();
     NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.f"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M:%S%.f"))
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M"))
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%Y-%m-%dT%H:%M"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%m/%d/%Y %H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%m/%d/%Y %H:%M"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%d/%m/%Y %H:%M:%S"))
+        .or_else(|_| NaiveDateTime::parse_from_str(v, "%d/%m/%Y %H:%M"))
         .or_else(|_| parse_date_string(v, dateformat).map(|d| d.and_hms_opt(0, 0, 0).unwrap()))
         .map_err(|_| ())
 }

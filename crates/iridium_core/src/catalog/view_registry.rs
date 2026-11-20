@@ -19,24 +19,37 @@ impl ViewRegistry for CatalogImpl {
             return Err(DbError::duplicate_view(&view.schema, &view.name));
         }
         let idx = self.views.len();
-        self.view_map.insert(
+        Arc::make_mut(&mut self.view_map).insert(
             (
                 normalize_identifier(&view.schema),
                 normalize_identifier(&view.name),
             ),
             idx,
         );
-        self.views.push(view);
+        Arc::make_mut(&mut self.views).push(view);
         Ok(())
     }
 
     fn drop_view(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
+        let key = (normalize_identifier(schema), normalize_identifier(name));
         let idx = *self
             .view_map
-            .get(&(normalize_identifier(schema), normalize_identifier(name)))
+            .get(&key)
             .ok_or_else(|| DbError::view_not_found(schema, name))?;
-        self.views.remove(idx);
-        self.rebuild_maps();
+        let views = Arc::make_mut(&mut self.views);
+        views.swap_remove(idx);
+        let view_map = Arc::make_mut(&mut self.view_map);
+        view_map.remove(&key);
+        if idx < views.len() {
+            let swapped = &views[idx];
+            view_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 }

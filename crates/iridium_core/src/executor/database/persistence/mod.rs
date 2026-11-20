@@ -135,14 +135,13 @@ where
 
     pub fn fork_isolated(&self) -> Self {
         let guard = self.inner.storage.read();
-        let checkpoint = RecoveryCheckpoint {
-            catalog: guard.catalog.clone(),
-            storage_data: guard.storage.get_checkpoint_data(),
-            commit_ts: guard.commit_ts,
-            table_versions: guard.table_versions.clone(),
-        };
+        let state = SharedState::from_parts_internal(
+            guard.catalog.clone(),
+            guard.storage.clone(),
+            guard.commit_ts,
+            guard.table_versions.clone(),
+        );
         drop(guard);
-        let state = SharedState::from_checkpoint_internal(checkpoint);
         Self {
             inner: Arc::new(state),
         }
@@ -513,15 +512,18 @@ where
         }
     }
 
-    pub fn from_checkpoint_internal(checkpoint: RecoveryCheckpoint<C>) -> Self {
-        let mut storage = S::default();
-        let _ = storage.restore_from_checkpoint(checkpoint.storage_data);
+    pub fn from_parts_internal(
+        catalog: C,
+        storage: S,
+        commit_ts: u64,
+        table_versions: HashMap<String, u64>,
+    ) -> Self {
         Self {
             storage: parking_lot::RwLock::new(SharedStorage {
-                catalog: checkpoint.catalog,
+                catalog,
                 storage,
-                commit_ts: checkpoint.commit_ts,
-                table_versions: checkpoint.table_versions,
+                commit_ts,
+                table_versions,
             }),
             table_locks: parking_lot::Mutex::new(super::super::locks::LockTable::new()),
             durability: parking_lot::Mutex::new(Box::new(
@@ -536,6 +538,17 @@ where
                 super::super::dirty_buffer::DirtyBuffer::new(),
             )),
         }
+    }
+
+    pub fn from_checkpoint_internal(checkpoint: RecoveryCheckpoint<C>) -> Self {
+        let mut storage = S::default();
+        let _ = storage.restore_from_checkpoint(checkpoint.storage_data);
+        Self::from_parts_internal(
+            checkpoint.catalog,
+            storage,
+            checkpoint.commit_ts,
+            checkpoint.table_versions,
+        )
     }
 
     pub fn apply_checkpoint(&self, checkpoint: RecoveryCheckpoint<C>) {

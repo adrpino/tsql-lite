@@ -23,27 +23,37 @@ impl SynonymRegistry for CatalogImpl {
         }
 
         let idx = self.synonyms.len();
-        self.synonym_map.insert(
+        Arc::make_mut(&mut self.synonym_map).insert(
             (
                 normalize_identifier(&synonym.schema),
                 normalize_identifier(&synonym.name),
             ),
             idx,
         );
-        self.synonyms.push(synonym);
+        Arc::make_mut(&mut self.synonyms).push(synonym);
         Ok(())
     }
 
     fn drop_synonym(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
-        let idx = self
+        let idx = *self
             .synonym_map
             .get(&key)
             .ok_or_else(|| DbError::object_not_found(format!("{}.{}", schema, name)))?;
-
-        let idx = *idx;
-        self.synonyms.remove(idx);
-        self.rebuild_maps();
+        let synonyms = Arc::make_mut(&mut self.synonyms);
+        synonyms.swap_remove(idx);
+        let synonym_map = Arc::make_mut(&mut self.synonym_map);
+        synonym_map.remove(&key);
+        if idx < synonyms.len() {
+            let swapped = &synonyms[idx];
+            synonym_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 }

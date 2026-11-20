@@ -8,11 +8,13 @@ impl IndexRegistry for CatalogImpl {
     }
 
     fn register_index(&mut self, index: IndexDef) {
-        self.indexes.push(index);
+        Arc::make_mut(&mut self.indexes).push(index);
     }
 
     fn drop_index_by_table_id(&mut self, table_id: u32) {
-        self.indexes.retain(|idx| idx.table_id != table_id);
+        if self.indexes.iter().any(|idx| idx.table_id == table_id) {
+            Arc::make_mut(&mut self.indexes).retain(|idx| idx.table_id != table_id);
+        }
     }
 
     fn create_index(
@@ -54,7 +56,8 @@ impl IndexRegistry for CatalogImpl {
         }
 
         let new_index_id = self.alloc_index_id();
-        self.indexes.push(IndexDef {
+        let indexes = Arc::make_mut(&mut self.indexes);
+        indexes.push(IndexDef {
             id: new_index_id,
             schema_id: index_schema_id,
             table_id: table.id,
@@ -63,10 +66,8 @@ impl IndexRegistry for CatalogImpl {
             is_unique: false,
             is_clustered: false,
         });
-        self.index_map.insert(
-            (index_schema_id, normalize_identifier(name)),
-            self.indexes.len() - 1,
-        );
+        let new_idx = indexes.len() - 1;
+        Arc::make_mut(&mut self.index_map).insert((index_schema_id, normalize_identifier(name)), new_idx);
         Ok(())
     }
 
@@ -117,7 +118,8 @@ impl IndexRegistry for CatalogImpl {
             self.alloc_index_id()
         };
 
-        self.indexes.push(IndexDef {
+        let indexes = Arc::make_mut(&mut self.indexes);
+        indexes.push(IndexDef {
             id: new_index_id,
             schema_id: index_schema_id,
             table_id: table.id,
@@ -126,10 +128,8 @@ impl IndexRegistry for CatalogImpl {
             is_unique,
             is_clustered,
         });
-        self.index_map.insert(
-            (index_schema_id, normalize_identifier(name)),
-            self.indexes.len() - 1,
-        );
+        let new_idx = indexes.len() - 1;
+        Arc::make_mut(&mut self.index_map).insert((index_schema_id, normalize_identifier(name)), new_idx);
         Ok(())
     }
 
@@ -156,8 +156,15 @@ impl IndexRegistry for CatalogImpl {
             return Err(DbError::index_not_found(table_name, name));
         };
 
-        self.indexes.remove(pos);
-        self.rebuild_maps();
+        let indexes = Arc::make_mut(&mut self.indexes);
+        indexes.swap_remove(pos);
+        self.index_map = Arc::new(
+            indexes
+                .iter()
+                .enumerate()
+                .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
+                .collect(),
+        );
         Ok(())
     }
 }

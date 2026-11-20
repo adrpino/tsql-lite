@@ -7,6 +7,7 @@ pub use btree_index::{BTreeIndex, IndexStorage};
 pub use redb_storage::RedbStorage;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::error::DbError;
 use crate::types::Value;
@@ -59,9 +60,41 @@ pub trait CheckpointableStorage: Storage {
     fn clone_checkpointable(&self) -> Box<dyn CheckpointableStorage>;
 }
 
+mod cow_tables_serde {
+    use super::StoredRow;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    pub fn serialize<S>(
+        val: &Arc<HashMap<u32, Arc<Vec<StoredRow>>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let plain: HashMap<u32, &[StoredRow]> =
+            val.iter().map(|(&k, v)| (k, v.as_slice())).collect();
+        plain.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Arc<HashMap<u32, Arc<Vec<StoredRow>>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let plain: HashMap<u32, Vec<StoredRow>> = HashMap::deserialize(deserializer)?;
+        Ok(Arc::new(
+            plain.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(),
+        ))
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct InMemoryStorage {
-    pub tables: HashMap<u32, Vec<StoredRow>>,
+    #[serde(with = "cow_tables_serde")]
+    pub tables: Arc<HashMap<u32, Arc<Vec<StoredRow>>>>,
 }
 
 impl Storage for InMemoryStorage {
@@ -83,46 +116,46 @@ impl Storage for InMemoryStorage {
     }
 
     fn insert_row(&mut self, table_id: u32, row: StoredRow) -> Result<(), DbError> {
-        self.tables
+        let rows = Arc::make_mut(&mut self.tables)
             .get_mut(&table_id)
-            .ok_or_else(|| DbError::Storage(format!("table {} not found in storage", table_id)))?
-            .push(row);
+            .ok_or_else(|| DbError::Storage(format!("table {} not found in storage", table_id)))?;
+        Arc::make_mut(rows).push(row);
         Ok(())
     }
 
     fn update_row(&mut self, table_id: u32, index: usize, row: StoredRow) -> Result<(), DbError> {
-        let table = self
-            .tables
+        let rows = Arc::make_mut(&mut self.tables)
             .get_mut(&table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found", table_id)))?;
-        if index >= table.len() {
+        if index >= rows.len() {
             return Err(DbError::Storage(format!(
                 "index {} out of bounds for table {}",
                 index, table_id
             )));
         }
-        table[index] = row;
+        Arc::make_mut(rows)[index] = row;
         Ok(())
     }
 
     fn delete_row(&mut self, table_id: u32, index: usize) -> Result<(), DbError> {
-        let table = self
-            .tables
+        let rows = Arc::make_mut(&mut self.tables)
             .get_mut(&table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found", table_id)))?;
-        if index >= table.len() {
+        if index >= rows.len() {
             return Err(DbError::Storage(format!(
                 "index {} out of bounds for table {}",
                 index, table_id
             )));
         }
-        table[index].deleted = true;
+        Arc::make_mut(rows)[index].deleted = true;
         Ok(())
     }
 
     fn replace_table(&mut self, table_id: u32, rows: Vec<StoredRow>) -> Result<(), DbError> {
-        if let std::collections::hash_map::Entry::Occupied(mut e) = self.tables.entry(table_id) {
-            e.insert(rows);
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            Arc::make_mut(&mut self.tables).entry(table_id)
+        {
+            e.insert(Arc::new(rows));
             Ok(())
         } else {
             Err(DbError::Storage(format!(
@@ -133,8 +166,10 @@ impl Storage for InMemoryStorage {
     }
 
     fn clear_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        if let Some(rows) = self.tables.get_mut(&table_id) {
-            rows.clear();
+        if let Some(rows) = Arc::make_mut(&mut self.tables).get_mut(&table_id) {
+            if !rows.is_empty() {
+                Arc::make_mut(rows).clear();
+            }
             Ok(())
         } else {
             Err(DbError::Storage(format!("table {} not found", table_id)))
@@ -142,12 +177,18 @@ impl Storage for InMemoryStorage {
     }
 
     fn ensure_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        self.tables.entry(table_id).or_default();
+        if !self.tables.contains_key(&table_id) {
+            Arc::make_mut(&mut self.tables)
+                .entry(table_id)
+                .or_insert_with(|| Arc::new(Vec::new()));
+        }
         Ok(())
     }
 
     fn remove_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        self.tables.remove(&table_id);
+        if self.tables.contains_key(&table_id) {
+            Arc::make_mut(&mut self.tables).remove(&table_id);
+        }
         Ok(())
     }
 
@@ -165,12 +206,17 @@ impl Storage for InMemoryStorage {
 
 impl CheckpointableStorage for InMemoryStorage {
     fn get_checkpoint_data(&self) -> StorageCheckpointData {
-        StorageCheckpointData::InMemory(self.tables.clone())
+        StorageCheckpointData::InMemory(
+            self.tables
+                .iter()
+                .map(|(&k, v)| (k, v.as_ref().clone()))
+                .collect(),
+        )
     }
 
     fn restore_from_checkpoint(&mut self, data: StorageCheckpointData) -> Result<(), DbError> {
         if let StorageCheckpointData::InMemory(tables) = data {
-            self.tables = tables;
+            self.tables = Arc::new(tables.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
             Ok(())
         } else {
             Err(DbError::Storage(

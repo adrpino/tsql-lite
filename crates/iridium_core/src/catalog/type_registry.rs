@@ -19,27 +19,36 @@ impl TypeRegistry for CatalogImpl {
             return Err(DbError::duplicate_type(&def.schema, &def.name));
         }
         let idx = self.table_types.len();
-        self.type_map.insert(
+        Arc::make_mut(&mut self.type_map).insert(
             (
                 normalize_identifier(&def.schema),
                 normalize_identifier(&def.name),
             ),
             idx,
         );
-        self.table_types.push(def);
+        Arc::make_mut(&mut self.table_types).push(def);
         Ok(())
     }
 
     fn drop_table_type(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
-        let Some(idx) = self
-            .type_map
-            .get(&(normalize_identifier(schema), normalize_identifier(name)))
-            .copied()
-        else {
+        let key = (normalize_identifier(schema), normalize_identifier(name));
+        let Some(idx) = self.type_map.get(&key).copied() else {
             return Err(DbError::type_not_found(schema, name));
         };
-        self.table_types.remove(idx);
-        self.rebuild_maps();
+        let table_types = Arc::make_mut(&mut self.table_types);
+        table_types.swap_remove(idx);
+        let type_map = Arc::make_mut(&mut self.type_map);
+        type_map.remove(&key);
+        if idx < table_types.len() {
+            let swapped = &table_types[idx];
+            type_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 }

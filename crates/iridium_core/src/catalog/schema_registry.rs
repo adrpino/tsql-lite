@@ -18,11 +18,11 @@ impl SchemaRegistry for CatalogImpl {
         }
         let id = self.alloc_schema_id();
         let idx = self.schemas.len();
-        self.schemas.push(SchemaDef {
+        Arc::make_mut(&mut self.schemas).push(SchemaDef {
             id,
             name: name.to_string(),
         });
-        self.schema_map.insert(normalize_identifier(name), idx);
+        Arc::make_mut(&mut self.schema_map).insert(normalize_identifier(name), idx);
         Ok(())
     }
 
@@ -39,8 +39,15 @@ impl SchemaRegistry for CatalogImpl {
             )));
         }
 
-        self.schemas.retain(|s| s.id != schema_id);
-        self.rebuild_maps();
+        let schemas = Arc::make_mut(&mut self.schemas);
+        schemas.retain(|s| s.id != schema_id);
+        self.schema_map = Arc::new(
+            schemas
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (normalize_identifier(&s.name), i))
+                .collect(),
+        );
         Ok(())
     }
 }

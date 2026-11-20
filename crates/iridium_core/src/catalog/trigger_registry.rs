@@ -25,24 +25,37 @@ impl TriggerRegistry for CatalogImpl {
             return Err(DbError::duplicate_trigger(&trigger.schema, &trigger.name));
         }
         let idx = self.triggers.len();
-        self.trigger_map.insert(
+        Arc::make_mut(&mut self.trigger_map).insert(
             (
                 normalize_identifier(&trigger.schema),
                 normalize_identifier(&trigger.name),
             ),
             idx,
         );
-        self.triggers.push(trigger);
+        Arc::make_mut(&mut self.triggers).push(trigger);
         Ok(())
     }
 
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
+        let key = (normalize_identifier(schema), normalize_identifier(name));
         let idx = *self
             .trigger_map
-            .get(&(normalize_identifier(schema), normalize_identifier(name)))
+            .get(&key)
             .ok_or_else(|| DbError::trigger_not_found(schema, name))?;
-        self.triggers.remove(idx);
-        self.rebuild_maps();
+        let triggers = Arc::make_mut(&mut self.triggers);
+        triggers.swap_remove(idx);
+        let trigger_map = Arc::make_mut(&mut self.trigger_map);
+        trigger_map.remove(&key);
+        if idx < triggers.len() {
+            let swapped = &triggers[idx];
+            trigger_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 }

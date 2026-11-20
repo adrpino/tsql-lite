@@ -26,38 +26,48 @@ impl SequenceRegistry for CatalogImpl {
         }
 
         let idx = self.sequences.len();
-        self.sequence_map.insert(
+        Arc::make_mut(&mut self.sequence_map).insert(
             (
                 normalize_identifier(&sequence.schema),
                 normalize_identifier(&sequence.name),
             ),
             idx,
         );
-        self.sequences.push(sequence);
+        Arc::make_mut(&mut self.sequences).push(sequence);
         Ok(())
     }
 
     fn drop_sequence(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
-        let idx = self
+        let idx = *self
             .sequence_map
             .get(&key)
             .ok_or_else(|| DbError::object_not_found(format!("{}.{}", schema, name)))?;
-
-        let idx = *idx;
-        self.sequences.remove(idx);
-        self.rebuild_maps();
+        let sequences = Arc::make_mut(&mut self.sequences);
+        sequences.swap_remove(idx);
+        let sequence_map = Arc::make_mut(&mut self.sequence_map);
+        sequence_map.remove(&key);
+        if idx < sequences.len() {
+            let swapped = &sequences[idx];
+            sequence_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 
     fn next_sequence_value(&mut self, schema: &str, name: &str) -> Result<i64, DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
-        let idx = self
+        let idx = *self
             .sequence_map
             .get(&key)
             .ok_or_else(|| DbError::object_not_found(format!("{}.{}", schema, name)))?;
 
-        let seq = &mut self.sequences[*idx];
+        let seq = &mut Arc::make_mut(&mut self.sequences)[idx];
         let val = seq.current_value;
 
         let next_val = if seq.increment >= 0 {

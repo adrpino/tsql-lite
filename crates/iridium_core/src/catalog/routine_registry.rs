@@ -22,14 +22,14 @@ impl RoutineRegistry for CatalogImpl {
             )));
         }
         let idx = self.routines.len();
-        self.routine_map.insert(
+        Arc::make_mut(&mut self.routine_map).insert(
             (
                 normalize_identifier(&routine.schema),
                 normalize_identifier(&routine.name),
             ),
             idx,
         );
-        self.routines.push(routine);
+        Arc::make_mut(&mut self.routines).push(routine);
         Ok(())
     }
 
@@ -39,11 +39,8 @@ impl RoutineRegistry for CatalogImpl {
         name: &str,
         expect_function: bool,
     ) -> Result<(), DbError> {
-        let Some(idx) = self
-            .routine_map
-            .get(&(normalize_identifier(schema), normalize_identifier(name)))
-            .copied()
-        else {
+        let key = (normalize_identifier(schema), normalize_identifier(name));
+        let Some(idx) = self.routine_map.get(&key).copied() else {
             let kind = if expect_function {
                 "function"
             } else {
@@ -62,8 +59,20 @@ impl RoutineRegistry for CatalogImpl {
                 schema, name
             )));
         }
-        self.routines.remove(idx);
-        self.rebuild_maps();
+        let routines = Arc::make_mut(&mut self.routines);
+        routines.swap_remove(idx);
+        let routine_map = Arc::make_mut(&mut self.routine_map);
+        routine_map.remove(&key);
+        if idx < routines.len() {
+            let swapped = &routines[idx];
+            routine_map.insert(
+                (
+                    normalize_identifier(&swapped.schema),
+                    normalize_identifier(&swapped.name),
+                ),
+                idx,
+            );
+        }
         Ok(())
     }
 }

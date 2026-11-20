@@ -358,18 +358,49 @@ pub trait Catalog:
 }
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+mod arc_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S, T>(val: &Arc<T>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Serialize,
+    {
+        val.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        T::deserialize(deserializer).map(Arc::new)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogImpl {
-    schemas: Vec<SchemaDef>,
-    tables: Vec<TableDef>,
-    indexes: Vec<IndexDef>,
-    routines: Vec<RoutineDef>,
-    table_types: Vec<TableTypeDef>,
-    views: Vec<ViewDef>,
-    triggers: Vec<TriggerDef>,
-    synonyms: Vec<SynonymDef>,
-    sequences: Vec<SequenceDef>,
+    #[serde(with = "arc_serde")]
+    schemas: Arc<Vec<SchemaDef>>,
+    #[serde(with = "arc_serde")]
+    tables: Arc<Vec<TableDef>>,
+    #[serde(with = "arc_serde")]
+    indexes: Arc<Vec<IndexDef>>,
+    #[serde(with = "arc_serde")]
+    routines: Arc<Vec<RoutineDef>>,
+    #[serde(with = "arc_serde")]
+    table_types: Arc<Vec<TableTypeDef>>,
+    #[serde(with = "arc_serde")]
+    views: Arc<Vec<ViewDef>>,
+    #[serde(with = "arc_serde")]
+    triggers: Arc<Vec<TriggerDef>>,
+    #[serde(with = "arc_serde")]
+    synonyms: Arc<Vec<SynonymDef>>,
+    #[serde(with = "arc_serde")]
+    sequences: Arc<Vec<SequenceDef>>,
     next_schema_id: u32,
     next_table_id: u32,
     next_column_id: u32,
@@ -378,30 +409,30 @@ pub struct CatalogImpl {
     next_object_id: i32,
 
     #[serde(skip)]
-    schema_map: HashMap<String, usize>,
+    schema_map: Arc<HashMap<String, usize>>,
     #[serde(skip)]
-    table_map: HashMap<(u32, String), usize>,
+    table_map: Arc<HashMap<(u32, String), usize>>,
     #[serde(skip)]
-    routine_map: HashMap<(String, String), usize>,
+    routine_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    type_map: HashMap<(String, String), usize>,
+    type_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    view_map: HashMap<(String, String), usize>,
+    view_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    trigger_map: HashMap<(String, String), usize>,
+    trigger_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    synonym_map: HashMap<(String, String), usize>,
+    synonym_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    sequence_map: HashMap<(String, String), usize>,
+    sequence_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
-    index_map: HashMap<(u32, String), usize>,
+    index_map: Arc<HashMap<(u32, String), usize>>,
 }
 
 impl CatalogImpl {
     pub fn new() -> Self {
         let mut c = Self::default();
         let dbo_id = c.alloc_schema_id();
-        c.schemas.push(SchemaDef {
+        Arc::make_mut(&mut c.schemas).push(SchemaDef {
             id: dbo_id,
             name: "dbo".to_string(),
         });
@@ -410,163 +441,177 @@ impl CatalogImpl {
     }
 
     pub fn rebuild_maps(&mut self) {
-        self.schema_map = self
-            .schemas
-            .iter()
-            .enumerate()
-            .map(|(i, s)| (normalize_identifier(&s.name), i))
-            .collect();
-        self.table_map = self
-            .tables
-            .iter()
-            .enumerate()
-            .map(|(i, t)| ((t.schema_id, normalize_identifier(&t.name)), i))
-            .collect();
-        self.routine_map = self
-            .routines
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                (
+        self.schema_map = Arc::new(
+            self.schemas
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (normalize_identifier(&s.name), i))
+                .collect(),
+        );
+        self.table_map = Arc::new(
+            self.tables
+                .iter()
+                .enumerate()
+                .map(|(i, t)| ((t.schema_id, normalize_identifier(&t.name)), i))
+                .collect(),
+        );
+        self.routine_map = Arc::new(
+            self.routines
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
                     (
-                        normalize_identifier(&r.schema),
-                        normalize_identifier(&r.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.type_map = self
-            .table_types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                (
+                        (
+                            normalize_identifier(&r.schema),
+                            normalize_identifier(&r.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.type_map = Arc::new(
+            self.table_types
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
                     (
-                        normalize_identifier(&t.schema),
-                        normalize_identifier(&t.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.synonym_map = self
-            .synonyms
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
+                        (
+                            normalize_identifier(&t.schema),
+                            normalize_identifier(&t.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.synonym_map = Arc::new(
+            self.synonyms
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
                     (
-                        normalize_identifier(&s.schema),
-                        normalize_identifier(&s.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.sequence_map = self
-            .sequences
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
+                        (
+                            normalize_identifier(&s.schema),
+                            normalize_identifier(&s.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.sequence_map = Arc::new(
+            self.sequences
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
                     (
-                        normalize_identifier(&s.schema),
-                        normalize_identifier(&s.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.view_map = self
-            .views
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                (
+                        (
+                            normalize_identifier(&s.schema),
+                            normalize_identifier(&s.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.view_map = Arc::new(
+            self.views
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
                     (
-                        normalize_identifier(&v.schema),
-                        normalize_identifier(&v.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.trigger_map = self
-            .triggers
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                (
+                        (
+                            normalize_identifier(&v.schema),
+                            normalize_identifier(&v.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.trigger_map = Arc::new(
+            self.triggers
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
                     (
-                        normalize_identifier(&t.schema),
-                        normalize_identifier(&t.name),
-                    ),
-                    i,
-                )
-            })
-            .collect();
-        self.index_map = self
-            .indexes
-            .iter()
-            .enumerate()
-            .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-            .collect();
+                        (
+                            normalize_identifier(&t.schema),
+                            normalize_identifier(&t.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.index_map = Arc::new(
+            self.indexes
+                .iter()
+                .enumerate()
+                .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
+                .collect(),
+        );
     }
 
     /// Remove the table at `idx` using swap_remove (O(1)) and fix up only the
     /// table_map and index_map entries that were affected.
     pub(crate) fn remove_table_at(&mut self, idx: usize) {
-        let removed = self.tables.swap_remove(idx);
-        self.table_map
-            .remove(&(removed.schema_id, normalize_identifier(&removed.name)));
+        let tables = Arc::make_mut(&mut self.tables);
+        let removed = tables.swap_remove(idx);
+        let table_map = Arc::make_mut(&mut self.table_map);
+        table_map.remove(&(removed.schema_id, normalize_identifier(&removed.name)));
 
         // If swap_remove moved the last element into `idx`, update its map entry.
-        if idx < self.tables.len() {
-            let swapped = &self.tables[idx];
-            self.table_map.insert(
+        if idx < tables.len() {
+            let swapped = &tables[idx];
+            table_map.insert(
                 (swapped.schema_id, normalize_identifier(&swapped.name)),
                 idx,
             );
         }
 
-        // Remove associated indexes and rebuild only the index_map.
-        self.indexes.retain(|i| i.table_id != removed.id);
-        self.index_map = self
-            .indexes
-            .iter()
-            .enumerate()
-            .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-            .collect();
+        // Only clone indexes if any actually belonged to this table.
+        if self.indexes.iter().any(|i| i.table_id == removed.id) {
+            let indexes = Arc::make_mut(&mut self.indexes);
+            indexes.retain(|i| i.table_id != removed.id);
+            self.index_map = Arc::new(
+                indexes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
+                    .collect(),
+            );
+        }
     }
 }
 
 impl Default for CatalogImpl {
     fn default() -> Self {
         Self {
-            schemas: Vec::new(),
-            tables: Vec::new(),
-            indexes: Vec::new(),
-            routines: Vec::new(),
-            table_types: Vec::new(),
-            views: Vec::new(),
-            triggers: Vec::new(),
-            synonyms: Vec::new(),
-            sequences: Vec::new(),
+            schemas: Arc::new(Vec::new()),
+            tables: Arc::new(Vec::new()),
+            indexes: Arc::new(Vec::new()),
+            routines: Arc::new(Vec::new()),
+            table_types: Arc::new(Vec::new()),
+            views: Arc::new(Vec::new()),
+            triggers: Arc::new(Vec::new()),
+            synonyms: Arc::new(Vec::new()),
+            sequences: Arc::new(Vec::new()),
             next_schema_id: 1,
             next_table_id: 1234567890,
             next_column_id: 1,
             next_index_id: 234567890,
             next_object_id: -1,
-            schema_map: HashMap::new(),
-            table_map: HashMap::new(),
-            routine_map: HashMap::new(),
-            type_map: HashMap::new(),
-            view_map: HashMap::new(),
-            trigger_map: HashMap::new(),
-            synonym_map: HashMap::new(),
-            sequence_map: HashMap::new(),
-            index_map: HashMap::new(),
+            schema_map: Arc::new(HashMap::new()),
+            table_map: Arc::new(HashMap::new()),
+            routine_map: Arc::new(HashMap::new()),
+            type_map: Arc::new(HashMap::new()),
+            view_map: Arc::new(HashMap::new()),
+            trigger_map: Arc::new(HashMap::new()),
+            synonym_map: Arc::new(HashMap::new()),
+            sequence_map: Arc::new(HashMap::new()),
+            index_map: Arc::new(HashMap::new()),
         }
     }
 }

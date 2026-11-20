@@ -416,13 +416,31 @@ fn engine_checkpoint_deep_ast_and_fork_isolated() {
 
     let fork_a = e.fork_isolated();
     let fork_b = e.fork_isolated();
-    fork_a
-        .exec("INSERT INTO dbo.items VALUES (2, 20)")
-        .unwrap();
+    fork_a.exec("INSERT INTO dbo.items VALUES (2, 20)").unwrap();
     let ra = fork_a.query("SELECT COUNT(*) FROM dbo.items").unwrap();
     let rb = fork_b.query("SELECT COUNT(*) FROM dbo.items").unwrap();
     let rp = e.query("SELECT COUNT(*) FROM dbo.items").unwrap();
     assert_eq!(ra.rows[0][0].to_integer_i64(), Some(2));
     assert_eq!(rb.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(rp.rows[0][0].to_integer_i64(), Some(1));
+}
+
+#[test]
+fn procedural_select_assign_accumulates_row_by_row() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.ids (id INT)");
+    exec(&mut e, "INSERT INTO dbo.ids VALUES (101), (102), (103)");
+    exec(&mut e, "DECLARE @csv VARCHAR(200) = ''");
+    exec(
+        &mut e,
+        "SELECT @csv = @csv + CAST(id AS VARCHAR(20)) + ',' FROM dbo.ids",
+    );
+    let r = query(&mut e, "SELECT @csv");
+    assert_eq!(r.rows[0][0], Value::VarChar("101,102,103,".to_string()));
+
+    // Aggregate assignment still works cleanly
+    exec(&mut e, "DECLARE @max_id INT = 0");
+    exec(&mut e, "SELECT @max_id = MAX(id) FROM dbo.ids");
+    let r2 = query(&mut e, "SELECT @max_id");
+    assert_eq!(r2.rows[0][0], Value::Int(103));
 }

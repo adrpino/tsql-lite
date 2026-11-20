@@ -265,3 +265,32 @@ fn procedural_variables_are_case_insensitive() {
     let r2 = query(&mut e, "SELECT @totalamount");
     assert_eq!(r2.rows[0][0], Value::Int(99));
 }
+
+#[test]
+fn procedural_create_proc_with_options_multi_stmt_body_and_param_syntax() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_with_opts
+            @a AS INT = 5,
+            @out INT = NULL OUTPUT
+        WITH RECOMPILE, EXECUTE AS 'dbo'
+        AS
+        SET NOCOUNT ON;
+        SET @out = @a * 4;",
+    );
+    exec(&mut e, "DECLARE @res INT");
+    e.execute_batch(
+        iridium_core::parse_batch("EXEC dbo.p_with_opts @a = 6, @out = @res OUTPUT").unwrap(),
+    )
+    .unwrap();
+    let r = query(&mut e, "SELECT @res");
+    assert_eq!(r.rows[0][0], Value::Int(24));
+
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_encrypted WITH ENCRYPTION AS SELECT 42 AS answer",
+    );
+    let r2 = query(&mut e, "EXEC dbo.p_encrypted");
+    assert_eq!(r2.rows[0][0], Value::Int(42));
+}

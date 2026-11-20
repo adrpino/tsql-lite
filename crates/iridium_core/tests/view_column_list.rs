@@ -45,3 +45,19 @@ fn create_view_rejects_mismatched_column_count() {
         .exec("CREATE VIEW dbo.v_bad (only_one) AS SELECT a, b FROM dbo.t")
         .is_err());
 }
+
+#[test]
+fn create_view_with_parenthesized_select_body() {
+    let e = Engine::new();
+    e.exec("CREATE TABLE dbo.items (id INT, price INT)")
+        .unwrap();
+    e.exec("INSERT INTO dbo.items VALUES (1, 25), (2, 75)")
+        .unwrap();
+
+    e.exec("CREATE VIEW dbo.v_paren AS (SELECT id, price FROM dbo.items WHERE price > 30)")
+        .unwrap();
+
+    let r = e.query("SELECT id, price FROM dbo.v_paren").unwrap();
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows[0], vec![Value::Int(2), Value::Int(75)]);
+}

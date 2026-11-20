@@ -937,32 +937,40 @@ pub fn parse_routine_param(parser: &mut Parser) -> ParseResult<RoutineParam> {
     } else {
         return parser.backtrack(Expected::Description("variable"));
     };
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+    }
     let data_type = parse_data_type(parser)?;
     let mut is_output = false;
-    if matches!(parser.peek(), Some(Token::Keyword(k)) if matches!(k, Keyword::Output | Keyword::Out))
-    {
-        let _ = parser.next();
-        is_output = true;
-    }
     let mut is_readonly = false;
-    if matches!(data_type, crate::parser::ast::DataType::Custom(_)) {
-        match parser.next() {
-            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("READONLY") => {
-                is_readonly = true;
-            }
-            Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("READONLY") => {
-                is_readonly = true;
-            }
-            _ => return parser.backtrack(Expected::Description("READONLY")),
-        }
-    }
     let mut default = None;
-    if let Some(Token::Operator(op)) = parser.peek() {
-        if *op == "=" {
+
+    loop {
+        if matches!(parser.peek(), Some(Token::Keyword(k)) if matches!(k, Keyword::Output | Keyword::Out))
+        {
+            let _ = parser.next();
+            is_output = true;
+            continue;
+        }
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("READONLY"))
+            || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("READONLY"))
+        {
+            let _ = parser.next();
+            is_readonly = true;
+            continue;
+        }
+        if default.is_none() && matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
             let _ = parser.next();
             default = Some(parse_expr(parser)?);
+            continue;
         }
+        break;
     }
+
+    if matches!(data_type, crate::parser::ast::DataType::Custom(_)) && !is_readonly {
+        return parser.backtrack(Expected::Description("READONLY"));
+    }
+
     Ok(RoutineParam {
         name,
         data_type,

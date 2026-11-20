@@ -48,12 +48,60 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         })?;
     }
     parser.expect_keyword(Keyword::As)?;
+    let mut paren_depth = 0usize;
+    while matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        paren_depth += 1;
+    }
     let query = crate::parser::parse::statements::query::parse_select(parser)?;
+    for _ in 0..paren_depth {
+        parser.expect_rparen()?;
+    }
     Ok(CreateStmt::View {
         name,
         columns,
         query,
     })
+}
+
+fn parse_procedure_with_options(parser: &mut Parser) -> ParseResult<()> {
+    if !parser.at_keyword(Keyword::With) {
+        return Ok(());
+    }
+    let _ = parser.next();
+    let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.peek() {
+        Some(Token::Keyword(Keyword::Execute)) | Some(Token::Keyword(Keyword::Exec)) => {
+            let _ = p.next();
+            p.expect_keyword(Keyword::As)?;
+            match p.next() {
+                Some(Token::String(_))
+                | Some(Token::NString(_))
+                | Some(Token::Identifier(_))
+                | Some(Token::Keyword(_)) => Ok(()),
+                _ => p.backtrack(Expected::Description("EXECUTE AS principal")),
+            }
+        }
+        Some(Token::Identifier(id))
+            if id.eq_ignore_ascii_case("RECOMPILE")
+                || id.eq_ignore_ascii_case("ENCRYPTION")
+                || id.eq_ignore_ascii_case("SCHEMABINDING")
+                || id.eq_ignore_ascii_case("NATIVE_COMPILATION") =>
+        {
+            let _ = p.next();
+            Ok(())
+        }
+        Some(Token::Keyword(k))
+            if k.as_ref().eq_ignore_ascii_case("RECOMPILE")
+                || k.as_ref().eq_ignore_ascii_case("ENCRYPTION")
+                || k.as_ref().eq_ignore_ascii_case("SCHEMABINDING")
+                || k.as_ref().eq_ignore_ascii_case("NATIVE_COMPILATION") =>
+        {
+            let _ = p.next();
+            Ok(())
+        }
+        _ => p.backtrack(Expected::Description("procedure option")),
+    })?;
+    Ok(())
 }
 
 pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
@@ -72,6 +120,7 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
             crate::parser::parse::parse_routine_param,
         )?;
     }
+    parse_procedure_with_options(parser)?;
     parser.expect_keyword(Keyword::As)?;
     let body = if parser.at_keyword(Keyword::Begin) {
         let _ = parser.next();
@@ -80,7 +129,20 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
             _ => unreachable!(),
         }
     } else {
-        vec![crate::parser::parse::parse_statement(parser)?]
+        let mut stmts = Vec::new();
+        while !parser.is_empty() && !matches!(parser.peek(), Some(Token::Go)) {
+            while matches!(parser.peek(), Some(Token::Semicolon)) {
+                let _ = parser.next();
+            }
+            if parser.is_empty() || matches!(parser.peek(), Some(Token::Go)) {
+                break;
+            }
+            stmts.push(crate::parser::parse::parse_statement(parser)?);
+            while matches!(parser.peek(), Some(Token::Semicolon)) {
+                let _ = parser.next();
+            }
+        }
+        stmts
     };
     Ok(CreateStmt::Procedure { name, params, body })
 }

@@ -126,12 +126,46 @@ fn eval_expr_inner(
         }
 
         Expr::FunctionCall { name, args, .. } => {
+            if name == "__COLLATE" && !args.is_empty() {
+                return eval_expr(&args[0], row, ctx, catalog, storage, clock);
+            }
             eval_function(name, args, row, ctx, catalog, storage, clock)
         }
 
         Expr::Binary { left, op, right } => {
             let lv = eval_expr(left, row, ctx, catalog, storage, clock)?;
             let rv = eval_expr(right, row, ctx, catalog, storage, clock)?;
+            if let Some(cs) = expr_collation_case_sensitive(left)
+                .or_else(|| expr_collation_case_sensitive(right))
+            {
+                if cs && matches!(
+                    op,
+                    crate::ast::BinaryOp::Eq
+                        | crate::ast::BinaryOp::NotEq
+                        | crate::ast::BinaryOp::Gt
+                        | crate::ast::BinaryOp::Lt
+                        | crate::ast::BinaryOp::Gte
+                        | crate::ast::BinaryOp::Lte
+                ) {
+                    if let (Some(ls), Some(rs)) = (value_as_str(&lv), value_as_str(&rv)) {
+                        let ord = ls.trim_end_matches(' ').cmp(rs.trim_end_matches(' '));
+                        let b = match op {
+                            crate::ast::BinaryOp::Eq => ord == std::cmp::Ordering::Equal,
+                            crate::ast::BinaryOp::NotEq => ord != std::cmp::Ordering::Equal,
+                            crate::ast::BinaryOp::Gt => ord == std::cmp::Ordering::Greater,
+                            crate::ast::BinaryOp::Lt => ord == std::cmp::Ordering::Less,
+                            crate::ast::BinaryOp::Gte => {
+                                matches!(ord, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                            }
+                            crate::ast::BinaryOp::Lte => {
+                                matches!(ord, std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                            }
+                            _ => unreachable!(),
+                        };
+                        return Ok(Value::Bit(b));
+                    }
+                }
+            }
             eval_binary(
                 op,
                 lv,
@@ -165,4 +199,28 @@ pub(crate) fn eval_predicate(
         other => crate::executor::value_ops::truthy(other),
     };
     Ok(result)
+}
+
+fn expr_collation_case_sensitive(expr: &Expr) -> Option<bool> {
+    if let Expr::FunctionCall { name, args, .. } = expr {
+        if name == "__COLLATE" {
+            if let Some(Expr::String(col)) = args.get(1) {
+                let upper = col.to_ascii_uppercase();
+                return Some(
+                    upper.contains("_CS_")
+                        || upper.ends_with("_CS")
+                        || upper.contains("_BIN")
+                        || upper.ends_with("_BIN2"),
+                );
+            }
+        }
+    }
+    None
+}
+
+fn value_as_str(v: &Value) -> Option<&str> {
+    match v {
+        Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => Some(s),
+        _ => None,
+    }
 }

@@ -17,6 +17,28 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
 
         loop {
             if let Some(Token::Keyword(k)) = parser.peek() {
+                if *k == Keyword::Collate {
+                    let l_bp = 15u8;
+                    if l_bp < min_bp {
+                        break;
+                    }
+                    let _ = parser.next();
+                    let collation_name = match parser.next() {
+                        Some(Token::Identifier(id)) => id.clone(),
+                        Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
+                        _ => {
+                            return parser.backtrack(
+                                crate::parser::error::Expected::Description("collation name"),
+                            )
+                        }
+                    };
+                    left = Expr::FunctionCall {
+                        name: "__COLLATE".to_string(),
+                        args: vec![left, Expr::String(collation_name)],
+                        within_group: vec![],
+                    };
+                    continue;
+                }
                 if *k == Keyword::Is {
                     let (l_bp, ()) = postfix_binding_power(k);
                     if l_bp < min_bp {

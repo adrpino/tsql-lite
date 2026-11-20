@@ -222,5 +222,14 @@ pub(crate) fn parse_datetime_string(v: &str, dateformat: &str) -> Result<NaiveDa
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%d/%m/%Y %H:%M:%S"))
         .or_else(|_| NaiveDateTime::parse_from_str(v, "%d/%m/%Y %H:%M"))
         .or_else(|_| parse_date_string(v, dateformat).map(|d| d.and_hms_opt(0, 0, 0).unwrap()))
+        .or_else(|_| {
+            let t = NaiveTime::parse_from_str(v, "%H:%M:%S")
+                .or_else(|_| NaiveTime::parse_from_str(v, "%H:%M:%S%.f"))
+                .or_else(|_| NaiveTime::parse_from_str(v, "%H:%M"))
+                .map_err(|_| ())?;
+            NaiveDate::from_ymd_opt(1900, 1, 1)
+                .map(|d| d.and_time(t))
+                .ok_or(())
+        })
         .map_err(|_| ())
 }

@@ -317,9 +317,13 @@ pub fn parse_decimal_string(s: &str, scale: u8) -> Result<Value, DbError> {
     let whole_str = parts[0];
     let frac_str = parts.get(1).copied().unwrap_or("");
 
-    let whole: i128 = whole_str
-        .parse()
-        .map_err(|_| DbError::Execution(format!("cannot convert '{}' to DECIMAL", s)))?;
+    let whole: i128 = if whole_str.is_empty() && !frac_str.is_empty() {
+        0
+    } else {
+        whole_str
+            .parse()
+            .map_err(|_| DbError::Execution(format!("cannot convert '{}' to DECIMAL", s)))?
+    };
 
     let mut frac: i128 = 0;
     if scale > 0 && !frac_str.is_empty() {
@@ -366,27 +370,36 @@ pub fn parse_numeric_literal(s: &str) -> Result<Value, DbError> {
 }
 
 pub fn parse_money_string(s: &str) -> Result<Value, DbError> {
-    let trimmed = s.trim().trim_start_matches('$');
+    let trimmed = s.trim();
     if trimmed.is_empty() {
         return Err(DbError::Execution(
             "cannot convert empty string to MONEY".into(),
         ));
     }
     let scale = 4u8;
-    let negative = trimmed.starts_with('-');
-    let abs_str = if negative || trimmed.starts_with('+') {
-        &trimmed[1..]
-    } else {
-        trimmed
-    };
+    // Allow optional currency sign before or after leading +/- sign (e.g. '-$25.50', '$-25.50', '$1,234.56')
+    let mut rest = trimmed.trim_start_matches('$').trim_start();
+    let negative = rest.starts_with('-');
+    if negative || rest.starts_with('+') {
+        rest = rest[1..].trim_start();
+    }
+    rest = rest.trim_start_matches('$').trim_start();
+    let cleaned = rest.replace(',', "");
+    if cleaned.is_empty() {
+        return Err(DbError::Execution(format!("cannot convert '{}' to MONEY", s)));
+    }
 
-    let parts: Vec<&str> = abs_str.splitn(2, '.').collect();
+    let parts: Vec<&str> = cleaned.splitn(2, '.').collect();
     let whole_str = parts[0];
     let frac_str = parts.get(1).copied().unwrap_or("");
 
-    let whole: i128 = whole_str
-        .parse()
-        .map_err(|_| DbError::Execution(format!("cannot convert '{}' to MONEY", s)))?;
+    let whole: i128 = if whole_str.is_empty() && !frac_str.is_empty() {
+        0
+    } else {
+        whole_str
+            .parse()
+            .map_err(|_| DbError::Execution(format!("cannot convert '{}' to MONEY", s)))?
+    };
 
     let mut frac: i128 = 0;
     if !frac_str.is_empty() {

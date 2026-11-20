@@ -76,10 +76,15 @@ pub(crate) fn eval_format(
     let fmt = format_str.to_string_value();
 
     match val {
-        Value::DateTime(dt) | Value::DateTime2(dt) => {
-            Ok(Value::NVarChar(dt.format(&fmt).to_string()))
+        Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => {
+            let chrono_fmt = translate_dotnet_datetime_format(&fmt);
+            Ok(Value::NVarChar(dt.format(&chrono_fmt).to_string()))
         }
-        Value::Date(d) => Ok(Value::NVarChar(d.format(&fmt).to_string())),
+        Value::Date(d) => {
+            let dt = d.and_hms_opt(0, 0, 0).unwrap();
+            let chrono_fmt = translate_dotnet_datetime_format(&fmt);
+            Ok(Value::NVarChar(dt.format(&chrono_fmt).to_string()))
+        }
         Value::Int(v) => Ok(Value::NVarChar(format_integer(v, &fmt))),
         Value::BigInt(v) => Ok(Value::NVarChar(format_integer(v, &fmt))),
         Value::Decimal(raw, scale) => {
@@ -92,6 +97,161 @@ pub(crate) fn eval_format(
         }
         _ => Ok(Value::NVarChar(val.to_string_value())),
     }
+}
+
+fn translate_dotnet_datetime_format(fmt: &str) -> String {
+    if fmt.contains('%') {
+        return fmt.to_string();
+    }
+    let bytes = fmt.as_bytes();
+    let mut out = String::with_capacity(fmt.len() + 8);
+    let mut i = 0;
+    while i < bytes.len() {
+        let rest = &fmt[i..];
+        if rest.starts_with("yyyy") {
+            out.push_str("%Y");
+            i += 4;
+        } else if rest.starts_with("yy") {
+            out.push_str("%y");
+            i += 2;
+        } else if rest.starts_with("MMMM") {
+            out.push_str("%B");
+            i += 4;
+        } else if rest.starts_with("MMM") {
+            out.push_str("%b");
+            i += 3;
+        } else if rest.starts_with("MM") {
+            out.push_str("%m");
+            i += 2;
+        } else if rest.starts_with('M') {
+            out.push_str("%-m");
+            i += 1;
+        } else if rest.starts_with("dddd") {
+            out.push_str("%A");
+            i += 4;
+        } else if rest.starts_with("ddd") {
+            out.push_str("%a");
+            i += 3;
+        } else if rest.starts_with("dd") {
+            out.push_str("%d");
+            i += 2;
+        } else if rest.starts_with('d') {
+            out.push_str("%-d");
+            i += 1;
+        } else if rest.starts_with("HH") {
+            out.push_str("%H");
+            i += 2;
+        } else if rest.starts_with('H') {
+            out.push_str("%-H");
+            i += 1;
+        } else if rest.starts_with("hh") {
+            out.push_str("%I");
+            i += 2;
+        } else if rest.starts_with('h') {
+            out.push_str("%-I");
+            i += 1;
+        } else if rest.starts_with("mm") {
+            out.push_str("%M");
+            i += 2;
+        } else if rest.starts_with('m') {
+            out.push_str("%-M");
+            i += 1;
+        } else if rest.starts_with("ss") {
+            out.push_str("%S");
+            i += 2;
+        } else if rest.starts_with('s') {
+            out.push_str("%-S");
+            i += 1;
+        } else if rest.starts_with("fff") {
+            out.push_str("%3f");
+            i += 3;
+        } else if rest.starts_with("tt") {
+            out.push_str("%p");
+            i += 2;
+        } else {
+            let ch = rest.chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+pub(crate) fn eval_isnumeric(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 1 {
+        return Err(DbError::Execution("ISNUMERIC expects 1 argument".into()));
+    }
+    let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let is_num = match val {
+        Value::Null => false,
+        Value::Bit(_)
+        | Value::TinyInt(_)
+        | Value::SmallInt(_)
+        | Value::Int(_)
+        | Value::BigInt(_)
+        | Value::Float(_)
+        | Value::Decimal(_, _)
+        | Value::Money(_)
+        | Value::SmallMoney(_) => true,
+        Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                false
+            } else {
+                let no_commas = t.replace(',', "");
+                let stripped = no_commas
+                    .trim_start_matches('$')
+                    .trim_start_matches(['+', '-'])
+                    .trim_start_matches('$');
+                !stripped.is_empty()
+                    && (no_commas.parse::<f64>().is_ok()
+                        || crate::executor::value_ops::coercion::numeric::parse_money_string(t)
+                            .is_ok())
+            }
+        }
+        _ => false,
+    };
+    Ok(Value::Int(if is_num { 1 } else { 0 }))
+}
+
+pub(crate) fn eval_formatmessage(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.is_empty() {
+        return Err(DbError::Execution(
+            "FORMATMESSAGE expects at least 1 argument".into(),
+        ));
+    }
+    let template = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    if template.is_null() {
+        return Ok(Value::Null);
+    }
+    let mut formatted_args = Vec::with_capacity(args.len().saturating_sub(1));
+    for arg in &args[1..] {
+        let v = eval_expr(arg, row, ctx, catalog, storage, clock)?;
+        formatted_args.push(if v.is_null() {
+            "(null)".to_string()
+        } else {
+            v.to_string_value()
+        });
+    }
+    let out = crate::executor::script::procedural::raiserror::format_raiserror_message(
+        &template.to_string_value(),
+        &formatted_args,
+    );
+    Ok(Value::NVarChar(out))
 }
 
 pub(crate) fn eval_str(

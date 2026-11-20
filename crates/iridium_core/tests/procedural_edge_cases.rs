@@ -1377,3 +1377,54 @@ fn optional_omitted_tvp_parameter_and_bit_severity_raiserror() {
     let r2 = query(&mut e, "EXEC dbo.p_opt_tvp @tag = 'debug', @debug = 1");
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(0));
 }
+
+#[test]
+fn collate_cs_ci_isnumeric_formatmessage_dotnet_format_and_conversions() {
+    let mut e = Engine::new();
+
+    // 1. COLLATE case-sensitive vs case-insensitive
+    let r1 = query(
+        &mut e,
+        "SELECT
+            CASE WHEN 'Secret' = 'secret' COLLATE Latin1_General_CS_AS THEN 1 ELSE 0 END,
+            CASE WHEN 'Secret' = 'Secret' COLLATE Latin1_General_CS_AS THEN 1 ELSE 0 END,
+            CASE WHEN 'Secret' = 'secret' COLLATE Latin1_General_CI_AS THEN 1 ELSE 0 END",
+    );
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(0));
+    assert_eq!(r1.rows[0][1].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(1));
+
+    // 2. ISNUMERIC, FORMATMESSAGE, and .NET datetime FORMAT
+    let r2 = query(
+        &mut e,
+        "SELECT
+            ISNUMERIC('123.45'),
+            ISNUMERIC('-$25.50'),
+            ISNUMERIC('abc'),
+            ISNUMERIC(NULL),
+            FORMATMESSAGE('Item %d: %s', 7, 'ok'),
+            FORMAT(CAST('2026-06-15 14:30:05' AS DATETIME), 'yyyy-MM-dd 00:00:00')",
+    );
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r2.rows[0][1].to_integer_i64(), Some(1));
+    assert_eq!(r2.rows[0][2].to_integer_i64(), Some(0));
+    assert_eq!(r2.rows[0][3].to_integer_i64(), Some(0));
+    assert_eq!(r2.rows[0][4].to_string_value(), "Item 7: ok");
+    assert_eq!(r2.rows[0][5].to_string_value(), "2026-06-15 00:00:00");
+
+    // 3. Leading-dot DECIMAL, signed currency MONEY, time-only DATETIME, empty-string INT
+    let r3 = query(
+        &mut e,
+        "SELECT
+            CAST('.01' AS DECIMAL(10, 2)),
+            CAST('-.10' AS DECIMAL(10, 2)),
+            CAST('-$25.5000' AS MONEY),
+            CAST('08:00:00' AS DATETIME),
+            CAST('' AS INT)",
+    );
+    assert_eq!(r3.rows[0][0], Value::Decimal(1, 2));
+    assert_eq!(r3.rows[0][1], Value::Decimal(-10, 2));
+    assert_eq!(r3.rows[0][2], Value::Money(-255000));
+    assert_eq!(r3.rows[0][3].to_string_value(), "1900-01-01 08:00:00");
+    assert_eq!(r3.rows[0][4].to_integer_i64(), Some(0));
+}

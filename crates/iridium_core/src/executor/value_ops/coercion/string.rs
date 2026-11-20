@@ -9,22 +9,46 @@ use super::datetime::parse_date_string;
 pub(crate) fn coerce_string(v: &str, ty: &DataType, dateformat: &str) -> Result<Value, DbError> {
     match ty {
         DataType::Bit => Ok(Value::Bit(v != "0" && !v.is_empty())),
-        DataType::TinyInt => v
-            .parse::<u8>()
-            .map(Value::TinyInt)
-            .map_err(|_| DbError::conversion_failed("varchar", v, "tinyint")),
-        DataType::SmallInt => v
-            .parse::<i16>()
-            .map(Value::SmallInt)
-            .map_err(|_| DbError::conversion_failed("varchar", v, "smallint")),
-        DataType::Int => v
-            .parse::<i32>()
-            .map(Value::Int)
-            .map_err(|_| DbError::conversion_failed("varchar", v, "int")),
-        DataType::BigInt => v
-            .parse::<i64>()
-            .map(Value::BigInt)
-            .map_err(|_| DbError::conversion_failed("varchar", v, "bigint")),
+        DataType::TinyInt => {
+            let t = v.trim();
+            if t.is_empty() {
+                Ok(Value::TinyInt(0))
+            } else {
+                t.parse::<u8>()
+                    .map(Value::TinyInt)
+                    .map_err(|_| DbError::conversion_failed("varchar", v, "tinyint"))
+            }
+        }
+        DataType::SmallInt => {
+            let t = v.trim();
+            if t.is_empty() {
+                Ok(Value::SmallInt(0))
+            } else {
+                t.parse::<i16>()
+                    .map(Value::SmallInt)
+                    .map_err(|_| DbError::conversion_failed("varchar", v, "smallint"))
+            }
+        }
+        DataType::Int => {
+            let t = v.trim();
+            if t.is_empty() {
+                Ok(Value::Int(0))
+            } else {
+                t.parse::<i32>()
+                    .map(Value::Int)
+                    .map_err(|_| DbError::conversion_failed("varchar", v, "int"))
+            }
+        }
+        DataType::BigInt => {
+            let t = v.trim();
+            if t.is_empty() {
+                Ok(Value::BigInt(0))
+            } else {
+                t.parse::<i64>()
+                    .map(Value::BigInt)
+                    .map_err(|_| DbError::conversion_failed("varchar", v, "bigint"))
+            }
+        }
         DataType::Float => v
             .parse::<f64>()
             .map(|f| Value::Float(f.to_bits()))

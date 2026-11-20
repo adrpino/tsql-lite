@@ -275,10 +275,10 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
     let mut joins = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::From))) {
         let _ = parser.next();
-        from.extend(crate::parser::parse::expressions::parse_comma_list(
+        from = crate::parser::parse::expressions::parse_comma_list(
             parser,
             crate::parser::parse::statements::query::parse_table_ref,
-        )?);
+        )?;
     }
 
     while let Some(join) = crate::parser::parse::statements::query::parse_join_clause(parser)? {

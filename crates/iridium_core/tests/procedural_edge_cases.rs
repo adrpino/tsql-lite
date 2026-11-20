@@ -1178,3 +1178,41 @@ fn nested_aggregates_in_select_and_empty_wildcard_union_all() {
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r2.rows[0][1].to_string_value(), "ok");
 }
+
+#[test]
+fn delete_alias_from_table_and_sp_executesql_same_name_output_var() {
+    let mut e = Engine::new();
+
+    // 1. DELETE alias FROM tbl alias INNER JOIN ...
+    exec(&mut e, "CREATE TABLE dbo.items (id INT, tenant INT)");
+    exec(&mut e, "CREATE TABLE dbo.to_del (id INT)");
+    exec(&mut e, "INSERT INTO dbo.items VALUES (1, 10), (2, 10), (3, 20)");
+    exec(&mut e, "INSERT INTO dbo.to_del VALUES (2), (3)");
+    exec(
+        &mut e,
+        "DELETE x
+         FROM dbo.items x
+         INNER JOIN dbo.to_del d ON x.id = d.id
+         WHERE x.tenant = 10",
+    );
+    let r1 = query(&mut e, "SELECT id FROM dbo.items ORDER BY id");
+    assert_eq!(r1.rows.len(), 2);
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[1][0].to_integer_i64(), Some(3));
+
+    // 2. sp_executesql with same-name OUTPUT parameter must preserve caller's variable
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_dyn_count
+        AS
+        BEGIN
+            DECLARE @RowCount BIGINT = 0;
+            DECLARE @sql NVARCHAR(MAX) = N'SELECT @RowCount = COUNT(*) FROM dbo.items';
+            EXEC sp_executesql @sql, N'@RowCount BIGINT OUTPUT', @RowCount = @RowCount OUTPUT;
+            SET @RowCount = @RowCount + 10;
+            SELECT @RowCount AS final_cnt;
+        END",
+    );
+    let r2 = query(&mut e, "EXEC dbo.p_dyn_count");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(12));
+}

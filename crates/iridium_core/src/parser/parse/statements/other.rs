@@ -140,6 +140,8 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                     || (name.len() == 3
                         && name[0].eq_ignore_ascii_case("master")
                         && name[1].eq_ignore_ascii_case("sys")))
+                && !(matches!(parser.peek(), Some(Token::Variable(_)))
+                    && matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "="))
             {
                 let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
                 let mut params_def = None;

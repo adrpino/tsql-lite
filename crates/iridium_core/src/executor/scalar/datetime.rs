@@ -37,11 +37,17 @@ pub(crate) fn eval_dateadd(
     let part = extract_datepart(&args[0])?;
     let number = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
     let date_val = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+    if number.is_null() || date_val.is_null() {
+        return Ok(Value::Null);
+    }
     let num = match number {
         Value::Int(v) => v as i64,
         Value::BigInt(v) => v,
         Value::SmallInt(v) => v as i64,
         Value::TinyInt(v) => v as i64,
+        Value::Float(bits) => f64::from_bits(bits).trunc() as i64,
+        Value::Decimal(raw, scale) => (raw / 10i128.pow(scale as u32)) as i64,
+        Value::Bit(b) => i64::from(b),
         _ => {
             return Err(DbError::Execution(
                 "DATEADD number must be an integer".into(),
@@ -75,7 +81,9 @@ pub(crate) fn eval_datediff(
     let part = extract_datepart(&args[0])?;
     let start_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
     let end_val = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
-
+    if start_val.is_null() || end_val.is_null() {
+        return Ok(Value::Null);
+    }
     let start_str = start_val.to_string_value();
     let end_str = end_val.to_string_value();
 
@@ -139,6 +147,9 @@ pub(crate) fn eval_datepart(
 
     let part = extract_datepart(&args[0])?;
     let date_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if date_val.is_null() {
+        return Ok(Value::Null);
+    }
     let date_str = date_val.to_string_value();
     let (y, m, d, h, mi, s) = parse_datetime_parts(&date_str, &ctx.options.dateformat)?;
 
@@ -193,6 +204,9 @@ pub(crate) fn eval_datename(
 
     let part = extract_datepart(&args[0])?;
     let date_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if date_val.is_null() {
+        return Ok(Value::Null);
+    }
     let date_str = date_val.to_string_value();
     let (y, m, d, _, _, _) = parse_datetime_parts(&date_str, &ctx.options.dateformat)?;
 

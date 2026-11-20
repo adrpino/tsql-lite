@@ -68,6 +68,7 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                     Ok(Statement::Dml(DmlStatement::SelectAssign {
                         assignments: assigns,
                         from: s.from,
+                        joins: s.joins,
                         selection: s.selection,
                     }))
                 } else {

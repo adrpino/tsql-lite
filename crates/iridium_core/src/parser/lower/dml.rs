@@ -59,6 +59,7 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
         ast::DmlStatement::SelectAssign {
             assignments,
             from,
+            joins: ast_joins,
             selection,
         } => {
             let mut joins = Vec::new();
@@ -69,6 +70,9 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
             } else {
                 None
             };
+            for j in ast_joins {
+                joins.push(lower_join_clause(j)?);
+            }
             Ok(executor_ast::Statement::Dml(
                 executor_ast::statements::DmlStatement::SelectAssign(
                     executor_ast::statements::procedural::SelectAssignStmt {

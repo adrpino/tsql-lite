@@ -1216,3 +1216,62 @@ fn delete_alias_from_table_and_sp_executesql_same_name_output_var() {
     let r2 = query(&mut e, "EXEC dbo.p_dyn_count");
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(12));
 }
+
+#[test]
+fn select_assign_joins_sp_executesql_named_stmt_convert_trunc_and_dateadd_null() {
+    let mut e = Engine::new();
+
+    // 1. SELECT @var = ... FROM a LEFT JOIN b ON ...
+    exec(&mut e, "CREATE TABLE dbo.a (id INT)");
+    exec(&mut e, "CREATE TABLE dbo.b (a_id INT, label VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.a VALUES (1)");
+    exec(&mut e, "INSERT INTO dbo.b VALUES (1, 'found')");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_assign_join
+        AS
+        BEGIN
+            DECLARE @out VARCHAR(20) = 'none';
+            SELECT @out = b.label
+            FROM dbo.a a
+            LEFT JOIN dbo.b b ON b.a_id = a.id
+            WHERE b.label = 'found';
+            SELECT @out AS res;
+        END",
+    );
+    let r1 = query(&mut e, "EXEC dbo.p_assign_join");
+    assert_eq!(r1.rows[0][0].to_string_value(), "found");
+
+    // 2. EXEC sp_executesql @stmt = @sql (named @stmt argument)
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_named_sp_exec
+        AS
+        BEGIN
+            DECLARE @q NVARCHAR(MAX) = N'SELECT 99 AS val';
+            EXEC sp_executesql @stmt = @q;
+        END",
+    );
+    let r2 = query(&mut e, "EXEC dbo.p_named_sp_exec");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(99));
+
+    // 3. CONVERT(VARCHAR(10), dt, 120) truncates to 10 chars
+    let r3 = query(
+        &mut e,
+        "SELECT CONVERT(VARCHAR(10), CAST('2026-03-01 14:30:00' AS DATETIME), 120) AS d10",
+    );
+    assert_eq!(r3.rows[0][0].to_string_value(), "2026-03-01");
+
+    // 4. DATEADD / DATEDIFF / DATEPART NULL propagation + numeric truncation
+    let r4 = query(
+        &mut e,
+        "SELECT DATEADD(DAY, -1, NULL) AS n1,
+                DATEADD(DAY, NULL, '2026-01-01') AS n2,
+                CAST(DATEADD(DAY, 2.9, '2026-01-01') AS DATE) AS d_trunc,
+                DATEDIFF(DAY, NULL, '2026-01-02') AS df_null",
+    );
+    assert_eq!(r4.rows[0][0], Value::Null);
+    assert_eq!(r4.rows[0][1], Value::Null);
+    assert_eq!(r4.rows[0][2].to_string_value(), "2026-01-03");
+    assert_eq!(r4.rows[0][3], Value::Null);
+}

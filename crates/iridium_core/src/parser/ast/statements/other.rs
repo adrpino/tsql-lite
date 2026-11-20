@@ -32,6 +32,7 @@ pub enum DmlStatement {
     SelectAssign {
         assignments: Vec<SelectAssignTarget>,
         from: Option<TableRef>,
+        joins: Vec<JoinClause>,
         selection: Option<Expr>,
     },
 }

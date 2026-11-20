@@ -26,13 +26,23 @@ pub fn convert_with_style(
     }
 }
 
+fn truncate_to_max_len(s: String, max_len: u16) -> String {
+    if max_len > 0 && max_len != u16::MAX {
+        s.chars().take(max_len as usize).collect()
+    } else {
+        s
+    }
+}
+
 fn convert_date_to_string(d: NaiveDate, ty: &DataType, style: i32) -> Result<Value, DbError> {
     let formatted = format_date(&d, style);
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { .. } => Ok(Value::VarChar(formatted)),
+        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
-        DataType::NVarChar { .. } => Ok(Value::NVarChar(formatted)),
+        DataType::NVarChar { max_len } => {
+            Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::Date => Ok(Value::Date(d)),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Date(d)))),
         _ => coerce_value_to_type(Value::VarChar(formatted), ty),
@@ -43,9 +53,11 @@ fn convert_time_to_string(t: NaiveTime, ty: &DataType, style: i32) -> Result<Val
     let formatted = format_time(&t, style);
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { .. } => Ok(Value::VarChar(formatted)),
+        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
-        DataType::NVarChar { .. } => Ok(Value::NVarChar(formatted)),
+        DataType::NVarChar { max_len } => {
+            Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::Time => Ok(Value::Time(t)),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Time(t)))),
         _ => coerce_value_to_type(Value::VarChar(formatted), ty),
@@ -61,9 +73,11 @@ fn convert_datetime_to_string(
 
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { .. } => Ok(Value::VarChar(formatted)),
+        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
-        DataType::NVarChar { .. } => Ok(Value::NVarChar(formatted)),
+        DataType::NVarChar { max_len } => {
+            Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::DateTime | DataType::DateTime2 | DataType::SmallDateTime => {
             Ok(Value::DateTime(dt))
         }
@@ -75,11 +89,13 @@ fn convert_datetime_to_string(
 
 pub fn format_date(d: &NaiveDate, style: i32) -> String {
     match style {
-        1 => d.format("%m/%d/%Y").to_string(),
-        101 => d.format("%m/%d/%Y").to_string(),
+        1 | 101 => d.format("%m/%d/%Y").to_string(),
+        102 => d.format("%Y.%m.%d").to_string(),
         103 => d.format("%d/%m/%Y").to_string(),
-        120 => d.format("%Y-%m-%d").to_string(),
-        121 => d.format("%Y-%m-%d").to_string(),
+        110 => d.format("%m-%d-%Y").to_string(),
+        111 => d.format("%Y/%m/%d").to_string(),
+        112 => d.format("%Y%m%d").to_string(),
+        20 | 21 | 120 | 121 => d.format("%Y-%m-%d").to_string(),
         _ => d.format("%Y-%m-%d").to_string(),
     }
 }

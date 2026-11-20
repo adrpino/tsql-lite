@@ -5,6 +5,20 @@ use crate::ast as executor_ast;
 use crate::error::DbError;
 use crate::parser::ast;
 
+fn custom_type_object_name(dt: &ast::DataType) -> Option<executor_ast::ObjectName> {
+    if let ast::DataType::Custom(raw) = dt {
+        let parts: Vec<String> = raw
+            .split('.')
+            .map(|p| p.trim().trim_matches(&['[', ']'][..]).to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if !parts.is_empty() {
+            return Some(lower_object_name(parts));
+        }
+    }
+    None
+}
+
 pub fn lower_procedural(
     proc: ast::ProceduralStatement,
 ) -> Result<executor_ast::Statement, DbError> {
@@ -19,24 +33,28 @@ pub fn lower_procedural(
                         ))
                     }
                 };
+                let custom_type = custom_type_object_name(&var.data_type);
                 Ok(executor_ast::Statement::Procedural(
                     executor_ast::statements::ProceduralStatement::Declare(
                         executor_ast::statements::procedural::DeclareStmt {
                             name: var.name,
                             data_type: lower_data_type(var.data_type)?,
                             default: var.initial_value.map(lower_expr).transpose()?,
+                            custom_type,
                         },
                     ),
                 ))
             } else {
                 let mut stmts = Vec::new();
                 for var in vars {
+                    let custom_type = custom_type_object_name(&var.data_type);
                     stmts.push(executor_ast::Statement::Procedural(
                         executor_ast::statements::ProceduralStatement::Declare(
                             executor_ast::statements::procedural::DeclareStmt {
                                 name: var.name,
                                 data_type: lower_data_type(var.data_type)?,
                                 default: var.initial_value.map(lower_expr).transpose()?,
+                                custom_type,
                             },
                         ),
                     ));
@@ -392,9 +410,7 @@ pub fn lower_session(session: ast::SessionStatement) -> Result<executor_ast::Sta
                             executor_ast::SessionOption::StatisticsTime
                         }
                         ast::SessionOption::ShowplanAll => executor_ast::SessionOption::ShowplanAll,
-                        ast::SessionOption::ShowplanXml => {
-                            executor_ast::SessionOption::ShowplanXml
-                        }
+                        ast::SessionOption::ShowplanXml => executor_ast::SessionOption::ShowplanXml,
                         ast::SessionOption::StatisticsXml => {
                             executor_ast::SessionOption::StatisticsXml
                         }

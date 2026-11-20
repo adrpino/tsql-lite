@@ -10,6 +10,22 @@ impl<'a> ScriptExecutor<'a> {
         stmt: DeclareStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
+        if let Some(ref custom_type) = stmt.custom_type {
+            if let Some(type_def) = self
+                .catalog
+                .find_table_type(custom_type.schema_or_dbo(), &custom_type.name)
+                .cloned()
+            {
+                return self.execute_declare_table_var(
+                    crate::ast::DeclareTableVarStmt {
+                        name: stmt.name,
+                        columns: type_def.columns,
+                        table_constraints: type_def.table_constraints,
+                    },
+                    ctx,
+                );
+            }
+        }
         let declared_name = stmt.name.clone();
         let ty = crate::executor::type_mapping::data_type_spec_to_runtime(&stmt.data_type);
         let value = if let Some(ref default_expr) = stmt.default {

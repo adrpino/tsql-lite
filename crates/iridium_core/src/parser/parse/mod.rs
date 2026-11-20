@@ -331,12 +331,14 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
 fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
     if let Some(Token::Variable(var_name)) = parser.peek() {
         let var_name = var_name.clone();
-        if parser
-            .peek_at(1)
-            .map(|t| matches!(t, Token::Keyword(Keyword::Table)))
-            .unwrap_or(false)
-        {
+        let next_is_table = matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::Table)));
+        let next_is_as_table = matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::As)))
+            && matches!(parser.peek_at(2), Some(Token::Keyword(Keyword::Table)));
+        if next_is_table || next_is_as_table {
             let _ = parser.next();
+            if next_is_as_table {
+                let _ = parser.next();
+            }
             let _ = parser.next();
             parser.expect_lparen()?;
             let (columns, constraints) = parse_table_body(parser)?;

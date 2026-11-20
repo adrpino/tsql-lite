@@ -50,6 +50,8 @@ pub struct DeclareStmt {
     pub name: String,
     pub data_type: DataTypeSpec,
     pub default: Option<Expr>,
+    #[serde(default)]
+    pub custom_type: Option<ObjectName>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

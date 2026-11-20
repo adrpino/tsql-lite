@@ -51,6 +51,9 @@ pub fn parse_declare(parser: &mut Parser) -> ParseResult<Vec<DeclareVar>> {
         match parser.next() {
             Some(Token::Variable(name)) => {
                 let name = name.clone();
+                if parser.at_keyword(Keyword::As) {
+                    let _ = parser.next();
+                }
                 let data_type = crate::parser::parse::expressions::parse_data_type(parser)?;
                 let initial_value = if let Some(Token::Operator(op)) = parser.peek() {
                     if *op == "=" {

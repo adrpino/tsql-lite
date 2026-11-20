@@ -27,6 +27,26 @@ fn tvp_procedure_reads_rows() {
 }
 
 #[test]
+fn declare_table_variable_from_user_defined_table_type() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TYPE dbo.IntList AS TABLE (id INT)");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.sum_ids (@items dbo.IntList READONLY) AS BEGIN SELECT SUM(id) AS s FROM @items END",
+    );
+
+    exec(&mut e, "DECLARE @ids dbo.IntList");
+    exec(&mut e, "INSERT INTO @ids VALUES (10), (20), (30)");
+    let r = query(&mut e, "EXEC dbo.sum_ids @items = @ids");
+    assert_eq!(r.rows[0][0], Value::BigInt(60));
+
+    exec(&mut e, "DECLARE @ids_as AS dbo.IntList");
+    exec(&mut e, "INSERT INTO @ids_as VALUES (5)");
+    let r2 = query(&mut e, "SELECT COUNT(*) FROM @ids_as");
+    assert_eq!(r2.rows[0][0], Value::BigInt(1));
+}
+
+#[test]
 fn tvp_is_readonly_in_procedure() {
     let mut e = Engine::new();
     exec(&mut e, "CREATE TYPE dbo.IntList AS TABLE (id INT)");

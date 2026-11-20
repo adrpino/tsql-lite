@@ -202,3 +202,31 @@ fn procedural_proc_parenthesized_params_rejects_empty_and_unclosed() {
         iridium_core::parse_sql("CREATE PROCEDURE dbo.extra_rparen @a INT) AS SELECT @a").is_err()
     );
 }
+
+#[test]
+fn procedural_exec_named_arguments_out_of_order_and_omitted_middle_default() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.compute (@a INT, @b INT = 10, @c INT OUTPUT) AS BEGIN SET @c = @a * 100 + @b END",
+    );
+
+    exec(&mut e, "DECLARE @res INT");
+    e.execute_batch(
+        iridium_core::parse_batch("EXEC dbo.compute @c = @res OUTPUT, @a = 3").unwrap(),
+    )
+    .unwrap();
+    let r = query(&mut e, "SELECT @res");
+    assert_eq!(r.rows[0][0], Value::Int(310));
+
+    e.execute_batch(
+        iridium_core::parse_batch("EXEC dbo.compute @b = 7, @c = @res OUTPUT, @a = 2").unwrap(),
+    )
+    .unwrap();
+    let r2 = query(&mut e, "SELECT @res");
+    assert_eq!(r2.rows[0][0], Value::Int(207));
+
+    assert!(e
+        .execute_batch(iridium_core::parse_batch("EXEC dbo.compute @unknown = 1").unwrap())
+        .is_err());
+}

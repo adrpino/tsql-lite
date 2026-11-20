@@ -82,10 +82,49 @@ impl<'a> ScriptExecutor<'a> {
         });
         let scope_depth = ctx.frame.scope_vars.len();
         let result = (|| {
+            let mut bound_args: Vec<Option<&crate::ast::ExecArgument>> = vec![None; params.len()];
+            let mut seen_named = false;
+            for (pos, arg) in stmt.args.iter().enumerate() {
+                if let Some(ref arg_name) = arg.name {
+                    seen_named = true;
+                    let norm_arg = arg_name.trim_start_matches('@');
+                    let Some(param_idx) = params.iter().position(|p| {
+                        p.name
+                            .trim_start_matches('@')
+                            .eq_ignore_ascii_case(norm_arg)
+                    }) else {
+                        return Err(DbError::Execution(format!(
+                            "unknown parameter '{}' for procedure '{}.{}'",
+                            arg_name, routine_schema, routine_name
+                        )));
+                    };
+                    if bound_args[param_idx].is_some() {
+                        return Err(DbError::Execution(format!(
+                            "duplicate argument for parameter '{}'",
+                            params[param_idx].name
+                        )));
+                    }
+                    bound_args[param_idx] = Some(arg);
+                } else {
+                    if seen_named {
+                        return Err(DbError::Execution(
+                            "positional argument cannot follow a named argument".into(),
+                        ));
+                    }
+                    if pos >= params.len() {
+                        return Err(DbError::Execution(format!(
+                            "too many arguments specified for procedure '{}.{}'",
+                            routine_schema, routine_name
+                        )));
+                    }
+                    bound_args[pos] = Some(arg);
+                }
+            }
+
             ctx.enter_scope();
             let mut output_bindings: Vec<(String, String)> = vec![];
             for (idx, param) in params.iter().enumerate() {
-                let arg = stmt.args.get(idx);
+                let arg = bound_args[idx];
                 let Some(arg) = arg else {
                     if let Some(def) = &param.default {
                         let RoutineParamType::Scalar(dt) = &param.param_type else {

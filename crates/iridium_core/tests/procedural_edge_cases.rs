@@ -249,3 +249,19 @@ fn procedural_schema_qualified_sp_executesql_and_refresh_procs() {
     )
     .unwrap();
 }
+
+#[test]
+fn procedural_variables_are_case_insensitive() {
+    let mut e = Engine::new();
+    exec(&mut e, "DECLARE @TotalAmount INT = 10");
+    exec(&mut e, "SET @totalamount = @TOTALAMOUNT + 5");
+    let r = query(&mut e, "SELECT @TotalAmount, @totalamount");
+    assert_eq!(r.rows[0][0], Value::Int(15));
+    assert_eq!(r.rows[0][1], Value::Int(15));
+
+    exec(&mut e, "CREATE TABLE dbo.nums (n INT)");
+    exec(&mut e, "INSERT INTO dbo.nums VALUES (99)");
+    exec(&mut e, "SELECT @TOTALAMOUNT = n FROM dbo.nums");
+    let r2 = query(&mut e, "SELECT @totalamount");
+    assert_eq!(r2.rows[0][0], Value::Int(99));
+}

@@ -15,7 +15,7 @@ pub(crate) fn resolve_identifier(
         }
     }
     if name.starts_with('@') {
-        match ctx.session.variables.get(name) {
+        match ctx.session.get_var(name) {
             Some((_, val)) => return Ok(val.clone()),
             None => {
                 return Err(DbError::invalid_identifier(name));
@@ -28,7 +28,11 @@ pub(crate) fn resolve_identifier(
     let mut matches: Vec<(usize, Value)> = Vec::new();
     for (binding_idx, binding) in row.iter().enumerate() {
         let col_idx = if is_identity_col {
-            binding.table.columns.iter().position(|c| c.identity.is_some())
+            binding
+                .table
+                .columns
+                .iter()
+                .position(|c| c.identity.is_some())
         } else {
             binding
                 .table
@@ -51,7 +55,11 @@ pub(crate) fn resolve_identifier(
         for apply_row in ctx.row.apply_stack.iter().rev() {
             for binding in apply_row.iter() {
                 let col_idx = if is_identity_col {
-                    binding.table.columns.iter().position(|c| c.identity.is_some())
+                    binding
+                        .table
+                        .columns
+                        .iter()
+                        .position(|c| c.identity.is_some())
                 } else {
                     binding
                         .table
@@ -78,7 +86,11 @@ pub(crate) fn resolve_identifier(
         for outer_row in ctx.row.outer_stack.iter().rev() {
             for binding in outer_row.iter() {
                 let col_idx = if is_identity_col {
-                    binding.table.columns.iter().position(|c| c.identity.is_some())
+                    binding
+                        .table
+                        .columns
+                        .iter()
+                        .position(|c| c.identity.is_some())
                 } else {
                     binding
                         .table
@@ -136,7 +148,11 @@ pub(crate) fn resolve_qualified_identifier(
                     .any(|a| a.eq_ignore_ascii_case(table_name))
             {
                 let idx = if is_identity_col {
-                    binding.table.columns.iter().position(|c| c.identity.is_some())
+                    binding
+                        .table
+                        .columns
+                        .iter()
+                        .position(|c| c.identity.is_some())
                 } else {
                     binding
                         .table

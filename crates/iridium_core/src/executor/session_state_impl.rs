@@ -81,6 +81,30 @@ impl<'a> SessionStateRefs<'a> {
         *self.var_counter
     }
 
+    pub fn get_var(&self, name: &str) -> Option<&(crate::types::DataType, crate::types::Value)> {
+        self.variables.get(name).or_else(|| {
+            self.variables
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v)
+        })
+    }
+
+    pub fn get_var_mut(
+        &mut self,
+        name: &str,
+    ) -> Option<&mut (crate::types::DataType, crate::types::Value)> {
+        if self.variables.contains_key(name) {
+            return self.variables.get_mut(name);
+        }
+        let key = self
+            .variables
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(name))
+            .cloned()?;
+        self.variables.get_mut(&key)
+    }
+
     pub fn create_snapshot(&self, options: &tooling::SessionOptions) -> session::SessionSnapshot {
         session::SessionSnapshot {
             variables: self.variables.clone(),

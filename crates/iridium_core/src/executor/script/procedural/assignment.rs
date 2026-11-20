@@ -37,7 +37,7 @@ impl<'a> ScriptExecutor<'a> {
         if stmt.from.is_none() {
             for t in stmt.targets {
                 let val = eval_expr(&t.expr, &[], ctx, self.catalog, self.storage, self.clock)?;
-                if let Some((ty, var)) = ctx.session.variables.get_mut(&t.variable) {
+                if let Some((ty, var)) = ctx.session.get_var_mut(&t.variable) {
                     *var = coerce_value_to_type_with_dateformat(val, ty, &ctx.options.dateformat)?;
                 } else {
                     return Err(DbError::invalid_identifier(&t.variable));
@@ -82,7 +82,7 @@ impl<'a> ScriptExecutor<'a> {
         .execute_select(q, ctx)?;
         if let Some(last) = result.rows.last() {
             for (idx, t) in stmt.targets.iter().enumerate() {
-                if let Some((ty, var)) = ctx.session.variables.get_mut(&t.variable) {
+                if let Some((ty, var)) = ctx.session.get_var_mut(&t.variable) {
                     *var = coerce_value_to_type_with_dateformat(
                         last[idx].clone(),
                         ty,

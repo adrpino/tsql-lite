@@ -107,13 +107,13 @@ pub(crate) fn execute_sp_executesql(
 
         let mut outs = vec![];
         for (inner, outer) in output_vars {
-            if let Some((_, v)) = ctx.session.variables.get(&inner) {
+            if let Some((_, v)) = ctx.session.get_var(&inner) {
                 outs.push((outer, v.clone()));
             }
         }
         exec.leave_scope_and_cleanup(ctx)?;
         for (outer, val) in outs {
-            if let Some((ty, out)) = ctx.session.variables.get_mut(&outer) {
+            if let Some((ty, out)) = ctx.session.get_var_mut(&outer) {
                 *out = coerce_value_to_type_with_dateformat(val, ty, &ctx.options.dateformat)?;
             }
         }

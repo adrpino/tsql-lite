@@ -204,13 +204,13 @@ impl<'a> ScriptExecutor<'a> {
             let proc_result = self.execute_batch(&body, ctx);
             let mut out_values: Vec<(String, Value)> = vec![];
             for (inner_name, caller_var) in &output_bindings {
-                if let Some((_, v)) = ctx.session.variables.get(inner_name) {
+                if let Some((_, v)) = ctx.session.get_var(inner_name) {
                     out_values.push((caller_var.clone(), v.clone()));
                 }
             }
             self.leave_scope_and_cleanup(ctx)?;
             for (caller_var, val) in out_values {
-                if let Some((ty, out_var)) = ctx.session.variables.get_mut(&caller_var) {
+                if let Some((ty, out_var)) = ctx.session.get_var_mut(&caller_var) {
                     *out_var =
                         coerce_value_to_type_with_dateformat(val, ty, &ctx.options.dateformat)?;
                 }
@@ -254,7 +254,7 @@ impl<'a> ScriptExecutor<'a> {
         let Some(return_variable) = return_variable else {
             return Ok(());
         };
-        if let Some((ty, out_var)) = ctx.session.variables.get_mut(return_variable) {
+        if let Some((ty, out_var)) = ctx.session.get_var_mut(return_variable) {
             *out_var = coerce_value_to_type_with_dateformat(value, ty, &ctx.options.dateformat)?;
             return Ok(());
         }

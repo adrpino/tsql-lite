@@ -84,7 +84,7 @@ impl<'a> ScriptExecutor<'a> {
             self.storage,
             self.clock,
         )?;
-        if let Some((ty, var)) = ctx.session.variables.get_mut(&stmt.name) {
+        if let Some((ty, var)) = ctx.session.get_var_mut(&stmt.name) {
             let coerced = crate::executor::value_ops::coerce_value_to_type_with_dateformat(
                 val,
                 ty,

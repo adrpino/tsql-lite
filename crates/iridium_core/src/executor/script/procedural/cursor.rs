@@ -149,7 +149,7 @@ impl<'a> ScriptExecutor<'a> {
                     )));
                 }
                 for (idx, var_name) in into_vars.iter().enumerate() {
-                    if let Some((ty, var)) = ctx.session.variables.get_mut(var_name) {
+                    if let Some((ty, var)) = ctx.session.get_var_mut(var_name) {
                         *var = coerce_value_to_type_with_dateformat(
                             row[idx].clone(),
                             ty,

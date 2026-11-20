@@ -81,6 +81,61 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             Keyword::Update => {
                 let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("STATISTICS"))
+                    || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("STATISTICS"))
+                {
+                    let _ = parser.next();
+                    let _ = multipart_name(parser)?;
+                    // Optional index name or parenthesized list of statistics names
+                    if matches!(parser.peek(), Some(Token::LParen)) {
+                        let _ = parser.next();
+                        let _ = parse_comma_list(parser, |p| match p.next() {
+                            Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => Ok(()),
+                            _ => p.backtrack(Expected::Description("statistics name")),
+                        })?;
+                        parser.expect_rparen()?;
+                    } else if matches!(parser.peek(), Some(Token::Identifier(_))) {
+                        let _ = parser.next();
+                    }
+                    // Optional WITH FULLSCAN / SAMPLE N PERCENT / etc.
+                    if parser.at_keyword(Keyword::With) {
+                        let _ = parser.next();
+                        while let Some(tok) = parser.peek() {
+                            if matches!(
+                                tok,
+                                Token::Semicolon
+                                    | Token::Go
+                                    | Token::Keyword(
+                                        Keyword::Select
+                                            | Keyword::Insert
+                                            | Keyword::Update
+                                            | Keyword::Delete
+                                            | Keyword::Declare
+                                            | Keyword::Set
+                                            | Keyword::If
+                                            | Keyword::Else
+                                            | Keyword::End
+                                            | Keyword::Begin
+                                            | Keyword::Return
+                                            | Keyword::Exec
+                                            | Keyword::Execute
+                                            | Keyword::Create
+                                            | Keyword::Drop
+                                            | Keyword::Alter
+                                            | Keyword::While
+                                            | Keyword::Merge
+                                            | Keyword::With
+                                    )
+                            ) {
+                                break;
+                            }
+                            let _ = parser.next();
+                        }
+                    }
+                    return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                        Vec::new(),
+                    )));
+                }
                 Ok(Statement::Dml(DmlStatement::Update(Box::new(
                     parse_update(parser)?,
                 ))))
@@ -391,6 +446,19 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             _ => parser.backtrack(Expected::Description("statement keyword")),
         },
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WAITFOR") => {
+            let _ = parser.next();
+            // WAITFOR DELAY <expr> | WAITFOR TIME <expr>
+            match parser.next() {
+                Some(Token::Identifier(k)) if k.eq_ignore_ascii_case("DELAY") => {}
+                Some(Token::Keyword(Keyword::Time)) => {}
+                _ => return parser.backtrack(Expected::Description("DELAY or TIME")),
+            }
+            let _ = parse_expr(parser)?;
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        }
         _ => parser.backtrack(Expected::Description("statement keyword")),
     }
 }

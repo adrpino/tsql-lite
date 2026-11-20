@@ -195,6 +195,7 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
 
     let mut from = None;
     let mut joins = Vec::new();
+    let mut applies = Vec::new();
     if let Some(Token::Keyword(Keyword::From)) = parser.peek() {
         let _ = parser.next();
         from = Some(crate::parser::parse::expressions::parse_comma_list(
@@ -203,9 +204,11 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
         )?);
     }
 
-    while let Some(join) = crate::parser::parse::statements::query::parse_join_clause(parser)? {
-        joins.push(join);
-    }
+    crate::parser::parse::statements::query::parse_joins_and_applies(
+        parser,
+        &mut joins,
+        &mut applies,
+    )?;
 
     let mut selection = None;
     if let Some(Token::Keyword(Keyword::Where)) = parser.peek() {
@@ -221,6 +224,7 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
         top,
         from,
         joins,
+        applies,
         selection,
         output,
         output_into,
@@ -273,6 +277,7 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
 
     let mut from = vec![target.clone()];
     let mut joins = Vec::new();
+    let mut applies = Vec::new();
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::From))) {
         let _ = parser.next();
         from = crate::parser::parse::expressions::parse_comma_list(
@@ -281,9 +286,11 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         )?;
     }
 
-    while let Some(join) = crate::parser::parse::statements::query::parse_join_clause(parser)? {
-        joins.push(join);
-    }
+    crate::parser::parse::statements::query::parse_joins_and_applies(
+        parser,
+        &mut joins,
+        &mut applies,
+    )?;
 
     let mut output = None;
     let mut output_into = None;
@@ -309,6 +316,7 @@ pub fn parse_delete(parser: &mut Parser) -> ParseResult<DeleteStmt> {
         top,
         from,
         joins,
+        applies,
         selection,
         output,
         output_into,

@@ -1428,3 +1428,65 @@ fn collate_cs_ci_isnumeric_formatmessage_dotnet_format_and_conversions() {
     assert_eq!(r3.rows[0][3].to_string_value(), "1900-01-01 08:00:00");
     assert_eq!(r3.rows[0][4].to_integer_i64(), Some(0));
 }
+
+#[test]
+fn merge_unaliased_and_cte_target_update_apply_index_include_waitfor_and_stats() {
+    let mut e = Engine::new();
+
+    // 1. Unaliased MERGE target (USING must not be consumed as alias)
+    exec(&mut e, "CREATE TABLE dbo.m_items (id INT, owner_id INT, val INT)");
+    exec(&mut e, "INSERT INTO dbo.m_items VALUES (1, 10, 100), (2, 10, 200), (3, 20, 300)");
+    exec(
+        &mut e,
+        "MERGE dbo.m_items
+         USING (SELECT 1 AS id, 10 AS owner_id, 150 AS val) AS src
+            ON dbo.m_items.id = src.id
+         WHEN MATCHED THEN UPDATE SET val = src.val;",
+    );
+    let r0 = query(&mut e, "SELECT val FROM dbo.m_items WHERE id = 1");
+    assert_eq!(r0.rows[0][0].to_integer_i64(), Some(150));
+
+    // 2. Partitioned updatable CTE MERGE (only owner_id = 10 rows touched; owner_id = 20 preserved)
+    exec(
+        &mut e,
+        "WITH TARGET AS (SELECT * FROM dbo.m_items WHERE owner_id = 10)
+         MERGE TARGET
+         USING (VALUES (1, 111), (4, 444)) AS SOURCE (id, val)
+            ON TARGET.id = SOURCE.id
+         WHEN MATCHED THEN UPDATE SET val = SOURCE.val
+         WHEN NOT MATCHED BY TARGET THEN INSERT (id, owner_id, val) VALUES (SOURCE.id, 10, SOURCE.val)
+         WHEN NOT MATCHED BY SOURCE THEN DELETE;",
+    );
+    let r1 = query(&mut e, "SELECT id, owner_id, val FROM dbo.m_items ORDER BY id");
+    assert_eq!(r1.rows.len(), 3);
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(111));
+    assert_eq!(r1.rows[1][0].to_integer_i64(), Some(3));
+    assert_eq!(r1.rows[1][1].to_integer_i64(), Some(20));
+    assert_eq!(r1.rows[2][0].to_integer_i64(), Some(4));
+    assert_eq!(r1.rows[2][2].to_integer_i64(), Some(444));
+
+    // 3. UPDATE and DELETE with CROSS APPLY + JOIN in FROM
+    exec(&mut e, "CREATE TABLE #acc (id INT, total INT)");
+    exec(&mut e, "CREATE TABLE #delta (acc_id INT, amt INT)");
+    exec(&mut e, "INSERT INTO #acc VALUES (1, 10), (2, 20)");
+    exec(&mut e, "INSERT INTO #delta VALUES (1, 5), (1, 7)");
+    exec(
+        &mut e,
+        "UPDATE a
+         SET a.total = a.total + ca.s
+         FROM #acc a
+         CROSS APPLY (SELECT ISNULL(SUM(d.amt), 0) AS s FROM #delta d WHERE d.acc_id = a.id) ca;",
+    );
+    let r2 = query(&mut e, "SELECT id, total FROM #acc ORDER BY id");
+    assert_eq!(r2.rows[0][1].to_integer_i64(), Some(22));
+    assert_eq!(r2.rows[1][1].to_integer_i64(), Some(20));
+
+    // 4. CREATE INDEX with INCLUDE / WHERE / WITH options, WAITFOR DELAY, UPDATE STATISTICS
+    exec(
+        &mut e,
+        "CREATE NONCLUSTERED INDEX IX_acc_id ON #acc (id ASC) INCLUDE (total) WHERE id > 0 WITH (FILLFACTOR = 80, PAD_INDEX = ON);",
+    );
+    exec(&mut e, "UPDATE STATISTICS #acc WITH FULLSCAN;");
+    exec(&mut e, "WAITFOR DELAY '00:00:00';");
+}

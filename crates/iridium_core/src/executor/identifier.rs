@@ -128,18 +128,26 @@ pub(crate) fn resolve_qualified_identifier(
     parts: &[String],
     ctx: &ExecutionContext,
 ) -> Result<Value, DbError> {
-    if parts.len() != 2 {
+    if parts.len() < 2 || parts.len() > 4 {
         return Err(DbError::invalid_identifier(
-            "only two-part identifiers are supported in this build",
+            "only two- to four-part column identifiers are supported",
         ));
     }
 
-    let table_name = &parts[0];
-    let column_name = &parts[1];
+    let (schema_filter, table_name, column_name) = match parts.len() {
+        2 => (None, &parts[0], &parts[1]),
+        3 => (Some(&parts[0]), &parts[1], &parts[2]),
+        _ => (Some(&parts[1]), &parts[2], &parts[3]),
+    };
     let is_identity_col = column_name.eq_ignore_ascii_case("IDENTITYCOL");
 
     let search_row = |row: &[ContextTable]| -> Result<Option<Value>, DbError> {
         for binding in row {
+            if let Some(schema) = schema_filter {
+                if !binding.table.schema_name.eq_ignore_ascii_case(schema) {
+                    continue;
+                }
+            }
             if binding.alias.eq_ignore_ascii_case(table_name)
                 || binding.table.name.eq_ignore_ascii_case(table_name)
                 || binding

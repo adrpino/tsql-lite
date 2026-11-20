@@ -122,44 +122,7 @@ pub fn lower_select(
             .collect::<Result<Vec<_>, DbError>>()?,
         into_table: s.into_table.map(lower_object_name_owned),
         from_clause,
-        applies: s
-            .applies
-            .into_iter()
-            .map(|a| {
-                let ast::ApplyClause { apply_type, table } = a;
-                let alias = table.alias.clone().unwrap_or_default();
-                let subquery = match &table.factor {
-                    ast::TableFactor::Derived(s) => lower_select(*s.clone())?,
-                    _ => executor_ast::statements::query::SelectStmt {
-                        from_clause: Some(lower_table_ref_to_from_node(table)?),
-                        applies: Vec::new(),
-                        projection: vec![executor_ast::statements::query::SelectItem {
-                            expr: executor_ast::expressions::Expr::Wildcard,
-                            alias: None,
-                        }],
-                        into_table: None,
-                        distinct: false,
-                        top: None,
-                        selection: None,
-                        group_by: Vec::new(),
-                        having: None,
-                        order_by: Vec::new(),
-                        offset: None,
-                        fetch: None,
-                        set_op: None,
-                        for_xml: None,
-                    },
-                };
-                Ok(executor_ast::statements::query::ApplyClause {
-                    apply_type: match apply_type {
-                        ast::ApplyType::Cross => executor_ast::statements::query::ApplyType::Cross,
-                        ast::ApplyType::Outer => executor_ast::statements::query::ApplyType::Outer,
-                    },
-                    subquery,
-                    alias,
-                })
-            })
-            .collect::<Result<Vec<_>, DbError>>()?,
+        applies: lower_apply_clauses(s.applies)?,
         selection: s.selection.map(lower_expr).transpose()?,
         group_by: s
             .group_by
@@ -620,6 +583,48 @@ pub fn lower_insert(
     })
 }
 
+fn lower_apply_clauses(
+    applies: Vec<ast::ApplyClause>,
+) -> Result<Vec<executor_ast::statements::query::ApplyClause>, DbError> {
+    applies
+        .into_iter()
+        .map(|a| {
+            let ast::ApplyClause { apply_type, table } = a;
+            let alias = table.alias.clone().unwrap_or_default();
+            let subquery = match &table.factor {
+                ast::TableFactor::Derived(s) => lower_select(*s.clone())?,
+                _ => executor_ast::statements::query::SelectStmt {
+                    from_clause: Some(lower_table_ref_to_from_node(table)?),
+                    applies: Vec::new(),
+                    projection: vec![executor_ast::statements::query::SelectItem {
+                        expr: executor_ast::expressions::Expr::Wildcard,
+                        alias: None,
+                    }],
+                    into_table: None,
+                    distinct: false,
+                    top: None,
+                    selection: None,
+                    group_by: Vec::new(),
+                    having: None,
+                    order_by: Vec::new(),
+                    offset: None,
+                    fetch: None,
+                    set_op: None,
+                    for_xml: None,
+                },
+            };
+            Ok(executor_ast::statements::query::ApplyClause {
+                apply_type: match apply_type {
+                    ast::ApplyType::Cross => executor_ast::statements::query::ApplyType::Cross,
+                    ast::ApplyType::Outer => executor_ast::statements::query::ApplyType::Outer,
+                },
+                subquery,
+                alias,
+            })
+        })
+        .collect()
+}
+
 pub fn lower_update(
     s: ast::UpdateStmt,
 ) -> Result<executor_ast::statements::dml::UpdateStmt, DbError> {
@@ -632,6 +637,7 @@ pub fn lower_update(
     for join in s.joins {
         extra_joins.push(lower_join_clause(join)?);
     }
+    let lowered_applies = lower_apply_clauses(s.applies)?;
 
     let mut from_clause = None;
     if let Some(from_refs) = s.from {
@@ -640,13 +646,13 @@ pub fn lower_update(
         from_clause = Some(executor_ast::statements::dml::FromClause {
             tables: vec![tr],
             joins: extra_joins,
-            applies: Vec::new(),
+            applies: lowered_applies,
         });
-    } else if !extra_joins.is_empty() {
+    } else if !extra_joins.is_empty() || !lowered_applies.is_empty() {
         from_clause = Some(executor_ast::statements::dml::FromClause {
             tables: vec![table_tr],
             joins: extra_joins,
-            applies: Vec::new(),
+            applies: lowered_applies,
         });
     }
 
@@ -694,6 +700,7 @@ pub fn lower_delete(
     for join in s.joins {
         joins.push(lower_join_clause(join)?);
     }
+    let lowered_applies = lower_apply_clauses(s.applies)?;
 
     Ok(executor_ast::statements::dml::DeleteStmt {
         table,
@@ -708,7 +715,7 @@ pub fn lower_delete(
         from: Some(executor_ast::statements::dml::FromClause {
             tables: vec![tr],
             joins,
-            applies: Vec::new(),
+            applies: lowered_applies,
         }),
         selection: s.selection.map(lower_expr).transpose()?,
         output: s

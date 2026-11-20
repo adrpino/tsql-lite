@@ -22,6 +22,9 @@ where
 }
 
 pub fn is_stop_keyword(k: &str) -> bool {
+    if k.eq_ignore_ascii_case("OPTION") {
+        return true;
+    }
     Keyword::parse(k)
         .map(|kw| {
             matches!(
@@ -81,6 +84,14 @@ pub fn is_stop_keyword(k: &str) -> bool {
                     | Keyword::Try
                     | Keyword::Catch
                     | Keyword::RaiseError
+                    | Keyword::Using
+                    | Keyword::When
+                    | Keyword::For
+                    | Keyword::Merge
+                    | Keyword::Values
+                    | Keyword::Break
+                    | Keyword::Continue
+                    | Keyword::Throw
             )
         })
         .unwrap_or(false)

@@ -29,16 +29,32 @@ impl<'a> ScriptExecutor<'a> {
             .resolve_table_name(target_object.name.as_str())
             .unwrap_or_else(|| target_object.name.clone());
         let target_schema = target_object.schema_or_dbo();
-        let target_table = self
-            .catalog
-            .find_table(target_schema, &target_name)
-            .ok_or_else(|| {
-                DbError::Semantic(format!(
+        let (target_table, cte_row_filter) =
+            if let Some(t) = self.catalog.find_table(target_schema, &target_name).cloned() {
+                (t, None)
+            } else if target_schema.eq_ignore_ascii_case("dbo") {
+                if let Some(cte) = ctx.row.ctes.get(&target_name).cloned() {
+                    let base = cte.base_targets.first().cloned().ok_or_else(|| {
+                        DbError::Execution(format!(
+                            "CTE '{}' is not updatable for MERGE: no underlying base table found",
+                            target_name
+                        ))
+                    })?;
+                    let idxs: std::collections::HashSet<usize> =
+                        base.row_indices.into_iter().flatten().collect();
+                    (base.table_def, Some(idxs))
+                } else {
+                    return Err(DbError::Semantic(format!(
+                        "table '{}.{}' not found",
+                        target_schema, target_name
+                    )));
+                }
+            } else {
+                return Err(DbError::Semantic(format!(
                     "table '{}.{}' not found",
                     target_schema, target_name
-                ))
-            })?
-            .clone();
+                )));
+            };
 
         // Execute source query
         let qe = QueryExecutor {
@@ -54,10 +70,28 @@ impl<'a> ScriptExecutor<'a> {
             .clone()
             .unwrap_or_else(|| target_name.clone());
 
-        let target_rows = self
-            .storage
-            .scan_rows(target_table.id)?
-            .collect::<Result<Vec<_>, DbError>>()?;
+        let (target_rows, untouched_rows) = if let Some(ref allowed) = cte_row_filter {
+            let all_rows = self.storage.get_rows(target_table.id)?;
+            let mut in_cte = Vec::new();
+            let mut outside_cte = Vec::new();
+            for (idx, row) in all_rows.into_iter().enumerate() {
+                if row.deleted {
+                    continue;
+                }
+                if allowed.contains(&idx) {
+                    in_cte.push(row);
+                } else {
+                    outside_cte.push(row);
+                }
+            }
+            (in_cte, outside_cte)
+        } else {
+            let rows = self
+                .storage
+                .scan_rows(target_table.id)?
+                .collect::<Result<Vec<_>, DbError>>()?;
+            (rows, Vec::new())
+        };
         let mut source_matched_to_target = vec![false; source_rows.len()];
         let mut updated_target_rows = target_rows.clone();
         let mut merge_output_rows: Vec<crate::executor::mutation::MergeOutputRow> = Vec::new();
@@ -125,6 +159,9 @@ impl<'a> ScriptExecutor<'a> {
                 target_table.name.clone(),
                 crate::executor::dirty_buffer::DirtyOp::Truncate,
             );
+        }
+        for row in untouched_rows.iter() {
+            self.storage.insert_row(target_table.id, row.clone())?;
         }
         for row in updated_target_rows.iter() {
             if !row.deleted {

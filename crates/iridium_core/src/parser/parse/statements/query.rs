@@ -217,89 +217,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
     }
 
     let mut applies = Vec::new();
-    loop {
-        if let Some(join) = parse_join_clause(parser)? {
-            if applies.is_empty() {
-                joins.push(join);
-            } else {
-                // Desugar a JOIN appearing after CROSS/OUTER APPLY into a correlated APPLY
-                // so left-to-right visibility of earlier APPLY aliases is preserved.
-                let apply_type = match join.join_type {
-                    JoinType::Left => ApplyType::Outer,
-                    _ => ApplyType::Cross,
-                };
-                let join_alias = join
-                    .table
-                    .alias
-                    .clone()
-                    .or_else(|| join.table.name_as_object().map(|o| o.name.clone()));
-                let sub = SelectStmt {
-                    distinct: false,
-                    top: None,
-                    projection: vec![SelectItem {
-                        expr: Expr::Wildcard,
-                        alias: None,
-                    }],
-                    into_table: None,
-                    from: Some(join.table),
-                    joins: Vec::new(),
-                    applies: Vec::new(),
-                    selection: join.on,
-                    group_by: Vec::new(),
-                    having: None,
-                    order_by: Vec::new(),
-                    offset: None,
-                    fetch: None,
-                    set_op: None,
-                    for_xml: None,
-                };
-                applies.push(ApplyClause {
-                    apply_type,
-                    table: TableRef {
-                        factor: TableFactor::Derived(Box::new(sub)),
-                        alias: join_alias,
-                        pivot: None,
-                        unpivot: None,
-                        hints: Vec::new(),
-                    },
-                });
-            }
-            continue;
-        }
-        if let Some(Token::Keyword(k)) = parser.peek() {
-            let apply_type = match *k {
-                Keyword::Cross => {
-                    let saved = parser.save();
-                    let _ = parser.next();
-                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
-                        let _ = parser.next();
-                        Some(ApplyType::Cross)
-                    } else {
-                        parser.restore(saved);
-                        None
-                    }
-                }
-                Keyword::Outer => {
-                    let saved = parser.save();
-                    let _ = parser.next();
-                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
-                        let _ = parser.next();
-                        Some(ApplyType::Outer)
-                    } else {
-                        parser.restore(saved);
-                        None
-                    }
-                }
-                _ => None,
-            };
-            if let Some(apply_type) = apply_type {
-                let table = parse_table_ref(parser)?;
-                applies.push(ApplyClause { apply_type, table });
-                continue;
-            }
-        }
-        break;
-    }
+    parse_joins_and_applies(parser, &mut joins, &mut applies)?;
 
     let mut selection = None;
     if let Some(Token::Keyword(Keyword::Where)) = parser.peek() {
@@ -831,4 +749,95 @@ pub fn parse_object_name(mut parts: Vec<String>) -> ObjectName {
             }
         }
     }
+}
+
+pub(crate) fn parse_joins_and_applies(
+    parser: &mut Parser,
+    joins: &mut Vec<JoinClause>,
+    applies: &mut Vec<ApplyClause>,
+) -> ParseResult<()> {
+    loop {
+        if let Some(join) = parse_join_clause(parser)? {
+            if applies.is_empty() {
+                joins.push(join);
+            } else {
+                // Desugar a JOIN appearing after CROSS/OUTER APPLY into a correlated APPLY
+                // so left-to-right visibility of earlier APPLY aliases is preserved.
+                let apply_type = match join.join_type {
+                    JoinType::Left => ApplyType::Outer,
+                    _ => ApplyType::Cross,
+                };
+                let join_alias = join
+                    .table
+                    .alias
+                    .clone()
+                    .or_else(|| join.table.name_as_object().map(|o| o.name.clone()));
+                let sub = SelectStmt {
+                    distinct: false,
+                    top: None,
+                    projection: vec![SelectItem {
+                        expr: Expr::Wildcard,
+                        alias: None,
+                    }],
+                    into_table: None,
+                    from: Some(join.table),
+                    joins: Vec::new(),
+                    applies: Vec::new(),
+                    selection: join.on,
+                    group_by: Vec::new(),
+                    having: None,
+                    order_by: Vec::new(),
+                    offset: None,
+                    fetch: None,
+                    set_op: None,
+                    for_xml: None,
+                };
+                applies.push(ApplyClause {
+                    apply_type,
+                    table: TableRef {
+                        factor: TableFactor::Derived(Box::new(sub)),
+                        alias: join_alias,
+                        pivot: None,
+                        unpivot: None,
+                        hints: Vec::new(),
+                    },
+                });
+            }
+            continue;
+        }
+        if let Some(Token::Keyword(k)) = parser.peek() {
+            let apply_type = match *k {
+                Keyword::Cross => {
+                    let saved = parser.save();
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
+                        let _ = parser.next();
+                        Some(ApplyType::Cross)
+                    } else {
+                        parser.restore(saved);
+                        None
+                    }
+                }
+                Keyword::Outer => {
+                    let saved = parser.save();
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
+                        let _ = parser.next();
+                        Some(ApplyType::Outer)
+                    } else {
+                        parser.restore(saved);
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(apply_type) = apply_type {
+                let table = parse_table_ref(parser)?;
+                applies.push(ApplyClause { apply_type, table });
+                continue;
+            }
+        }
+        break;
+    }
+    Ok(())
 }

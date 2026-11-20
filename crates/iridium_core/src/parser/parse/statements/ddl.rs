@@ -476,12 +476,34 @@ pub fn parse_create_index(
     let columns = crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
     parser.expect_rparen()?;
 
+    // Optional INCLUDE (col1, col2, ...)
+    if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INCLUDE")) {
+        let _ = parser.next();
+        parser.expect_lparen()?;
+        let _ = crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
+        parser.expect_rparen()?;
+    }
+
+    // Optional filtered index WHERE <predicate>
+    if parser.at_keyword(Keyword::Where) {
+        let _ = parser.next();
+        let _ = crate::parser::parse::expressions::parse_expr(parser)?;
+    }
+
     let mut options = Vec::new();
     if parser.at_keyword(Keyword::With) {
         let _ = parser.next();
         parser.expect_lparen()?;
-        options = crate::parser::parse::expressions::parse_comma_list(parser, parse_index_option)?;
+        let parsed_opts =
+            crate::parser::parse::expressions::parse_comma_list(parser, parse_index_option_opt)?;
         parser.expect_rparen()?;
+        options.extend(parsed_opts.into_iter().flatten());
+    }
+
+    // Optional ON <filegroup>
+    if parser.at_keyword(Keyword::On) {
+        let _ = parser.next();
+        let _ = super::parse_multipart_name(parser)?;
     }
 
     Ok(CreateIndexStmt {
@@ -511,7 +533,7 @@ fn parse_index_column(parser: &mut Parser) -> ParseResult<IndexColumn> {
     Ok(IndexColumn { name, is_desc })
 }
 
-fn parse_index_option(parser: &mut Parser) -> ParseResult<IndexOption> {
+fn parse_index_option_opt(parser: &mut Parser) -> ParseResult<Option<IndexOption>> {
     if parser.at_keyword(Keyword::Fillfactor) {
         let _ = parser.next();
         if let Some(Token::Operator(op)) = parser.next() {
@@ -522,12 +544,22 @@ fn parse_index_option(parser: &mut Parser) -> ParseResult<IndexOption> {
             return parser.backtrack(Expected::Description("="));
         }
         if let Some(Token::Number { value: n, .. }) = parser.next() {
-            Ok(IndexOption::FillFactor(*n as u8))
+            Ok(Some(IndexOption::FillFactor(*n as u8)))
         } else {
             parser.backtrack(Expected::Description("number"))
         }
     } else {
-        parser.backtrack(Expected::Description("index option"))
+        // Accept any standard SQL Server index option such as PAD_INDEX = ON,
+        // SORT_IN_TEMPDB = OFF, ALLOW_ROW_LOCKS = ON, DATA_COMPRESSION = PAGE, etc.
+        match parser.next() {
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+            _ => return parser.backtrack(Expected::Description("index option")),
+        }
+        if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+            let _ = parser.next();
+            let _ = parser.next();
+        }
+        Ok(None)
     }
 }
 

@@ -29,7 +29,8 @@ pub(crate) fn merge_source_rows(
     stmt: &MergeStmt,
     executor: &QueryExecutor<'_>,
     ctx: &mut ExecutionContext<'_>,
-) -> Result<Vec<Vec<crate::types::Value>>, DbError> {
+) -> Result<(TableDef, Vec<Vec<crate::types::Value>>), DbError> {
+    let source_alias = merge_source_alias(stmt)?;
     match &stmt.source {
         MergeSource::Table(source_ref) => {
             let source_name = source_ref
@@ -39,7 +40,7 @@ pub(crate) fn merge_source_rows(
                 .resolve_table_name(source_name.name.as_str())
                 .unwrap_or_else(|| source_name.name.clone());
             let source_schema = source_name.schema_or_dbo();
-            let source_table = executor
+            let mut source_table = executor
                 .catalog
                 .find_table(source_schema, &resolved)
                 .ok_or_else(|| {
@@ -55,7 +56,8 @@ pub(crate) fn merge_source_rows(
                 }
                 rows.push(row.values.clone());
             }
-            Ok(rows)
+            source_table.name = source_alias;
+            Ok((source_table, rows))
         }
         MergeSource::Subquery(select_stmt, _alias) => {
             let result = QueryExecutor {
@@ -64,41 +66,42 @@ pub(crate) fn merge_source_rows(
                 clock: executor.clock,
             }
             .execute_select(RelationalQuery::from(select_stmt.clone()), ctx)?;
-            Ok(result.rows)
+            let table_def = TableDef {
+                id: 0,
+                schema_id: 0,
+                schema_name: "sys".to_string(),
+                name: source_alias,
+                columns: result
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, col_name)| ColumnDef {
+                        id: (idx + 1) as u32,
+                        name: col_name.clone(),
+                        data_type: result
+                            .column_types
+                            .get(idx)
+                            .cloned()
+                            .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 }),
+                        nullable: true,
+                        primary_key: false,
+                        unique: false,
+                        identity: None,
+                        default: None,
+                        default_constraint_name: None,
+                        computed_expr: None,
+                        check: None,
+                        check_constraint_name: None,
+                        collation: None,
+                        is_clustered: false,
+                        ansi_padding_on: true,
+                    })
+                    .collect(),
+                check_constraints: vec![],
+                foreign_keys: vec![],
+            };
+            Ok((table_def, result.rows))
         }
-    }
-}
-
-pub(crate) fn synthetic_source_table(source_alias: String, target_table: &TableDef) -> TableDef {
-    TableDef {
-        id: 0,
-        schema_id: 0,
-        schema_name: "sys".to_string(),
-        name: source_alias,
-        columns: target_table
-            .columns
-            .iter()
-            .enumerate()
-            .map(|(idx, col)| ColumnDef {
-                id: (idx + 1) as u32,
-                name: col.name.clone(),
-                data_type: col.data_type.clone(),
-                nullable: true,
-                primary_key: false,
-                unique: false,
-                identity: None,
-                default: None,
-                default_constraint_name: None,
-                check: None,
-                check_constraint_name: None,
-                computed_expr: None,
-                collation: None,
-                is_clustered: false,
-                ansi_padding_on: true,
-            })
-            .collect(),
-        check_constraints: vec![],
-        foreign_keys: vec![],
     }
 }
 
@@ -295,6 +298,7 @@ pub(crate) fn merge_process_matched_phase(
     stmt: &MergeStmt,
     target_table: &TableDef,
     target_alias: &str,
+    source_table_def: &TableDef,
     source_rows: &[Vec<Value>],
     target_rows: &[StoredRow],
     ctx: &mut ExecutionContext<'_>,
@@ -308,7 +312,6 @@ pub(crate) fn merge_process_matched_phase(
     deleted_rows_for_trigger: &mut Vec<StoredRow>,
 ) -> Result<(), DbError> {
     let source_alias = merge_source_alias(stmt)?;
-    let source_table_def = synthetic_source_table(source_alias.clone(), target_table);
 
     for (i, target_row) in target_rows.iter().enumerate() {
         if target_row.deleted {
@@ -323,7 +326,7 @@ pub(crate) fn merge_process_matched_phase(
                 Some(i),
             );
             combined_ctx.extend(merge_source_context(
-                &source_table_def,
+                source_table_def,
                 source_alias.clone(),
                 StoredRow {
                     values: source_row.clone(),
@@ -421,6 +424,7 @@ pub(crate) fn merge_process_matched_phase(
 pub(crate) fn merge_process_not_matched_phase(
     stmt: &MergeStmt,
     target_table: &TableDef,
+    source_table_def: &TableDef,
     source_rows: &[Vec<Value>],
     ctx: &mut ExecutionContext<'_>,
     catalog: &mut dyn Catalog,
@@ -432,7 +436,6 @@ pub(crate) fn merge_process_not_matched_phase(
     inserted_new_rows: &mut Vec<StoredRow>,
 ) -> Result<(), DbError> {
     let source_alias = merge_source_alias(stmt)?;
-    let source_table_def = synthetic_source_table(source_alias.clone(), target_table);
 
     for (s_idx, source_row) in source_rows.iter().enumerate() {
         if source_matched_to_target[s_idx] {
@@ -440,7 +443,7 @@ pub(crate) fn merge_process_not_matched_phase(
         }
 
         let source_ctx = merge_source_context(
-            &source_table_def,
+            source_table_def,
             source_alias.clone(),
             StoredRow {
                 values: source_row.clone(),
@@ -503,6 +506,7 @@ pub(crate) fn merge_process_not_matched_by_source_phase(
     stmt: &MergeStmt,
     target_table: &TableDef,
     target_alias: &str,
+    source_table_def: &TableDef,
     source_rows: &[Vec<Value>],
     target_rows: &[StoredRow],
     ctx: &mut ExecutionContext<'_>,
@@ -515,7 +519,6 @@ pub(crate) fn merge_process_not_matched_by_source_phase(
     deleted_rows_for_trigger: &mut Vec<StoredRow>,
 ) -> Result<(), DbError> {
     let source_alias = merge_source_alias(stmt)?;
-    let source_table_def = synthetic_source_table(source_alias.clone(), target_table);
 
     let has_not_matched_by_source = stmt
         .when_clauses
@@ -540,7 +543,7 @@ pub(crate) fn merge_process_not_matched_by_source_phase(
                 Some(i),
             );
             combined_ctx.extend(merge_source_context(
-                &source_table_def,
+                source_table_def,
                 source_alias.clone(),
                 StoredRow {
                     values: source_row.clone(),

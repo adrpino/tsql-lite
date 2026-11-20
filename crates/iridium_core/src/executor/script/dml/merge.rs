@@ -46,7 +46,7 @@ impl<'a> ScriptExecutor<'a> {
             storage: self.storage,
             clock: self.clock,
         };
-        let source_rows = merge_source_rows(&stmt, &qe, ctx)?;
+        let (source_table_def, source_rows) = merge_source_rows(&stmt, &qe, ctx)?;
 
         let target_alias = stmt
             .target
@@ -68,6 +68,7 @@ impl<'a> ScriptExecutor<'a> {
             &stmt,
             &target_table,
             &target_alias,
+            &source_table_def,
             &source_rows,
             &target_rows,
             ctx,
@@ -86,6 +87,7 @@ impl<'a> ScriptExecutor<'a> {
         merge_process_not_matched_phase(
             &stmt,
             &target_table,
+            &source_table_def,
             &source_rows,
             ctx,
             self.catalog,
@@ -102,6 +104,7 @@ impl<'a> ScriptExecutor<'a> {
             &stmt,
             &target_table,
             &target_alias,
+            &source_table_def,
             &source_rows,
             &target_rows,
             ctx,

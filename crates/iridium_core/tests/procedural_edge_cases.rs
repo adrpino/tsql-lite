@@ -559,3 +559,28 @@ fn procedural_bare_return_before_end_and_deep_expression() {
     let r2 = query(&mut e, &format!("SELECT {expr}"));
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(46));
 }
+
+#[test]
+fn procedural_merge_uses_actual_source_columns() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.dest (id INT, status INT)");
+    exec(&mut e, "INSERT INTO dbo.dest VALUES (1, 0)");
+    exec(
+        &mut e,
+        "BEGIN
+            CREATE TABLE #src (id INT, is_ready BIT);
+            INSERT INTO #src VALUES (1, 1), (2, 0);
+            MERGE dbo.dest AS target
+            USING #src AS source
+            ON target.id = source.id
+            WHEN MATCHED THEN
+                UPDATE SET target.status = CASE WHEN source.is_ready = 1 THEN 2 ELSE 1 END
+            WHEN NOT MATCHED THEN
+                INSERT (id, status) VALUES (source.id, CASE WHEN source.is_ready = 1 THEN 2 ELSE 1 END);
+        END",
+    );
+    let r = query(&mut e, "SELECT id, status FROM dbo.dest ORDER BY id");
+    assert_eq!(r.rows.len(), 2);
+    assert_eq!(r.rows[0], vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(r.rows[1], vec![Value::Int(2), Value::Int(1)]);
+}

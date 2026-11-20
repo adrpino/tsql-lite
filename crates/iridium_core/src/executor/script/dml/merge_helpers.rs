@@ -13,15 +13,54 @@ use crate::types::Value;
 
 pub(crate) fn merge_source_alias(stmt: &MergeStmt) -> Result<String, DbError> {
     match &stmt.source {
-        MergeSource::Table(t) => {
-            let name = t
-                .name_as_object()
-                .ok_or_else(|| DbError::Execution("MERGE source must be a named table".into()))?;
-            Ok(t.alias.clone().unwrap_or_else(|| name.name.clone()))
-        }
+        MergeSource::Table(t) => Ok(t
+            .alias
+            .clone()
+            .or_else(|| t.name_as_object().map(|o| o.name.clone()))
+            .unwrap_or_else(|| "source".to_string())),
         MergeSource::Subquery(_, alias) => {
             Ok(alias.clone().unwrap_or_else(|| "source".to_string()))
         }
+    }
+}
+
+fn table_def_from_query_result(
+    source_alias: String,
+    result: &crate::executor::result::QueryResult,
+) -> TableDef {
+    TableDef {
+        id: 0,
+        schema_id: 0,
+        schema_name: "sys".to_string(),
+        name: source_alias,
+        columns: result
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(idx, col_name)| ColumnDef {
+                id: (idx + 1) as u32,
+                name: col_name.clone(),
+                data_type: result
+                    .column_types
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 }),
+                nullable: true,
+                primary_key: false,
+                unique: false,
+                identity: None,
+                default: None,
+                default_constraint_name: None,
+                computed_expr: None,
+                check: None,
+                check_constraint_name: None,
+                collation: None,
+                is_clustered: false,
+                ansi_padding_on: true,
+            })
+            .collect(),
+        check_constraints: vec![],
+        foreign_keys: vec![],
     }
 }
 
@@ -32,33 +71,85 @@ pub(crate) fn merge_source_rows(
 ) -> Result<(TableDef, Vec<Vec<crate::types::Value>>), DbError> {
     let source_alias = merge_source_alias(stmt)?;
     match &stmt.source {
-        MergeSource::Table(source_ref) => {
-            let source_name = source_ref
-                .name_as_object()
-                .ok_or_else(|| DbError::Execution("MERGE source must be a named table".into()))?;
-            let resolved = ctx
-                .resolve_table_name(source_name.name.as_str())
-                .unwrap_or_else(|| source_name.name.clone());
-            let source_schema = source_name.schema_or_dbo();
-            let mut source_table = executor
-                .catalog
-                .find_table(source_schema, &resolved)
-                .ok_or_else(|| {
-                    DbError::Semantic(format!("table '{}.{}' not found", source_schema, resolved))
-                })?
-                .clone();
-
-            let mut rows = Vec::new();
-            for row in executor.storage.scan_rows(source_table.id)? {
-                let row = row?;
-                if row.deleted {
-                    continue;
+        MergeSource::Table(source_ref) => match &source_ref.factor {
+            crate::ast::TableFactor::Named(source_name) => {
+                if let Some(cte) = ctx.row.ctes.get(&source_name.name) {
+                    let mut tbl = cte.table_def.clone();
+                    tbl.name = source_alias;
+                    let rows = cte
+                        .rows
+                        .iter()
+                        .filter(|r| !r.deleted)
+                        .map(|r| r.values.clone())
+                        .collect();
+                    return Ok((tbl, rows));
                 }
-                rows.push(row.values.clone());
+                let resolved = ctx
+                    .resolve_table_name(source_name.name.as_str())
+                    .unwrap_or_else(|| source_name.name.clone());
+                let source_schema = source_name.schema_or_dbo();
+                let mut source_table = executor
+                    .catalog
+                    .find_table(source_schema, &resolved)
+                    .ok_or_else(|| {
+                        DbError::Semantic(format!(
+                            "table '{}.{}' not found",
+                            source_schema, resolved
+                        ))
+                    })?
+                    .clone();
+
+                let mut rows = Vec::new();
+                for row in executor.storage.scan_rows(source_table.id)? {
+                    let row = row?;
+                    if row.deleted {
+                        continue;
+                    }
+                    rows.push(row.values.clone());
+                }
+                source_table.name = source_alias;
+                Ok((source_table, rows))
             }
-            source_table.name = source_alias;
-            Ok((source_table, rows))
-        }
+            crate::ast::TableFactor::Derived(select_stmt) => {
+                let result = QueryExecutor {
+                    catalog: executor.catalog,
+                    storage: executor.storage,
+                    clock: executor.clock,
+                }
+                .execute_select(RelationalQuery::from((**select_stmt).clone()), ctx)?;
+                let table_def = table_def_from_query_result(source_alias, &result);
+                Ok((table_def, result.rows))
+            }
+            crate::ast::TableFactor::Values { .. } => {
+                let wrapper = crate::ast::SelectStmt {
+                    from_clause: Some(crate::ast::FromNode::Table(source_ref.clone())),
+                    applies: Vec::new(),
+                    projection: vec![crate::ast::SelectItem {
+                        expr: crate::ast::Expr::Wildcard,
+                        alias: None,
+                    }],
+                    into_table: None,
+                    distinct: false,
+                    top: None,
+                    selection: None,
+                    group_by: Vec::new(),
+                    having: None,
+                    order_by: Vec::new(),
+                    offset: None,
+                    fetch: None,
+                    set_op: None,
+                    for_xml: None,
+                };
+                let result = QueryExecutor {
+                    catalog: executor.catalog,
+                    storage: executor.storage,
+                    clock: executor.clock,
+                }
+                .execute_select(RelationalQuery::from(wrapper), ctx)?;
+                let table_def = table_def_from_query_result(source_alias, &result);
+                Ok((table_def, result.rows))
+            }
+        },
         MergeSource::Subquery(select_stmt, _alias) => {
             let result = QueryExecutor {
                 catalog: executor.catalog,
@@ -66,40 +157,7 @@ pub(crate) fn merge_source_rows(
                 clock: executor.clock,
             }
             .execute_select(RelationalQuery::from(select_stmt.clone()), ctx)?;
-            let table_def = TableDef {
-                id: 0,
-                schema_id: 0,
-                schema_name: "sys".to_string(),
-                name: source_alias,
-                columns: result
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, col_name)| ColumnDef {
-                        id: (idx + 1) as u32,
-                        name: col_name.clone(),
-                        data_type: result
-                            .column_types
-                            .get(idx)
-                            .cloned()
-                            .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 }),
-                        nullable: true,
-                        primary_key: false,
-                        unique: false,
-                        identity: None,
-                        default: None,
-                        default_constraint_name: None,
-                        computed_expr: None,
-                        check: None,
-                        check_constraint_name: None,
-                        collation: None,
-                        is_clustered: false,
-                        ansi_padding_on: true,
-                    })
-                    .collect(),
-                check_constraints: vec![],
-                foreign_keys: vec![],
-            };
+            let table_def = table_def_from_query_result(source_alias, &result);
             Ok((table_def, result.rows))
         }
     }

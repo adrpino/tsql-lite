@@ -1091,3 +1091,50 @@ fn datetime_empty_epoch_dateadd_clamping_week_part_and_error_procedure() {
     assert_eq!(r3.rows[0][0].to_string_value(), "p_err_diag");
     assert!(r3.rows[0][1].to_integer_i64().is_some());
 }
+
+#[test]
+fn tsql_recursive_cte_without_keyword_and_merge_subquery_source() {
+    let mut e = Engine::new();
+
+    // 1. Standard T-SQL recursive CTE (no RECURSIVE keyword) feeding INSERT INTO #temp
+    exec(&mut e, "CREATE TABLE #dates (d DATE)");
+    exec(
+        &mut e,
+        "WITH DateRange AS (
+            SELECT CAST('2026-01-01' AS DATE) AS DateValue
+            UNION ALL
+            SELECT DATEADD(DAY, 1, DateValue)
+            FROM DateRange
+            WHERE DateValue < CAST('2026-01-05' AS DATE)
+        )
+        INSERT INTO #dates
+        SELECT DateValue FROM DateRange;",
+    );
+    let r1 = query(&mut e, "SELECT COUNT(*) AS cnt, MAX(d) AS last_d FROM #dates");
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(5));
+    assert_eq!(r1.rows[0][1].to_string_value(), "2026-01-05");
+
+    // 2. MERGE with derived subquery source and VALUES source
+    exec(&mut e, "CREATE TABLE dbo.m_dst (id INT PRIMARY KEY, v VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.m_dst VALUES (1, 'old')");
+    exec(
+        &mut e,
+        "MERGE dbo.m_dst AS T
+         USING (SELECT 1 AS id, 'new1' AS v UNION ALL SELECT 2 AS id, 'new2' AS v) AS S
+             ON T.id = S.id
+         WHEN MATCHED THEN UPDATE SET v = S.v
+         WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v);",
+    );
+    exec(
+        &mut e,
+        "MERGE dbo.m_dst AS T
+         USING (VALUES (3, 'from_vals')) AS S (id, v)
+             ON T.id = S.id
+         WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v);",
+    );
+    let r2 = query(&mut e, "SELECT id, v FROM dbo.m_dst ORDER BY id");
+    assert_eq!(r2.rows.len(), 3);
+    assert_eq!(r2.rows[0][1].to_string_value(), "new1");
+    assert_eq!(r2.rows[1][1].to_string_value(), "new2");
+    assert_eq!(r2.rows[2][1].to_string_value(), "from_vals");
+}

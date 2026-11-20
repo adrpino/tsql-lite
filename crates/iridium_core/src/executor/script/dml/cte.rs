@@ -6,6 +6,82 @@ use crate::executor::context::ExecutionContext;
 use crate::executor::result::QueryResult;
 use crate::storage::StoredRow;
 
+fn from_node_references_name(node: &crate::ast::FromNode, target: &str) -> bool {
+    match node {
+        crate::ast::FromNode::Table(tr) => match &tr.factor {
+            crate::ast::TableFactor::Named(obj) => obj.name.eq_ignore_ascii_case(target),
+            crate::ast::TableFactor::Derived(sub) => select_references_name(sub, target),
+            crate::ast::TableFactor::Values { .. } => false,
+        },
+        crate::ast::FromNode::Aliased { source, .. } => from_node_references_name(source, target),
+        crate::ast::FromNode::Join { left, right, .. } => {
+            from_node_references_name(left, target) || from_node_references_name(right, target)
+        }
+    }
+}
+
+fn select_references_name(sel: &crate::ast::SelectStmt, target: &str) -> bool {
+    if let Some(ref from) = sel.from_clause {
+        if from_node_references_name(from, target) {
+            return true;
+        }
+    }
+    if sel
+        .applies
+        .iter()
+        .any(|a| select_references_name(&a.subquery, target))
+    {
+        return true;
+    }
+    if let Some(ref set_op) = sel.set_op {
+        if select_references_name(&set_op.right, target) {
+            return true;
+        }
+    }
+    false
+}
+
+fn extract_recursive_cte_parts(
+    cte_name: &str,
+    query: &crate::ast::Statement,
+    explicit_recursive: bool,
+) -> Option<(crate::ast::Statement, crate::ast::Statement)> {
+    match query {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::SetOp(set_op))
+            if matches!(set_op.op, crate::ast::SetOpKind::UnionAll) =>
+        {
+            if explicit_recursive {
+                return Some((*set_op.left.clone(), *set_op.right.clone()));
+            }
+            if let crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(right_sel)) =
+                set_op.right.as_ref()
+            {
+                if select_references_name(right_sel, cte_name) {
+                    return Some((*set_op.left.clone(), *set_op.right.clone()));
+                }
+            }
+            None
+        }
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(sel)) => {
+            let set_op = sel.set_op.as_ref()?;
+            if !matches!(set_op.kind, crate::ast::SetOpKind::UnionAll) {
+                return None;
+            }
+            if !explicit_recursive && !select_references_name(&set_op.right, cte_name) {
+                return None;
+            }
+            let mut anchor = sel.clone();
+            anchor.set_op = None;
+            let recursive = set_op.right.clone();
+            Some((
+                crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(anchor)),
+                crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(recursive)),
+            ))
+        }
+        _ => None,
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_with_cte(
         &mut self,
@@ -15,130 +91,121 @@ impl<'a> ScriptExecutor<'a> {
         let old_ctes = ctx.row.ctes.clone();
 
         for cte_def in &stmt.ctes {
-            if stmt.recursive {
-                // Recursive CTE logic
-                if let crate::ast::Statement::Dml(crate::ast::DmlStatement::SetOp(set_op)) =
-                    &cte_def.query
-                {
-                    if let crate::ast::SetOpKind::UnionAll = set_op.op {
-                        let anchor_stmt = *set_op.left.clone();
-                        let recursive_stmt = *set_op.right.clone();
-
-                        // 2. Execute Anchor Member
-                        let anchor_outcome = self.execute(anchor_stmt, ctx)?;
-                        let result = match anchor_outcome {
-                            StmtOutcome::Ok(Some(r)) => r,
-                            StmtOutcome::Ok(None) => {
-                                return Err(DbError::Execution(
-                                    "CTE anchor member must return a result set".into(),
-                                ))
-                            }
-                            // Propagate control flow
-                            other => return other.into_result(),
-                        };
-
-                        let table_def = TableDef {
-                            id: 0,
-                            schema_id: 1,
-                            schema_name: "dbo".to_string(),
-                            name: cte_def.name.clone(),
-                            columns: result
-                                .columns
-                                .iter()
-                                .enumerate()
-                                .map(|(i, name)| crate::catalog::ColumnDef {
-                                    id: (i + 1) as u32,
-                                    name: name.clone(),
-                                    data_type: result.column_types[i].clone(),
-                                    nullable: true,
-                                    primary_key: false,
-                                    unique: false,
-                                    identity: None,
-                                    default: None,
-                                    default_constraint_name: None,
-                                    computed_expr: None,
-                                    check: None,
-                                    check_constraint_name: None,
-                                    collation: None,
-                                    is_clustered: false,
-                                    ansi_padding_on: true,
-                                })
-                                .collect(),
-                            check_constraints: vec![],
-                            foreign_keys: vec![],
-                        };
-
-                        let mut all_rows: Vec<StoredRow> = result
-                            .rows
-                            .iter()
-                            .map(|v| StoredRow {
-                                values: v.clone(),
-                                deleted: false,
-                            })
-                            .collect();
-                        let mut working_set = all_rows.clone();
-
-                        // 3. Iterative execution of recursive member
-                        let mut iteration = 0;
-                        let max_recursion = 100; // Default MS SQL limit
-
-                        // Hoist table_def clone out of the loop
-                        let table_def_inner = table_def.clone();
-
-                        while !working_set.is_empty() && iteration < max_recursion {
-                            iteration += 1;
-
-                            // Temporarily put only the working set into the CTE storage
-                            // so the recursive member sees only the rows from the previous iteration
-                            let mut iteration_ctes = old_ctes.clone();
-                            iteration_ctes.insert(
-                                &cte_def.name,
-                                table_def_inner.clone(),
-                                working_set,
-                            );
-                            let prev_ctes = std::mem::replace(&mut ctx.row.ctes, iteration_ctes);
-
-                            let step_outcome = self.execute(recursive_stmt.clone(), ctx)?;
-
-                            ctx.row.ctes = prev_ctes;
-
-                            let res = match step_outcome {
-                                StmtOutcome::Ok(Some(r)) => r,
-                                StmtOutcome::Ok(None) => break,
-                                // Propagate control flow
-                                other => return other.into_result(),
-                            };
-
-                            if res.rows.is_empty() {
-                                break;
-                            }
-
-                            working_set = res
-                                .rows
-                                .iter()
-                                .map(|v| StoredRow {
-                                    values: v.clone(),
-                                    deleted: false,
-                                })
-                                .collect();
-                            all_rows.extend(working_set.iter().cloned());
-                        }
-
-                        if iteration >= max_recursion {
-                            return Err(DbError::Execution("The maximum recursion 100 has been exhausted before statement completion.".to_string()));
-                        }
-
-                        ctx.row.ctes.insert(&cte_def.name, table_def, all_rows);
-                    } else {
+            let recursive_parts =
+                extract_recursive_cte_parts(&cte_def.name, &cte_def.query, stmt.recursive);
+            if let Some((anchor_stmt, recursive_stmt)) = recursive_parts {
+                let saved_sink = ctx.frame.result_set_sink.take();
+                let saved_last = ctx.frame.last_proc_result.take();
+                let anchor_outcome = self.execute(anchor_stmt, ctx);
+                ctx.frame.result_set_sink = saved_sink;
+                ctx.frame.last_proc_result = saved_last;
+                let anchor_outcome = anchor_outcome?;
+                let result = match anchor_outcome {
+                    StmtOutcome::Ok(Some(r)) => r,
+                    StmtOutcome::Ok(None) => {
                         return Err(DbError::Execution(
-                            "Recursive CTE must use UNION ALL".into(),
-                        ));
+                            "CTE anchor member must return a result set".into(),
+                        ))
                     }
-                } else {
-                    return Err(DbError::Execution(
-                        "Recursive CTE must be a UNION ALL of anchor and recursive members".into(),
-                    ));
+                    other => return other.into_result(),
+                };
+
+                let table_def = TableDef {
+                    id: 0,
+                    schema_id: 1,
+                    schema_name: "dbo".to_string(),
+                    name: cte_def.name.clone(),
+                    columns: result
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| crate::catalog::ColumnDef {
+                            id: (i + 1) as u32,
+                            name: name.clone(),
+                            data_type: result.column_types[i].clone(),
+                            nullable: true,
+                            primary_key: false,
+                            unique: false,
+                            identity: None,
+                            default: None,
+                            default_constraint_name: None,
+                            computed_expr: None,
+                            check: None,
+                            check_constraint_name: None,
+                            collation: None,
+                            is_clustered: false,
+                            ansi_padding_on: true,
+                        })
+                        .collect(),
+                    check_constraints: vec![],
+                    foreign_keys: vec![],
+                };
+
+                let mut all_rows: Vec<StoredRow> = result
+                    .rows
+                    .iter()
+                    .map(|v| StoredRow {
+                        values: v.clone(),
+                        deleted: false,
+                    })
+                    .collect();
+                let mut working_set = all_rows.clone();
+
+                let mut iteration = 0;
+                let max_recursion = 10_000;
+                let table_def_inner = table_def.clone();
+
+                while !working_set.is_empty() && iteration < max_recursion {
+                    iteration += 1;
+
+                    let mut iteration_ctes = ctx.row.ctes.clone();
+                    iteration_ctes.insert(
+                        &cte_def.name,
+                        table_def_inner.clone(),
+                        working_set,
+                    );
+                    let prev_ctes = std::mem::replace(&mut ctx.row.ctes, iteration_ctes);
+                    let saved_sink = ctx.frame.result_set_sink.take();
+                    let saved_last = ctx.frame.last_proc_result.take();
+                    let step_outcome = self.execute(recursive_stmt.clone(), ctx);
+                    ctx.frame.result_set_sink = saved_sink;
+                    ctx.frame.last_proc_result = saved_last;
+                    ctx.row.ctes = prev_ctes;
+                    let step_outcome = step_outcome?;
+
+                    let res = match step_outcome {
+                        StmtOutcome::Ok(Some(r)) => r,
+                        StmtOutcome::Ok(None) => break,
+                        other => return other.into_result(),
+                    };
+
+                    if res.rows.is_empty() {
+                        break;
+                    }
+
+                    working_set = res
+                        .rows
+                        .iter()
+                        .map(|v| StoredRow {
+                            values: v.clone(),
+                            deleted: false,
+                        })
+                        .collect();
+                    all_rows.extend(working_set.iter().cloned());
                 }
+
+                if iteration >= max_recursion {
+                    return Err(DbError::Execution(format!(
+                        "The maximum recursion {} has been exhausted before statement completion.",
+                        max_recursion
+                    )));
+                }
+
+                ctx.row.ctes.insert(&cte_def.name, table_def, all_rows);
+            } else if stmt.recursive {
+                return Err(DbError::Execution(
+                    "Recursive CTE must be a UNION ALL of anchor and recursive members".into(),
+                ));
             } else {
                 // Standard non-recursive CTE
                 let saved_sink = ctx.frame.result_set_sink.take();

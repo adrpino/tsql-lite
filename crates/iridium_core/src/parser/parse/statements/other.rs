@@ -128,15 +128,18 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                 }
             }
 
-            let id_str = match parser.peek() {
-                Some(Token::Identifier(id)) => id.clone(),
-                Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
-                Some(Token::Variable(v)) => v.clone(),
-                _ => unreachable!(),
-            };
-
-            if id_str.eq_ignore_ascii_case("sp_executesql") {
-                let _ = parser.next();
+            let name = super::parse_multipart_name(parser)?;
+            if name
+                .last()
+                .is_some_and(|n| n.eq_ignore_ascii_case("sp_executesql"))
+                && (name.len() == 1
+                    || (name.len() == 2
+                        && (name[0].eq_ignore_ascii_case("sys")
+                            || name[0].eq_ignore_ascii_case("dbo")))
+                    || (name.len() == 3
+                        && name[0].eq_ignore_ascii_case("master")
+                        && name[1].eq_ignore_ascii_case("sys")))
+            {
                 let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
                 let mut params_def = None;
                 if matches!(parser.peek(), Some(Token::Comma)) {
@@ -155,7 +158,6 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                 }));
             }
 
-            let name = super::parse_multipart_name(parser)?;
             let mut args = Vec::new();
             if !parser.is_empty()
                 && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))

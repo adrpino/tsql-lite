@@ -230,3 +230,22 @@ fn procedural_exec_named_arguments_out_of_order_and_omitted_middle_default() {
         .execute_batch(iridium_core::parse_batch("EXEC dbo.compute @unknown = 1").unwrap())
         .is_err());
 }
+
+#[test]
+fn procedural_schema_qualified_sp_executesql_and_refresh_procs() {
+    let mut e = Engine::new();
+    let r = query(
+        &mut e,
+        "EXEC sys.sp_executesql N'SELECT @v * 3 AS tripled', N'@v INT', @v = 7",
+    );
+    assert_eq!(r.rows[0][0], Value::BigInt(21));
+
+    exec(&mut e, "CREATE PROCEDURE dbo.p_ref AS SELECT 1");
+    e.execute_batch(
+        iridium_core::parse_batch(
+            "EXEC sys.sp_refresh_parameter_encryption N'dbo.p_ref'; EXEC sys.sp_refreshsqlmodule N'dbo.p_ref';",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}

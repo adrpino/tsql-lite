@@ -40,6 +40,9 @@ const SYSTEM_PROCEDURES: &[&str] = &[
     "sp_helpfilegroup",
     "sp_describe_first_result_set",
     "sp_describe_undeclared_parameters",
+    "sp_refresh_parameter_encryption",
+    "sp_refreshsqlmodule",
+    "sp_refreshview",
 ];
 
 pub(crate) fn is_system_procedure(name: &str) -> bool {
@@ -125,6 +128,11 @@ pub(crate) fn execute_system_procedure(
         execute_sp_describe_first_result_set(exec, &args, ctx)?
     } else if name.eq_ignore_ascii_case("sp_describe_undeclared_parameters") {
         execute_sp_describe_undeclared_parameters(exec, &args, ctx)?
+    } else if name.eq_ignore_ascii_case("sp_refresh_parameter_encryption")
+        || name.eq_ignore_ascii_case("sp_refreshsqlmodule")
+        || name.eq_ignore_ascii_case("sp_refreshview")
+    {
+        QueryResult::default()
     } else {
         return Err(DbError::Execution(format!(
             "unknown system procedure '{}'",

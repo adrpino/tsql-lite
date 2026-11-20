@@ -924,3 +924,70 @@ fn merge_not_matched_by_target_and_general_output_expressions() {
     assert_eq!(rd.rows[0][0].to_integer_i64(), Some(2));
     assert_eq!(rd.rows[0][1], Value::VarChar("DEL".to_string()));
 }
+
+#[test]
+fn query_join_after_apply_inline_tvf_cte_and_keyword_aliases() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.orders (id INT, cust_id INT)");
+    exec(&mut e, "CREATE TABLE dbo.order_lines (order_id INT, prod_id INT, seq INT)");
+    exec(&mut e, "CREATE TABLE dbo.products (id INT, name VARCHAR(30))");
+    exec(&mut e, "INSERT INTO dbo.orders VALUES (1, 10), (2, 20)");
+    exec(
+        &mut e,
+        "INSERT INTO dbo.order_lines VALUES (1, 100, 1), (1, 200, 2)",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO dbo.products VALUES (100, 'Alpha'), (200, 'Beta')",
+    );
+
+    // 1. LEFT JOIN after OUTER APPLY referencing the APPLY alias, plus AS date / AS row / [Group] aliases
+    let r1 = query(
+        &mut e,
+        "SELECT o.id AS row,
+                p.name [Group],
+                '2026-01-01' AS date
+         FROM dbo.orders o
+         OUTER APPLY (
+             SELECT TOP (1) l.prod_id
+             FROM dbo.order_lines l
+             WHERE l.order_id = o.id
+             ORDER BY l.seq DESC
+         ) AS latest
+         LEFT JOIN dbo.products p
+             ON p.id = latest.prod_id
+         ORDER BY o.id",
+    );
+    assert_eq!(r1.rows.len(), 2);
+    let cols_lower: Vec<String> = r1.columns.iter().map(|c| c.to_ascii_lowercase()).collect();
+    assert_eq!(cols_lower, vec!["row", "group", "date"]);
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][1], Value::VarChar("Beta".to_string()));
+    assert_eq!(r1.rows[1][0].to_integer_i64(), Some(2));
+    assert_eq!(r1.rows[1][1], Value::Null);
+
+    // 2. Inline TVF with CTE: RETURNS TABLE AS RETURN (WITH cte AS (...) SELECT ...)
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.fn_cte_lines (@min_seq INT)
+        RETURNS TABLE
+        AS
+        RETURN (
+            WITH filtered AS (
+                SELECT order_id, prod_id
+                FROM dbo.order_lines
+                WHERE seq >= @min_seq
+            )
+            SELECT f.order_id, p.name
+            FROM filtered f
+            JOIN dbo.products p ON p.id = f.prod_id
+        )",
+    );
+    let r2 = query(
+        &mut e,
+        "SELECT order_id, name FROM dbo.fn_cte_lines(2)",
+    );
+    assert_eq!(r2.rows.len(), 1);
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r2.rows[0][1], Value::VarChar("Beta".to_string()));
+}

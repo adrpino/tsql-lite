@@ -289,6 +289,32 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                                 lower_select(sel)?,
                             )
                         }
+                        ast::FunctionBody::TableWithCte { ctes, query } => {
+                            let lowered_ctes = ctes
+                                .into_iter()
+                                .map(|c| {
+                                    Ok(executor_ast::statements::procedural::CteDef {
+                                        name: c.name,
+                                        query: executor_ast::Statement::Dml(
+                                            executor_ast::statements::DmlStatement::Select(
+                                                lower_select(c.query)?,
+                                            ),
+                                        ),
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, DbError>>()?;
+                            executor_ast::statements::procedural::FunctionBody::InlineTableWithCte(
+                                Box::new(executor_ast::statements::procedural::WithCteStmt {
+                                    recursive: false,
+                                    ctes: lowered_ctes,
+                                    body: Box::new(executor_ast::Statement::Dml(
+                                        executor_ast::statements::DmlStatement::Select(
+                                            lower_select(query)?,
+                                        ),
+                                    )),
+                                }),
+                            )
+                        }
                         ast::FunctionBody::MultiStatementTable {
                             table_var,
                             columns,

@@ -270,11 +270,22 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
             let _ = parser.next();
             paren_depth += 1;
         }
-        let query = crate::parser::parse::statements::query::parse_select(parser)?;
+        let body = if parser.at_keyword(Keyword::With) {
+            let _ = parser.next();
+            let ctes = crate::parser::parse::parse_comma_list(
+                parser,
+                crate::parser::parse::parse_cte_def,
+            )?;
+            let query = crate::parser::parse::statements::query::parse_select(parser)?;
+            FunctionBody::TableWithCte { ctes, query }
+        } else {
+            let query = crate::parser::parse::statements::query::parse_select(parser)?;
+            FunctionBody::Table(query)
+        };
         for _ in 0..paren_depth {
             parser.expect_rparen()?;
         }
-        FunctionBody::Table(query)
+        body
     } else if parser.at_keyword(Keyword::Return) {
         let _ = parser.next();
         let expr = crate::parser::parse::expressions::parse_expr(parser)?;

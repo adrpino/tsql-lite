@@ -1008,7 +1008,7 @@ fn parse_begin_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
     parse_begin_end(parser)
 }
 
-fn parse_cte_def(parser: &mut Parser) -> ParseResult<CteDef> {
+pub(crate) fn parse_cte_def(parser: &mut Parser) -> ParseResult<CteDef> {
     let name = if let Some(tok) = parser.next() {
         match tok {
             Token::Identifier(id) => id.clone(),

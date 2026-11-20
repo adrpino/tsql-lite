@@ -212,6 +212,7 @@ pub(super) fn bind_inline_tvf(
     if !matches!(
         body,
         crate::ast::FunctionBody::InlineTable(_)
+            | crate::ast::FunctionBody::InlineTableWithCte(_)
             | crate::ast::FunctionBody::MultiStatementTable { .. }
     ) {
         return Ok(None);
@@ -313,6 +314,23 @@ pub(super) fn bind_inline_tvf(
         let res = match body {
             crate::ast::FunctionBody::InlineTable(query) => {
                 executor.execute_select(query.into(), ctx)?
+            }
+            crate::ast::FunctionBody::InlineTableWithCte(with_cte) => {
+                let mut scratch_catalog = catalog.clone_boxed();
+                let mut scratch_storage = storage.clone_boxed();
+                let mut script_exec = crate::executor::script::ScriptExecutor {
+                    catalog: scratch_catalog.as_mut(),
+                    storage: scratch_storage.as_mut(),
+                    clock,
+                };
+                match script_exec.execute(crate::ast::Statement::WithCte(*with_cte), ctx)? {
+                    crate::error::StmtOutcome::Ok(Some(res)) => res,
+                    _ => {
+                        return Err(DbError::Execution(
+                            "inline table function CTE produced no result".into(),
+                        ))
+                    }
+                }
             }
             crate::ast::FunctionBody::MultiStatementTable {
                 table_var,

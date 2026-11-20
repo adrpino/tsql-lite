@@ -120,39 +120,88 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         }
     }
 
-    while let Some(join) = parse_join_clause(parser)? {
-        joins.push(join);
-    }
-
     let mut applies = Vec::new();
-    while let Some(Token::Keyword(k)) = parser.peek() {
-        let apply_type = match *k {
-            Keyword::Cross => {
-                let saved = parser.save();
-                let _ = parser.next();
-                if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
-                    let _ = parser.next();
-                    ApplyType::Cross
-                } else {
-                    parser.restore(saved);
-                    break;
-                }
+    loop {
+        if let Some(join) = parse_join_clause(parser)? {
+            if applies.is_empty() {
+                joins.push(join);
+            } else {
+                // Desugar a JOIN appearing after CROSS/OUTER APPLY into a correlated APPLY
+                // so left-to-right visibility of earlier APPLY aliases is preserved.
+                let apply_type = match join.join_type {
+                    JoinType::Left => ApplyType::Outer,
+                    _ => ApplyType::Cross,
+                };
+                let join_alias = join
+                    .table
+                    .alias
+                    .clone()
+                    .or_else(|| join.table.name_as_object().map(|o| o.name.clone()));
+                let sub = SelectStmt {
+                    distinct: false,
+                    top: None,
+                    projection: vec![SelectItem {
+                        expr: Expr::Wildcard,
+                        alias: None,
+                    }],
+                    into_table: None,
+                    from: Some(join.table),
+                    joins: Vec::new(),
+                    applies: Vec::new(),
+                    selection: join.on,
+                    group_by: Vec::new(),
+                    having: None,
+                    order_by: Vec::new(),
+                    offset: None,
+                    fetch: None,
+                    set_op: None,
+                };
+                applies.push(ApplyClause {
+                    apply_type,
+                    table: TableRef {
+                        factor: TableFactor::Derived(Box::new(sub)),
+                        alias: join_alias,
+                        pivot: None,
+                        unpivot: None,
+                        hints: Vec::new(),
+                    },
+                });
             }
-            Keyword::Outer => {
-                let saved = parser.save();
-                let _ = parser.next();
-                if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
+            continue;
+        }
+        if let Some(Token::Keyword(k)) = parser.peek() {
+            let apply_type = match *k {
+                Keyword::Cross => {
+                    let saved = parser.save();
                     let _ = parser.next();
-                    ApplyType::Outer
-                } else {
-                    parser.restore(saved);
-                    break;
+                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
+                        let _ = parser.next();
+                        Some(ApplyType::Cross)
+                    } else {
+                        parser.restore(saved);
+                        None
+                    }
                 }
+                Keyword::Outer => {
+                    let saved = parser.save();
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::Keyword(Keyword::Apply))) {
+                        let _ = parser.next();
+                        Some(ApplyType::Outer)
+                    } else {
+                        parser.restore(saved);
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(apply_type) = apply_type {
+                let table = parse_table_ref(parser)?;
+                applies.push(ApplyClause { apply_type, table });
+                continue;
             }
-            _ => break,
-        };
-        let table = parse_table_ref(parser)?;
-        applies.push(ApplyClause { apply_type, table });
+        }
+        break;
     }
 
     let mut selection = None;
@@ -578,20 +627,24 @@ pub fn parse_select_item(parser: &mut Parser) -> ParseResult<SelectItem> {
             match parser.next() {
                 Some(Token::Identifier(alias)) => Some(alias.clone()),
                 Some(Token::String(alias)) => Some(alias.clone()),
+                Some(Token::Keyword(kw)) => Some(kw.as_ref().to_string()),
                 _ => return parser.backtrack(Expected::Description("alias")),
             }
         } else if !crate::parser::parse::expressions::is_stop_keyword(k.as_sql()) {
             match parser.next() {
                 Some(Token::Identifier(id)) => Some(id.clone()),
+                Some(Token::Keyword(kw)) => Some(kw.as_ref().to_string()),
                 Some(_) | None => None,
             }
         } else {
             None
         }
     } else if let Some(Token::Identifier(alias)) = parser.peek() {
-        if !crate::parser::parse::expressions::is_stop_keyword(alias)
-            && !(alias.eq_ignore_ascii_case("OPTION")
-                && matches!(parser.peek_at(1), Some(Token::LParen)))
+        // Unquoted SQL keywords are lexed as Token::Keyword, so any Token::Identifier whose
+        // text matches a SQL keyword (e.g. [Group], [Order]) was explicitly delimited and is a
+        // valid column alias. Still guard contextual OPTION(...) query hints.
+        if !(alias.eq_ignore_ascii_case("OPTION")
+            && matches!(parser.peek_at(1), Some(Token::LParen)))
         {
             let alias = alias.clone();
             let _ = parser.next();

@@ -77,7 +77,9 @@ pub(crate) fn eval_user_scalar_function(
             FunctionBody::Scalar(stmts) => {
                 super::super::evaluator::eval_udf_body(stmts, ctx, catalog, storage, clock)
             }
-            FunctionBody::InlineTable(_) | FunctionBody::MultiStatementTable { .. } => {
+            FunctionBody::InlineTable(_)
+            | FunctionBody::InlineTableWithCte(_)
+            | FunctionBody::MultiStatementTable { .. } => {
                 Err(DbError::Execution(format!(
                     "table-valued function '{}' cannot be used in scalar context",
                     name

@@ -389,6 +389,10 @@ pub enum FunctionBody {
     ScalarReturn(Expr),
     Block(Vec<Statement>),
     Table(SelectStmt),
+    TableWithCte {
+        ctes: Vec<CteDef>,
+        query: SelectStmt,
+    },
     MultiStatementTable {
         table_var: String,
         columns: Vec<ColumnDef>,

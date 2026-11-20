@@ -14,6 +14,7 @@ pub(crate) fn execute_apply(
     executor: &QueryExecutor<'_>,
 ) -> Result<Vec<JoinedRow>, DbError> {
     let mut result_rows = Vec::new();
+    let mut cached_table: Option<TableDef> = None;
 
     for left_row in &rows {
         ctx.push_apply_row(left_row.clone());
@@ -23,9 +24,19 @@ pub(crate) fn execute_apply(
         if sub_result.rows.is_empty() {
             if apply.apply_type == crate::ast::ApplyType::Outer {
                 let mut combined = left_row.clone();
+                let vtable = if !sub_result.columns.is_empty()
+                    && !sub_result.columns.iter().any(|c| c == "*")
+                {
+                    build_virtual_table(&apply.alias, &sub_result)
+                } else if let Some(ref known) = cached_table {
+                    known.clone()
+                } else {
+                    resolve_empty_apply_table(apply, executor, ctx)
+                        .unwrap_or_else(|| build_virtual_table(&apply.alias, &sub_result))
+                };
                 combined.push(
                     ContextTable {
-                        table: build_virtual_table(&apply.alias, &sub_result),
+                        table: vtable,
                         alias: apply.alias.clone(),
                         row: None,
                         storage_index: None,
@@ -37,6 +48,9 @@ pub(crate) fn execute_apply(
             }
         } else {
             let apply_table = build_virtual_table(&apply.alias, &sub_result);
+            if cached_table.is_none() {
+                cached_table = Some(apply_table.clone());
+            }
             for (idx, sub_row_values) in sub_result.rows.iter().enumerate() {
                 let mut combined = left_row.clone();
                 combined.push(ContextTable {
@@ -55,6 +69,27 @@ pub(crate) fn execute_apply(
     }
 
     Ok(result_rows)
+}
+
+fn resolve_empty_apply_table(
+    apply: &crate::ast::ApplyClause,
+    executor: &QueryExecutor<'_>,
+    ctx: &ExecutionContext,
+) -> Option<TableDef> {
+    if let Some(crate::ast::FromNode::Table(tref)) = &apply.subquery.from_clause {
+        if let Some(obj) = tref.factor.as_object_name() {
+            let name = ctx
+                .resolve_table_name(&obj.name)
+                .unwrap_or_else(|| obj.name.clone());
+            let schema = obj.schema_or_dbo();
+            if let Some(t) = executor.catalog.find_table(schema, &name) {
+                let mut cloned = t.clone();
+                cloned.name = apply.alias.clone();
+                return Some(cloned);
+            }
+        }
+    }
+    None
 }
 
 fn build_virtual_table(alias: &str, sub_result: &QueryResult) -> TableDef {

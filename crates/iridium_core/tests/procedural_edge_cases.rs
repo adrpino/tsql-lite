@@ -484,3 +484,20 @@ fn procedural_nested_exec_preserves_caller_variables_and_tvp() {
     assert_eq!(r.rows[0][1], Value::Int(35));
     assert_eq!(r.rows[0][2], Value::Int(2));
 }
+
+#[test]
+fn procedural_create_and_drop_index_on_temp_table() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.src (id INT, label VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.src VALUES (1, 'a'), (2, 'b')");
+    exec(
+        &mut e,
+        "BEGIN
+            SELECT id, label INTO #stage FROM dbo.src;
+            CREATE CLUSTERED INDEX CIX_stage ON #stage (id);
+            DROP INDEX CIX_stage ON #stage;
+        END",
+    );
+    let r = query(&mut e, "SELECT COUNT(*) FROM #stage");
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(2));
+}

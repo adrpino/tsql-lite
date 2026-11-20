@@ -45,11 +45,13 @@ impl<'a> ScriptExecutor<'a> {
                 ignore_missing_if_exists(self.schema(ctx).drop_type(stmt), if_exists)?;
                 Ok(None)
             }
-            DdlStatement::CreateIndex(stmt) => {
+            DdlStatement::CreateIndex(mut stmt) => {
+                temp_table::resolve_table_name_for_mutation(&mut stmt.table, ctx);
                 self.schema(ctx).create_index(stmt)?;
                 Ok(None)
             }
-            DdlStatement::DropIndex(stmt) => {
+            DdlStatement::DropIndex(mut stmt) => {
+                temp_table::resolve_table_name_for_mutation(&mut stmt.table, ctx);
                 let if_exists = stmt.if_exists;
                 ignore_missing_if_exists(self.schema(ctx).drop_index(stmt), if_exists)?;
                 Ok(None)

@@ -10,7 +10,7 @@ pub fn parse_expr(parser: &mut Parser) -> ParseResult<Expr> {
     parse_pratt_expr(parser, 0)
 }
 
-fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<Expr> {
+pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<Expr> {
     parser.enter_recursion()?; 
     let res = (|| {
         let mut left = parse_primary(parser)?;

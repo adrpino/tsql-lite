@@ -77,17 +77,9 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                 let _ = parser.next();
                 if matches!(parser.peek(), Some(Token::LParen)) {
                     let _ = parser.next();
-                    let seed = if let Some(Token::Number { value: n, .. }) = parser.next() {
-                        *n as i64
-                    } else {
-                        1
-                    };
+                    let seed = parse_signed_int(parser).unwrap_or(1);
                     parser.expect_comma()?;
-                    let inc = if let Some(Token::Number { value: n, .. }) = parser.next() {
-                        *n as i64
-                    } else {
-                        1
-                    };
+                    let inc = parse_signed_int(parser).unwrap_or(1);
                     parser.expect_rparen()?;
                     identity_spec = Some((seed, inc));
                 }

@@ -177,11 +177,15 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
         }
         Some(Token::Operator(op)) if *op == "-" => {
             let _ = parser.next();
-            let expr = super::pratt::parse_expr(parser)?;
+            let expr = super::pratt::parse_pratt_expr(parser, 13)?;
             Ok(Expr::Unary {
                 op: UnaryOp::Negate,
                 expr: Box::new(expr),
             })
+        }
+        Some(Token::Operator(op)) if *op == "+" => {
+            let _ = parser.next();
+            super::pratt::parse_pratt_expr(parser, 13)
         }
         Some(Token::Keyword(k))
             if matches!(parser.peek_at(1), Some(Token::LParen) | Some(Token::Dot)) =>

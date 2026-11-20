@@ -79,7 +79,10 @@ pub fn lex(input: &mut &str, quoted_identifier: bool) -> ModalResult<Vec<Token>>
 }
 
 fn parse_whitespace<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
-    take_while(1.., |c: char| c.is_whitespace()).parse_next(input)
+    take_while(1.., |c: char| {
+        c.is_whitespace() || matches!(c, '\u{FEFF}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}')
+    })
+    .parse_next(input)
 }
 
 fn parse_comment(input: &mut &str) -> ModalResult<()> {
@@ -116,6 +119,11 @@ fn parse_comment(input: &mut &str) -> ModalResult<()> {
 
 fn parse_number(input: &mut &str) -> ModalResult<f64> {
     let start = *input;
+    if start.starts_with('+') || start.starts_with('-') {
+        return Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        ));
+    }
     let result: ModalResult<f64> = float.parse_next(input);
     if let Ok(val) = result {
         if val.is_infinite() || val.is_nan() {

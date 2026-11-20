@@ -721,3 +721,35 @@ fn procedural_top_level_tvp_reusable_across_exec_and_tvf_tvp_param() {
     assert_eq!(r3.rows[0][0].to_integer_i64(), Some(6));
     assert_eq!(r3.rows[1][0].to_integer_i64(), Some(14));
 }
+
+#[test]
+fn lexer_signed_arithmetic_unary_plus_and_zero_width_whitespace() {
+    let mut e = Engine::new();
+
+    // Tight binary minus/plus before integer literals (must not lex as signed literal)
+    let r1 = query(
+        &mut e,
+        "SELECT CHARINDEX('.', 'ab.cd')+1 AS idx, (10)-3 AS sub, -1 + 2 AS prec1, -1 * 3 AS prec2, -(1 + 2) AS prec3",
+    );
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(4));
+    assert_eq!(r1.rows[0][1].to_integer_i64(), Some(7));
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][3].to_integer_i64(), Some(-3));
+    assert_eq!(r1.rows[0][4].to_integer_i64(), Some(-3));
+
+    // Tight subtraction on function return value (GETDATE()-35)
+    let r2 = query(
+        &mut e,
+        "SELECT DATEDIFF(day, GETDATE()-35, GETDATE()) AS days_diff",
+    );
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(35));
+
+    // Unary plus on numbers and string concatenation ('a' + + 'b')
+    let r3 = query(&mut e, "SELECT +5 AS pos, 'a' + + 'b' AS cat");
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(5));
+    assert_eq!(r3.rows[0][1], Value::VarChar("ab".to_string()));
+
+    // Zero-width space / BOM treated as whitespace
+    let r4 = query(&mut e, "\u{FEFF}\u{200B}SELECT 42 AS v");
+    assert_eq!(r4.rows[0][0].to_integer_i64(), Some(42));
+}

@@ -56,7 +56,7 @@ pub(crate) fn eval_constant_expr(
     eval_expr(expr, &row, ctx, catalog, storage, clock)
 }
 
-const MAX_RECURSION_DEPTH: usize = 32;
+const MAX_RECURSION_DEPTH: usize = 256;
 
 #[inline]
 pub fn eval_expr(

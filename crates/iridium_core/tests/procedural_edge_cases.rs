@@ -535,3 +535,27 @@ fn procedural_multi_statement_tvf_with_identity_and_schemabinding() {
     assert_eq!(r.rows[1], vec![Value::Int(2), Value::Int(20)]);
     assert_eq!(r.rows[2], vec![Value::Int(3), Value::Int(30)]);
 }
+
+#[test]
+fn procedural_bare_return_before_end_and_deep_expression() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.fn_bare_return (@n INT)
+        RETURNS @out TABLE (val INT)
+        AS
+        BEGIN
+            INSERT @out VALUES (@n * 2)
+            RETURN
+        END",
+    );
+    let r = query(&mut e, "SELECT val FROM dbo.fn_bare_return(21)");
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(42));
+
+    let mut expr = String::from("1");
+    for _ in 0..45 {
+        expr.push_str(" + 1");
+    }
+    let r2 = query(&mut e, &format!("SELECT {expr}"));
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(46));
+}

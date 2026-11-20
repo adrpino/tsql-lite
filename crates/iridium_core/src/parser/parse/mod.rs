@@ -282,8 +282,40 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             Keyword::Return => {
                 let _ = parser.next();
                 let expr = if !parser.is_empty()
-                    && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
-                {
+                    && !matches!(
+                        parser.peek(),
+                        Some(Token::Semicolon)
+                            | Some(Token::Go)
+                            | Some(Token::Keyword(
+                                Keyword::End
+                                    | Keyword::Else
+                                    | Keyword::Select
+                                    | Keyword::Insert
+                                    | Keyword::Update
+                                    | Keyword::Delete
+                                    | Keyword::Declare
+                                    | Keyword::Set
+                                    | Keyword::If
+                                    | Keyword::While
+                                    | Keyword::Begin
+                                    | Keyword::Exec
+                                    | Keyword::Execute
+                                    | Keyword::Return
+                                    | Keyword::Break
+                                    | Keyword::Continue
+                                    | Keyword::Print
+                                    | Keyword::Throw
+                                    | Keyword::RaiseError
+                                    | Keyword::Commit
+                                    | Keyword::Rollback
+                                    | Keyword::Save
+                                    | Keyword::Create
+                                    | Keyword::Drop
+                                    | Keyword::Alter
+                                    | Keyword::Merge
+                                    | Keyword::With
+                            ))
+                    ) {
                     Some(parse_expr(parser)?)
                 } else {
                     None

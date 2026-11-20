@@ -340,7 +340,10 @@ fn test_unary_not() {
 fn test_double_negate() {
     let mut e = Engine::new();
     setup(&mut e);
-    let r = query(&mut e, "SELECT --val AS result FROM t WHERE name = 'Alice'");
+    let r = query(
+        &mut e,
+        "SELECT - -val AS result FROM t WHERE name = 'Alice'",
+    );
     assert_eq!(r.rows[0][0], Value::Int(10));
 }
 
@@ -595,4 +598,3 @@ fn test_between_in_case() {
     let r = query(&mut e, "SELECT CASE WHEN val BETWEEN 10 AND 15 THEN 'range1' WHEN val BETWEEN 20 AND 25 THEN 'range2' ELSE 'other' END AS result FROM t WHERE name = 'Charlie'");
     assert_eq!(r.rows[0][0], Value::VarChar("other".to_string()));
 }
-

@@ -84,28 +84,34 @@ fn parse_whitespace<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
 
 fn parse_comment(input: &mut &str) -> ModalResult<()> {
     if input.starts_with("--") {
-        let rest = &input[2..];
-        let next_is_ws = rest
-            .chars()
-            .next()
-            .map(|c| c.is_whitespace())
-            .unwrap_or(true);
-        if rest.is_empty() || next_is_ws {
-            *input = rest;
-            take_while(0.., |c| c != '\n').parse_next(input)?;
-            opt('\n').parse_next(input)?;
+        *input = &input[2..];
+        take_while(0.., |c| c != '\n').parse_next(input)?;
+        opt('\n').parse_next(input)?;
+        return Ok(());
+    }
+    if input.starts_with("/*") {
+        let bytes = input.as_bytes();
+        let mut i = 2;
+        let mut depth: usize = 1;
+        while i + 1 < bytes.len() && depth > 0 {
+            if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                depth += 1;
+                i += 2;
+            } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                depth -= 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+        if depth == 0 {
+            *input = &input[i..];
             return Ok(());
         }
     }
-    if input.starts_with("/*") {
-        ("/*", winnow::token::take_until(0.., "*/"), "*/")
-            .map(|_| ())
-            .parse_next(input)
-    } else {
-        Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        ))
-    }
+    Err(winnow::error::ErrMode::Backtrack(
+        winnow::error::ContextError::new(),
+    ))
 }
 
 fn parse_number(input: &mut &str) -> ModalResult<f64> {
@@ -303,4 +309,25 @@ pub fn unescape_quoted_identifier(s: &str) -> String {
         s_slice = &s_slice[..s_slice.len() - 1];
     }
     s_slice.replace("\"\"", "\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tsql_line_comments_without_trailing_whitespace() {
+        let mut input = "--no-space comment\n---separator\n--===banner===\nSELECT 1";
+        let tokens = lex(&mut input, true).expect("lex should succeed");
+        assert_eq!(tokens.len(), 2);
+        assert!(matches!(tokens[0], Token::Keyword(Keyword::Select)));
+    }
+
+    #[test]
+    fn test_tsql_nested_block_comments() {
+        let mut input = "/* outer /* inner */ still outer */ SELECT 1";
+        let tokens = lex(&mut input, true).expect("lex should succeed");
+        assert_eq!(tokens.len(), 2);
+        assert!(matches!(tokens[0], Token::Keyword(Keyword::Select)));
+    }
 }

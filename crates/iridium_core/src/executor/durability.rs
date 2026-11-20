@@ -42,6 +42,12 @@ where
 /// Writes checkpoints to durable storage.
 pub trait DurabilityWriter<C>: std::fmt::Debug + Send + Sync {
     fn persist_checkpoint(&mut self, checkpoint: &RecoveryCheckpoint<C>) -> Result<(), DbError>;
+
+    /// Returns true when `persist_checkpoint` is guaranteed to be a no-op so callers can
+    /// avoid allocating full catalog/storage snapshots that would immediately be discarded.
+    fn is_noop(&self) -> bool {
+        false
+    }
 }
 
 /// Reads the latest checkpoint from durable storage.
@@ -77,6 +83,10 @@ where
 {
     fn persist_checkpoint(&mut self, _checkpoint: &RecoveryCheckpoint<C>) -> Result<(), DbError> {
         Ok(())
+    }
+
+    fn is_noop(&self) -> bool {
+        true
     }
 }
 

@@ -58,10 +58,17 @@ where
     )?;
 
     let mut storage_guard = state.storage.write();
-    let before_catalog = storage_guard.catalog.clone();
-    let before_storage = storage_guard.storage.clone();
-    let before_versions = storage_guard.table_versions.clone();
-    let before_commit_ts = storage_guard.commit_ts;
+    let durability_active = !state.durability.lock().is_noop();
+    let rollback_snapshot = if durability_active {
+        Some((
+            storage_guard.catalog.clone(),
+            storage_guard.storage.clone(),
+            storage_guard.table_versions.clone(),
+            storage_guard.commit_ts,
+        ))
+    } else {
+        None
+    };
     let (cat, stor) = storage_guard.get_mut_refs();
     let mut script = create_script_executor(cat, stor, clock);
     let out = script.execute(stmt.clone(), ctx);
@@ -73,14 +80,20 @@ where
             let ts = storage_guard.commit_ts;
             storage_guard.table_versions.insert(table.clone(), ts);
         }
-        let checkpoint = state.to_checkpoint_internal(&storage_guard);
-        if let Err(e) = state.durability.lock().persist_checkpoint(&checkpoint) {
-            storage_guard.catalog = before_catalog;
-            storage_guard.storage = before_storage;
-            storage_guard.table_versions = before_versions;
-            storage_guard.commit_ts = before_commit_ts;
-            state.table_locks.lock().release_all_for_session(session_id);
-            return Err(e);
+        if durability_active {
+            let checkpoint = state.to_checkpoint_internal(&storage_guard);
+            if let Err(e) = state.durability.lock().persist_checkpoint(&checkpoint) {
+                if let Some((before_catalog, before_storage, before_versions, before_commit_ts)) =
+                    rollback_snapshot
+                {
+                    storage_guard.catalog = before_catalog;
+                    storage_guard.storage = before_storage;
+                    storage_guard.table_versions = before_versions;
+                    storage_guard.commit_ts = before_commit_ts;
+                }
+                state.table_locks.lock().release_all_for_session(session_id);
+                return Err(e);
+            }
         }
         let tx_id = state.allocate_tx_id();
         state.wal_auto_commit(tx_id);

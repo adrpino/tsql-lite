@@ -100,17 +100,19 @@ where
             }
 
             let next_commit_ts = storage_guard.commit_ts + 1;
-            let mut next_table_versions = storage_guard.table_versions.clone();
-            for table in &workspace.write_tables {
-                next_table_versions.insert(table.clone(), next_commit_ts);
+            if !state.durability.lock().is_noop() {
+                let mut next_table_versions = storage_guard.table_versions.clone();
+                for table in &workspace.write_tables {
+                    next_table_versions.insert(table.clone(), next_commit_ts);
+                }
+                let checkpoint = super::durability::RecoveryCheckpoint {
+                    catalog: workspace.catalog.clone(),
+                    storage_data: workspace.storage.get_checkpoint_data(),
+                    commit_ts: next_commit_ts,
+                    table_versions: next_table_versions,
+                };
+                state.durability.lock().persist_checkpoint(&checkpoint)?;
             }
-            let checkpoint = super::durability::RecoveryCheckpoint {
-                catalog: workspace.catalog.clone(),
-                storage_data: workspace.storage.get_checkpoint_data(),
-                commit_ts: next_commit_ts,
-                table_versions: next_table_versions.clone(),
-            };
-            state.durability.lock().persist_checkpoint(&checkpoint)?;
             state.wal_commit(tx_id);
 
             storage_guard.catalog = workspace.catalog.clone();

@@ -392,3 +392,37 @@ fn procedural_transactions_commit_rollback_savepoint_and_isolation_level() {
     let tc = query(&mut e, "SELECT @@TRANCOUNT");
     assert_eq!(tc.rows[0][0], Value::Int(0));
 }
+
+#[test]
+fn engine_checkpoint_deep_ast_and_fork_isolated() {
+    let e = Engine::new();
+    e.exec("CREATE TABLE dbo.items (id INT, val INT)").unwrap();
+    e.exec("INSERT INTO dbo.items VALUES (1, 10)").unwrap();
+
+    // Build a deeply nested binary expression (>128 JSON nesting levels) to exceed serde_json's default limit.
+    let mut expr = String::from("1");
+    for _ in 0..45 {
+        expr.push_str(" + 1");
+    }
+    let proc_sql = format!("CREATE PROCEDURE dbo.p_deep AS SELECT {expr} AS total");
+    e.exec(&proc_sql).unwrap();
+    e.exec("CREATE PROCEDURE dbo.p_ok AS SELECT 42 AS answer")
+        .unwrap();
+
+    let payload = e.export_checkpoint().unwrap();
+    let restored = Engine::from_checkpoint(&payload).unwrap();
+    let r = restored.query("EXEC dbo.p_ok").unwrap();
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(42));
+
+    let fork_a = e.fork_isolated();
+    let fork_b = e.fork_isolated();
+    fork_a
+        .exec("INSERT INTO dbo.items VALUES (2, 20)")
+        .unwrap();
+    let ra = fork_a.query("SELECT COUNT(*) FROM dbo.items").unwrap();
+    let rb = fork_b.query("SELECT COUNT(*) FROM dbo.items").unwrap();
+    let rp = e.query("SELECT COUNT(*) FROM dbo.items").unwrap();
+    assert_eq!(ra.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(rb.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(rp.rows[0][0].to_integer_i64(), Some(1));
+}

@@ -30,7 +30,9 @@ where
     }
 
     pub fn from_json(payload: &str) -> Result<Self, DbError> {
-        let mut cp: Self = serde_json::from_str(payload)
+        let mut de = serde_json::Deserializer::from_str(payload);
+        de.disable_recursion_limit();
+        let mut cp: Self = serde::Deserialize::deserialize(&mut de)
             .map_err(|e| DbError::Execution(format!("failed to decode checkpoint: {}", e)))?;
         cp.catalog.rebuild_maps();
         Ok(cp)

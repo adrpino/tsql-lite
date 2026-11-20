@@ -133,6 +133,21 @@ where
         })
     }
 
+    pub fn fork_isolated(&self) -> Self {
+        let guard = self.inner.storage.read();
+        let checkpoint = RecoveryCheckpoint {
+            catalog: guard.catalog.clone(),
+            storage_data: guard.storage.get_checkpoint_data(),
+            commit_ts: guard.commit_ts,
+            table_versions: guard.table_versions.clone(),
+        };
+        drop(guard);
+        let state = SharedState::from_checkpoint_internal(checkpoint);
+        Self {
+            inner: Arc::new(state),
+        }
+    }
+
     pub fn reset(&self) {
         let mut storage = self.inner.storage.write();
         let mut catalog = C::default();

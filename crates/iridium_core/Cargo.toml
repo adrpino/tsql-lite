@@ -12,7 +12,7 @@ exclude = ["check_output*.txt", "final_check.txt"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["unbounded_depth"] }
 bincode = { version = "2", features = ["serde"] }
 thiserror = "1"
 hex = "0.4"

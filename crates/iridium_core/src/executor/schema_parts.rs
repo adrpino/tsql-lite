@@ -253,7 +253,9 @@ pub(crate) fn create_view(executor: &mut SchemaExecutor<'_>, stmt: crate::ast::C
         schema,
         name: view_name,
         schema_id,
-        query: crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(query)),
+        query: std::sync::Arc::new(crate::ast::Statement::Dml(
+            crate::ast::DmlStatement::Select(query),
+        )),
         definition_sql: String::new(),
     };
     view.definition_sql = format_view_definition(&view);

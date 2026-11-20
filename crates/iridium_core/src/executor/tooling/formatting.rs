@@ -783,7 +783,7 @@ pub fn format_view_definition(view: &crate::catalog::ViewDef) -> String {
             schema: Some(view.schema.clone()),
             name: view.name.clone(),
         }),
-        match &view.query {
+        match view.query.as_ref() {
             Statement::Dml(crate::ast::DmlStatement::Select(select)) => format_select_stmt(select),
             other => format_statement(other),
         }

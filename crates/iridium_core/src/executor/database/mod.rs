@@ -237,6 +237,14 @@ impl Engine {
     pub fn new() -> Self {
         Self(EngineInner::new())
     }
+
+    pub fn from_checkpoint(payload: &str) -> Result<Self, DbError> {
+        Ok(Self(EngineInner::from_checkpoint(payload)?))
+    }
+
+    pub fn fork_isolated(&self) -> Self {
+        Self(self.0.fork_isolated())
+    }
 }
 impl Default for Engine {
     fn default() -> Self {

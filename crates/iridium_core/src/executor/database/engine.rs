@@ -60,6 +60,15 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
         })
     }
 
+    pub fn fork_isolated(&self) -> Self {
+        let db = self.db.fork_isolated();
+        let default_session = db.session_manager().create_session();
+        Self {
+            db,
+            default_session,
+        }
+    }
+
     pub fn reset(&self) {
         self.db.reset();
     }

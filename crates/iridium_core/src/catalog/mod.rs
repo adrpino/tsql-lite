@@ -111,10 +111,32 @@ impl TableDef {
 }
 
 #[allow(clippy::large_enum_variant)]
+mod serde_arc {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S, T>(value: &Arc<T>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Serialize,
+    {
+        value.as_ref().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        T::deserialize(deserializer).map(Arc::new)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RoutineKind {
     Procedure {
-        body: Vec<Statement>,
+        #[serde(with = "serde_arc")]
+        body: std::sync::Arc<Vec<Statement>>,
     },
     Function {
         returns: Option<DataTypeSpec>,
@@ -152,7 +174,8 @@ pub struct ViewDef {
     pub name: String,
     #[serde(default)]
     pub schema_id: u32,
-    pub query: Statement, // Should be Statement::Select
+    #[serde(with = "serde_arc")]
+    pub query: std::sync::Arc<Statement>, // Should be Statement::Select
     #[serde(default)]
     pub definition_sql: String,
 }
@@ -167,7 +190,8 @@ pub struct TriggerDef {
     pub table_name: String,
     pub events: Vec<TriggerEvent>,
     pub is_instead_of: bool,
-    pub body: Vec<Statement>,
+    #[serde(with = "serde_arc")]
+    pub body: std::sync::Arc<Vec<Statement>>,
     #[serde(default)]
     pub definition_sql: String,
 }

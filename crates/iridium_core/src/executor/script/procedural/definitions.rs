@@ -14,7 +14,9 @@ impl<'a> ScriptExecutor<'a> {
             schema,
             name: stmt.name.name,
             params: stmt.params,
-            kind: crate::catalog::RoutineKind::Procedure { body: stmt.body },
+            kind: crate::catalog::RoutineKind::Procedure {
+                body: std::sync::Arc::new(stmt.body),
+            },
             definition_sql: String::new(),
         };
         routine.definition_sql = format_routine_definition(&routine);
@@ -64,7 +66,7 @@ impl<'a> ScriptExecutor<'a> {
             table_name: stmt.table.name,
             events: stmt.events,
             is_instead_of: stmt.is_instead_of,
-            body: stmt.body,
+            body: std::sync::Arc::new(stmt.body),
             definition_sql: String::new(),
         };
         trigger.definition_sql = format_trigger_definition(&trigger);

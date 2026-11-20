@@ -32,8 +32,8 @@ pub(super) fn bind_view(
         return Ok(None);
     };
 
-    let view_query = match view.query {
-        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => s,
+    let view_query = match view.query.as_ref() {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => s.clone(),
         _ => return Err(DbError::Execution("view query must be SELECT".into())),
     };
 

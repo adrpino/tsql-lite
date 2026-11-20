@@ -347,6 +347,45 @@ fn test_double_negate() {
     assert_eq!(r.rows[0][0], Value::Int(10));
 }
 
+#[test]
+fn test_uniqueidentifier_and_datetime_string_comparisons() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.guids (id INT, g UNIQUEIDENTIFIER)",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO dbo.guids VALUES (1, '11111111-1111-1111-1111-111111111111'), (2, '22222222-2222-2222-2222-222222222222')",
+    );
+    let r_eq = query(
+        &mut e,
+        "SELECT id FROM dbo.guids WHERE g = CAST('11111111-1111-1111-1111-111111111111' AS UNIQUEIDENTIFIER)",
+    );
+    assert_eq!(r_eq.rows.len(), 1);
+    assert_eq!(r_eq.rows[0][0], Value::Int(1));
+
+    let r_neq = query(
+        &mut e,
+        "SELECT id FROM dbo.guids WHERE g <> CAST('11111111-1111-1111-1111-111111111111' AS UNIQUEIDENTIFIER)",
+    );
+    assert_eq!(r_neq.rows.len(), 1);
+    assert_eq!(r_neq.rows[0][0], Value::Int(2));
+
+    let r_str = query(
+        &mut e,
+        "SELECT id FROM dbo.guids WHERE g = '22222222-2222-2222-2222-222222222222'",
+    );
+    assert_eq!(r_str.rows.len(), 1);
+    assert_eq!(r_str.rows[0][0], Value::Int(2));
+
+    let r_dt = query(
+        &mut e,
+        "SELECT CASE WHEN CAST('2026-04-01 00:00:00' AS DATETIME) = '2026-04-01' THEN 1 ELSE 0 END",
+    );
+    assert_eq!(r_dt.rows[0][0], Value::Int(1));
+}
+
 // ─── String concatenation with + ──────────────────────────────────────
 
 #[test]

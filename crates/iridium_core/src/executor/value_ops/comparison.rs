@@ -118,12 +118,57 @@ pub fn compare_values(a: &Value, b: &Value) -> Ordering {
             }
         }
 
-        (ValueCategory::DateTime, ValueCategory::String)
-        | (ValueCategory::String, ValueCategory::DateTime) => {
-            a.to_string_value().cmp(&b.to_string_value())
+        (ValueCategory::DateTime, ValueCategory::String) => {
+            if let (Some(da), Ok(db)) = (
+                normalize_datetime(&a),
+                super::formatting::parse_datetime_string(&extract_string(&b), "mdy"),
+            ) {
+                da.cmp(&db)
+            } else {
+                a.to_string_value().cmp(&b.to_string_value())
+            }
         }
 
-        (ValueCategory::Uuid, ValueCategory::Uuid) => extract_string(&a).cmp(&extract_string(&b)),
+        (ValueCategory::String, ValueCategory::DateTime) => {
+            if let (Ok(da), Some(db)) = (
+                super::formatting::parse_datetime_string(&extract_string(&a), "mdy"),
+                normalize_datetime(&b),
+            ) {
+                da.cmp(&db)
+            } else {
+                a.to_string_value().cmp(&b.to_string_value())
+            }
+        }
+
+        (ValueCategory::Uuid, ValueCategory::Uuid) => match (&a, &b) {
+            (Value::UniqueIdentifier(ua), Value::UniqueIdentifier(ub)) => ua.cmp(ub),
+            _ => extract_string(&a).cmp(&extract_string(&b)),
+        },
+
+        (ValueCategory::Uuid, ValueCategory::String) => {
+            if let (Value::UniqueIdentifier(ua), Ok(ub)) =
+                (&a, uuid::Uuid::parse_str(extract_string(&b).trim()))
+            {
+                ua.cmp(&ub)
+            } else {
+                extract_string(&a)
+                    .to_ascii_lowercase()
+                    .cmp(&extract_string(&b).trim().to_ascii_lowercase())
+            }
+        }
+
+        (ValueCategory::String, ValueCategory::Uuid) => {
+            if let (Ok(ua), Value::UniqueIdentifier(ub)) =
+                (uuid::Uuid::parse_str(extract_string(&a).trim()), &b)
+            {
+                ua.cmp(ub)
+            } else {
+                extract_string(&a)
+                    .trim()
+                    .to_ascii_lowercase()
+                    .cmp(&extract_string(&b).to_ascii_lowercase())
+            }
+        }
 
         (ValueCategory::Binary, ValueCategory::Binary) => extract_bytes(&a).cmp(extract_bytes(&b)),
         (ValueCategory::Vector, ValueCategory::Vector) => {
@@ -218,6 +263,7 @@ fn extract_string(v: &Value) -> String {
             dt.format("%Y-%m-%d %H:%M:%S%.f").to_string()
         }
         Value::DateTimeOffset(s) => s.clone(),
+        Value::UniqueIdentifier(u) => u.to_string(),
         _ => String::new(),
     }
 }

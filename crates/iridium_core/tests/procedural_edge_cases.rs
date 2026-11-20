@@ -613,3 +613,72 @@ fn procedural_execute_batch_all_results_captures_multiple_result_sets() {
         vec![Value::Int(10), Value::Int(20), Value::Int(30)]
     );
 }
+
+#[test]
+fn procedural_temp_unaliased_join_return_after_select_and_declare_hoisting() {
+    let mut e = Engine::new();
+    exec(&mut e, "CREATE TABLE dbo.items (id INT, name VARCHAR(20))");
+    exec(&mut e, "INSERT INTO dbo.items VALUES (1, 'alpha'), (2, 'beta')");
+
+    // 1. Unaliased #temp table referenced as #ids.id in JOIN ON
+    exec(
+        &mut e,
+        "BEGIN
+            SELECT id INTO #ids FROM dbo.items WHERE id = 1;
+        END",
+    );
+    let r_join = query(
+        &mut e,
+        "SELECT i.name FROM dbo.items i JOIN #ids ON i.id = #ids.id",
+    );
+    assert_eq!(r_join.rows.len(), 1);
+    assert_eq!(r_join.rows[0][0], Value::VarChar("alpha".to_string()));
+
+    // 2. SELECT followed by early RETURN inside IF, captured via INSERT ... EXEC
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_early_return @mode INT
+        AS
+        BEGIN
+            IF @mode = 1
+            BEGIN
+                SELECT 99 AS code, 'EARLY' AS status;
+                RETURN;
+            END
+            IF @mode = 0
+            BEGIN
+                RETURN;
+            END
+            SELECT 1 AS code, 'NORMAL' AS status;
+        END",
+    );
+    exec(&mut e, "CREATE TABLE #out (code INT, status VARCHAR(20))");
+    exec(&mut e, "INSERT INTO #out EXEC dbo.p_early_return @mode = 1");
+    exec(&mut e, "INSERT INTO #out EXEC dbo.p_early_return @mode = 0");
+    let r_out = query(&mut e, "SELECT code, status FROM #out");
+    assert_eq!(r_out.rows.len(), 1);
+    assert_eq!(
+        r_out.rows[0],
+        vec![Value::Int(99), Value::VarChar("EARLY".to_string())]
+    );
+
+    // 3. DECLARE inside an untaken IF branch is still in scope across the procedure
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_hoisted @flag INT
+        AS
+        BEGIN
+            IF @flag = 1
+            BEGIN
+                DECLARE @msg VARCHAR(50) = 'branch1';
+            END
+            ELSE
+            BEGIN
+                SET @msg = 'branch2';
+            END
+            SELECT @msg AS res;
+        END",
+    );
+    let r_hoist = query(&mut e, "EXEC dbo.p_hoisted @flag = 2");
+    assert_eq!(r_hoist.rows[0][0], Value::VarChar("branch2".to_string()));
+}

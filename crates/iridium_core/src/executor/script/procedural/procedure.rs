@@ -11,6 +11,41 @@ use crate::executor::result::QueryResult;
 use crate::executor::value_ops::coerce_value_to_type_with_dateformat;
 use crate::types::Value;
 
+fn hoist_procedure_declares(stmts: &[crate::ast::Statement], ctx: &mut ExecutionContext<'_>) {
+    use crate::ast::{ProceduralStatement, Statement};
+    for stmt in stmts {
+        match stmt {
+            Statement::Procedural(ProceduralStatement::Declare(decl)) => {
+                if decl.custom_type.is_none() && ctx.session.get_var(&decl.name).is_none() {
+                    let ty =
+                        crate::executor::type_mapping::data_type_spec_to_runtime(&decl.data_type);
+                    ctx.session
+                        .variables
+                        .insert(decl.name.clone(), (ty, Value::Null));
+                    ctx.register_declared_var(&decl.name);
+                }
+            }
+            Statement::Procedural(ProceduralStatement::BeginEnd(inner)) => {
+                hoist_procedure_declares(inner, ctx);
+            }
+            Statement::Procedural(ProceduralStatement::If(if_stmt)) => {
+                hoist_procedure_declares(&if_stmt.then_body, ctx);
+                if let Some(ref else_b) = if_stmt.else_body {
+                    hoist_procedure_declares(else_b, ctx);
+                }
+            }
+            Statement::Procedural(ProceduralStatement::While(w)) => {
+                hoist_procedure_declares(&w.body, ctx);
+            }
+            Statement::Procedural(ProceduralStatement::TryCatch(tc)) => {
+                hoist_procedure_declares(&tc.try_body, ctx);
+                hoist_procedure_declares(&tc.catch_body, ctx);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_procedure(
         &mut self,
@@ -305,7 +340,11 @@ impl<'a> ScriptExecutor<'a> {
                 }
             }
 
+            hoist_procedure_declares(&body, ctx);
+            let saved_last_proc_result = ctx.frame.last_proc_result.take();
             let proc_result = self.execute_batch(&body, ctx);
+            let captured_proc_result = ctx.frame.last_proc_result.take();
+            ctx.frame.last_proc_result = saved_last_proc_result;
             let mut out_values: Vec<(String, Value)> = vec![];
             for (inner_name, caller_var) in &output_bindings {
                 if let Some((_, v)) = ctx.session.get_var(inner_name) {
@@ -333,11 +372,15 @@ impl<'a> ScriptExecutor<'a> {
             }
 
             let (result, return_value) = match proc_result {
-                Ok(crate::error::StmtOutcome::Return(v)) => (None, procedure_return_value(v)),
-                Ok(crate::error::StmtOutcome::Break) | Ok(crate::error::StmtOutcome::Continue) => {
-                    (None, Value::Int(0))
+                Ok(crate::error::StmtOutcome::Return(v)) => {
+                    (captured_proc_result, procedure_return_value(v))
                 }
-                Ok(crate::error::StmtOutcome::Ok(r)) => (r, Value::Int(0)),
+                Ok(crate::error::StmtOutcome::Break) | Ok(crate::error::StmtOutcome::Continue) => {
+                    (captured_proc_result, Value::Int(0))
+                }
+                Ok(crate::error::StmtOutcome::Ok(r)) => {
+                    (r.or(captured_proc_result), Value::Int(0))
+                }
                 Err(e) => return Err(e),
             };
             self.assign_exec_return_value(&stmt.return_variable, return_value.clone(), ctx)?;

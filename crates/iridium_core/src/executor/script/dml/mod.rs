@@ -93,6 +93,7 @@ impl<'a> ScriptExecutor<'a> {
         .execute_select(RelationalQuery::from(stmt), ctx)?;
 
         if into_table.is_none() && !result.columns.is_empty() {
+            ctx.frame.last_proc_result = Some(result.clone());
             if let Some(ref sink) = ctx.frame.result_set_sink {
                 sink.lock().push(result.clone());
             }

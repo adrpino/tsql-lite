@@ -106,6 +106,9 @@ impl<'a> MutationExecutor<'a> {
         ctx: &mut ExecutionContext<'_>,
         rowcount_limit: Option<usize>,
     ) -> Result<Vec<StoredRow>, DbError> {
+        if query_result.columns.is_empty() && query_result.rows.is_empty() {
+            return Ok(Vec::new());
+        }
         if insert_columns.len() != query_result.columns.len() {
             return Err(DbError::Execution(format!(
                 "insert column count ({}) does not match source column count ({})",

@@ -102,6 +102,9 @@ pub(super) fn bind_plain_table(
     ) {
         match &mut tref.factor {
             TableFactor::Named(o) => {
+                if tref.alias.is_none() {
+                    tref.alias = Some(o.name.clone());
+                }
                 o.name = mapped;
             }
             TableFactor::Derived(_) => {}

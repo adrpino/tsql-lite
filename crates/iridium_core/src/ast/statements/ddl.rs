@@ -41,6 +41,8 @@ pub struct DropSequenceStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropTableStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +70,8 @@ pub enum IndexOptionSpec {
 pub struct DropIndexStmt {
     pub name: ObjectName,
     pub table: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +82,8 @@ pub struct CreateSchemaStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropSchemaStmt {
     pub name: String,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +120,8 @@ pub struct CreateViewStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropViewStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +134,8 @@ pub struct CreateTypeStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropTypeStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

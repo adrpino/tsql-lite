@@ -7,6 +7,25 @@ use crate::executor::result::QueryResult;
 
 mod temp_table;
 
+fn ignore_missing_if_exists(res: Result<(), DbError>, if_exists: bool) -> Result<(), DbError> {
+    if !if_exists {
+        return res;
+    }
+    match res {
+        Ok(()) => Ok(()),
+        Err(
+            DbError::TableNotFound { .. }
+            | DbError::ObjectNotFound { .. }
+            | DbError::ViewNotFound { .. }
+            | DbError::TriggerNotFound { .. }
+            | DbError::SchemaNotFound { .. }
+            | DbError::IndexNotFound { .. }
+            | DbError::TypeNotFound { .. },
+        ) => Ok(()),
+        Err(other) => Err(other),
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_ddl(
         &mut self,
@@ -22,7 +41,8 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(None)
             }
             DdlStatement::DropType(stmt) => {
-                self.schema(ctx).drop_type(stmt)?;
+                let if_exists = stmt.if_exists;
+                ignore_missing_if_exists(self.schema(ctx).drop_type(stmt), if_exists)?;
                 Ok(None)
             }
             DdlStatement::CreateIndex(stmt) => {
@@ -30,7 +50,8 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(None)
             }
             DdlStatement::DropIndex(stmt) => {
-                self.schema(ctx).drop_index(stmt)?;
+                let if_exists = stmt.if_exists;
+                ignore_missing_if_exists(self.schema(ctx).drop_index(stmt), if_exists)?;
                 Ok(None)
             }
             DdlStatement::CreateSchema(stmt) => {
@@ -38,22 +59,32 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(None)
             }
             DdlStatement::DropSchema(stmt) => {
-                self.schema(ctx).drop_schema(stmt)?;
+                let if_exists = stmt.if_exists;
+                ignore_missing_if_exists(self.schema(ctx).drop_schema(stmt), if_exists)?;
                 Ok(None)
             }
             DdlStatement::DropProcedure(stmt) => {
                 let schema = stmt.name.schema_or_dbo().to_string();
-                self.catalog.drop_routine(&schema, &stmt.name.name, false)?;
+                ignore_missing_if_exists(
+                    self.catalog.drop_routine(&schema, &stmt.name.name, false),
+                    stmt.if_exists,
+                )?;
                 Ok(None)
             }
             DdlStatement::DropFunction(stmt) => {
                 let schema = stmt.name.schema_or_dbo().to_string();
-                self.catalog.drop_routine(&schema, &stmt.name.name, true)?;
+                ignore_missing_if_exists(
+                    self.catalog.drop_routine(&schema, &stmt.name.name, true),
+                    stmt.if_exists,
+                )?;
                 Ok(None)
             }
             DdlStatement::DropTrigger(stmt) => {
                 let schema = stmt.name.schema_or_dbo().to_string();
-                self.catalog.drop_trigger(&schema, &stmt.name.name)?;
+                ignore_missing_if_exists(
+                    self.catalog.drop_trigger(&schema, &stmt.name.name),
+                    stmt.if_exists,
+                )?;
                 Ok(None)
             }
             DdlStatement::TruncateTable(stmt) => self.execute_truncate_table(stmt, ctx),
@@ -83,7 +114,8 @@ impl<'a> ScriptExecutor<'a> {
         stmt: crate::ast::DropViewStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
-        self.schema(ctx).drop_view(stmt)?;
+        let if_exists = stmt.if_exists;
+        ignore_missing_if_exists(self.schema(ctx).drop_view(stmt), if_exists)?;
         Ok(None)
     }
 
@@ -102,8 +134,9 @@ impl<'a> ScriptExecutor<'a> {
         mut stmt: DropTableStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
+        let if_exists = stmt.if_exists;
         temp_table::resolve_drop_table_name(&mut stmt, ctx);
-        self.schema(ctx).drop_table(stmt)?;
+        ignore_missing_if_exists(self.schema(ctx).drop_table(stmt), if_exists)?;
         Ok(None)
     }
 

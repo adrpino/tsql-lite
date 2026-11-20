@@ -45,17 +45,39 @@ pub enum DdlStatement {
         action: AlterTableAction,
     },
     TruncateTable(Vec<String>),
-    DropTable(Vec<String>),
-    DropView(Vec<String>),
-    DropProcedure(Vec<String>),
-    DropFunction(Vec<String>),
-    DropTrigger(Vec<String>),
+    DropTable {
+        name: Vec<String>,
+        if_exists: bool,
+    },
+    DropView {
+        name: Vec<String>,
+        if_exists: bool,
+    },
+    DropProcedure {
+        name: Vec<String>,
+        if_exists: bool,
+    },
+    DropFunction {
+        name: Vec<String>,
+        if_exists: bool,
+    },
+    DropTrigger {
+        name: Vec<String>,
+        if_exists: bool,
+    },
     DropIndex {
         name: Vec<String>,
         table: Vec<String>,
+        if_exists: bool,
     },
-    DropType(Vec<String>),
-    DropSchema(String),
+    DropType {
+        name: Vec<String>,
+        if_exists: bool,
+    },
+    DropSchema {
+        name: String,
+        if_exists: bool,
+    },
     CreateSynonym {
         name: Vec<String>,
         base_object: Vec<String>,

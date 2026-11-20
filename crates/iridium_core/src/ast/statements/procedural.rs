@@ -81,6 +81,8 @@ pub struct CreateProcedureStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropProcedureStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -102,6 +104,8 @@ pub struct CreateFunctionStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropFunctionStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +190,8 @@ pub struct CreateTriggerStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropTriggerStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

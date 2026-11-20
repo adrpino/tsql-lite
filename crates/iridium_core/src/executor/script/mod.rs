@@ -69,6 +69,7 @@ impl<'a> ScriptExecutor<'a> {
                     schema: Some(table.schema_name),
                     name: physical,
                 },
+                if_exists: false,
             })?;
         }
         Ok(())

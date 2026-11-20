@@ -23,59 +23,70 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                 },
             ),
         )),
-        ast::DdlStatement::DropTable(table) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropTable { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropTable(
                 executor_ast::statements::ddl::DropTableStmt {
-                    name: lower_object_name(table),
+                    name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropView(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropView { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropView(
                 executor_ast::statements::ddl::DropViewStmt {
                     name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropProcedure(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropProcedure { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropProcedure(
                 executor_ast::statements::procedural::DropProcedureStmt {
                     name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropFunction(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropFunction { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropFunction(
                 executor_ast::statements::procedural::DropFunctionStmt {
                     name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropTrigger(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropTrigger { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropTrigger(
                 executor_ast::statements::procedural::DropTriggerStmt {
                     name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropIndex { name, table } => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropIndex {
+            name,
+            table,
+            if_exists,
+        } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropIndex(
                 executor_ast::statements::ddl::DropIndexStmt {
                     name: lower_object_name(name),
                     table: lower_object_name(table),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropType(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropType { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropType(
                 executor_ast::statements::ddl::DropTypeStmt {
                     name: lower_object_name(name),
+                    if_exists,
                 },
             ),
         )),
-        ast::DdlStatement::DropSchema(name) => Ok(executor_ast::Statement::Ddl(
+        ast::DdlStatement::DropSchema { name, if_exists } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::DropSchema(
-                executor_ast::statements::ddl::DropSchemaStmt { name },
+                executor_ast::statements::ddl::DropSchemaStmt { name, if_exists },
             ),
         )),
         ast::DdlStatement::CreateIndex(stmt) => Ok(executor_ast::Statement::Ddl(
@@ -315,9 +326,7 @@ pub fn lower_column_def(
     })
 }
 
-pub fn lower_index_column(
-    c: ast::IndexColumn,
-) -> executor_ast::statements::ddl::IndexColumnSpec {
+pub fn lower_index_column(c: ast::IndexColumn) -> executor_ast::statements::ddl::IndexColumnSpec {
     executor_ast::statements::ddl::IndexColumnSpec {
         name: c.name,
         is_desc: c.is_desc,
@@ -414,13 +423,11 @@ pub fn lower_table_constraint(
             name,
             columns,
             is_clustered,
-        } => Ok(
-            executor_ast::statements::ddl::TableConstraintSpec::Unique {
-                name: name.unwrap_or_default(),
-                columns: columns.into_iter().map(lower_index_column).collect(),
-                is_clustered,
-            },
-        ),
+        } => Ok(executor_ast::statements::ddl::TableConstraintSpec::Unique {
+            name: name.unwrap_or_default(),
+            columns: columns.into_iter().map(lower_index_column).collect(),
+            is_clustered,
+        }),
         ast::TableConstraint::ForeignKey {
             name,
             columns,

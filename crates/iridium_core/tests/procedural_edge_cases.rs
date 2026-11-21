@@ -1792,7 +1792,8 @@ fn bare_throw_nullable_param_insert_exec_rc_alter_proc_toggle_trigger_default_pk
 }
 
 #[test]
-fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_trunc_and_like_classes() {
+fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_trunc_and_like_classes(
+) {
     let mut e = Engine::new();
 
     // 1. NULLIF uses SQL equality (NVARCHAR vs VARCHAR, trailing spaces)
@@ -1804,7 +1805,10 @@ fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_t
     assert_eq!(r1.rows[0][1].to_string_value(), "fallback2");
 
     // 2. STUFF returns NULL when start <= 0 or start > len(str)
-    let r2 = query(&mut e, "SELECT STUFF('', 1, 2, ''), STUFF('ab', 5, 1, 'x'), STUFF('abcd', 1, 2, '')");
+    let r2 = query(
+        &mut e,
+        "SELECT STUFF('', 1, 2, ''), STUFF('ab', 5, 1, 'x'), STUFF('abcd', 1, 2, '')",
+    );
     assert!(r2.rows[0][0].is_null());
     assert!(r2.rows[0][1].is_null());
     assert_eq!(r2.rows[0][2].to_string_value(), "cd");
@@ -1859,7 +1863,8 @@ fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_t
 }
 
 #[test]
-fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_var_8672_group_window_and_empty_agg_col() {
+fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_var_8672_group_window_and_empty_agg_col(
+) {
     let mut e = Engine::new();
 
     // 1. FK NOCHECK/CHECK CONSTRAINT + ON DELETE SET NULL
@@ -1871,7 +1876,10 @@ fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_va
     exec(&mut e, "ALTER TABLE dbo.p_child NOCHECK CONSTRAINT ALL");
     exec(&mut e, "INSERT INTO dbo.p_child VALUES (1, 999)");
     exec(&mut e, "DELETE FROM dbo.p_child");
-    exec(&mut e, "ALTER TABLE dbo.p_child CHECK CONSTRAINT FK_p_child_parent");
+    exec(
+        &mut e,
+        "ALTER TABLE dbo.p_child CHECK CONSTRAINT FK_p_child_parent",
+    );
     exec(&mut e, "INSERT INTO dbo.p_parent VALUES (10)");
     exec(&mut e, "INSERT INTO dbo.p_child VALUES (1, 10)");
     exec(&mut e, "DELETE FROM dbo.p_parent WHERE id = 10");
@@ -1880,7 +1888,10 @@ fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_va
 
     // 2. RECURSIVE_TRIGGERS OFF prevents infinite direct recursion
     e.set_recursive_triggers(false);
-    exec(&mut e, "CREATE TABLE dbo.t_self (id INT, status INT, is_active BIT)");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_self (id INT, status INT, is_active BIT)",
+    );
     exec(
         &mut e,
         "CREATE TRIGGER dbo.trg_t_self ON dbo.t_self AFTER UPDATE AS
@@ -1956,16 +1967,22 @@ fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_va
 
     // 7. Empty-table aggregate query validates nonexistent column name
     exec(&mut e, "CREATE TABLE dbo.t_empty (id INT)");
-    assert!(e.exec("SELECT COUNT(*), MIN(no_such_col) FROM dbo.t_empty").is_err());
+    assert!(e
+        .exec("SELECT COUNT(*), MIN(no_such_col) FROM dbo.t_empty")
+        .is_err());
 }
 
 #[test]
-fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromparts_cast_trunc_currency_commas_charindex_ci_error_number_coalesce_and_bare_exec_arg() {
+fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromparts_cast_trunc_currency_commas_charindex_ci_error_number_coalesce_and_bare_exec_arg(
+) {
     let mut e = Engine::new();
 
     // 1. GROUP BY + SUM() + ROW_NUMBER() OVER (...) in the same SELECT
     exec(&mut e, "CREATE TABLE #sales (grp VARCHAR(10), amt INT)");
-    exec(&mut e, "INSERT INTO #sales VALUES ('B', 10), ('B', 5), ('A', 20)");
+    exec(
+        &mut e,
+        "INSERT INTO #sales VALUES ('B', 10), ('B', 5), ('A', 20)",
+    );
     let r1 = query(
         &mut e,
         "SELECT grp, SUM(amt) AS total, ROW_NUMBER() OVER (ORDER BY grp) AS rn FROM #sales GROUP BY grp ORDER BY grp",
@@ -1979,7 +1996,10 @@ fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromp
     assert_eq!(r1.rows[1][2].to_integer_i64(), Some(2));
 
     // 2. SELECT INTO widens inferred VARCHAR column so later UPDATE with longer string succeeds
-    exec(&mut e, "SELECT CAST(123 AS VARCHAR(50)) AS code INTO #tmp_w");
+    exec(
+        &mut e,
+        "SELECT CAST(123 AS VARCHAR(50)) AS code INTO #tmp_w",
+    );
     exec(&mut e, "UPDATE #tmp_w SET code = '0000001234'");
     let r2 = query(&mut e, "SELECT code FROM #tmp_w");
     assert_eq!(r2.rows[0][0].to_string_value(), "0000001234");
@@ -2003,7 +2023,10 @@ fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromp
     assert_eq!(r4.rows[0][3].to_integer_i64(), Some(1));
 
     // 5. ERROR_NUMBER() returns 547 on CHECK constraint violation
-    exec(&mut e, "CREATE TABLE dbo.t_chk (x INT, CONSTRAINT CK_t_chk CHECK (x <> 42))");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_chk (x INT, CONSTRAINT CK_t_chk CHECK (x <> 42))",
+    );
     exec(&mut e, "DECLARE @err INT = 0");
     exec(
         &mut e,
@@ -2019,7 +2042,10 @@ fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromp
     assert_eq!(r6.rows[0][0].to_integer_i64(), Some(0));
 
     // 7. Bare unquoted word argument in EXEC proc
-    exec(&mut e, "CREATE PROCEDURE dbo.p_kind (@k VARCHAR(10)) AS BEGIN SELECT @k AS k; END");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_kind (@k VARCHAR(10)) AS BEGIN SELECT @k AS k; END",
+    );
     let r7 = query(&mut e, "EXEC ('dbo.p_kind FRT')");
     assert_eq!(r7.rows[0][0].to_string_value(), "FRT");
 
@@ -2169,7 +2195,10 @@ fn tsql_statement_and_lexer_extensions() {
              label VARCHAR(50) INDEX IX_inline_label
          );",
     );
-    exec(&mut e, "INSERT INTO #inline_ix (code, label) VALUES ('A1', 'first');");
+    exec(
+        &mut e,
+        "INSERT INTO #inline_ix (code, label) VALUES ('A1', 'first');",
+    );
     let r10 = query(&mut e, "SELECT code, label FROM #inline_ix");
     assert_eq!(r10.rows[0][0].to_string_value(), "A1");
 }
@@ -2234,7 +2263,11 @@ fn tsql_query_grammar_extensions() {
          FROM (SELECT CAST('<M>x</M>' AS XML) AS doc) AS A
          CROSS APPLY doc.nodes('/M') AS Split(a);",
     );
-    assert!(p4.is_ok(), "CROSS APPLY col.nodes('/M') AS Split(a) should parse: {:?}", p4.err());
+    assert!(
+        p4.is_ok(),
+        "CROSS APPLY col.nodes('/M') AS Split(a) should parse: {:?}",
+        p4.err()
+    );
 
     // 5. OPENJSON(...) WITH ([value] NVARCHAR(50) '$.Name', Amt INT '$.Amt') alias (parse + execute)
     let r5 = query(
@@ -2254,7 +2287,11 @@ fn tsql_query_grammar_extensions() {
     let p6 = iridium_core::parse_batch(
         "SELECT a, b, SUM(v) FROM dbo.sales GROUP BY GROUPING SETS ((a, b), (a), ());",
     );
-    assert!(p6.is_ok(), "GROUP BY GROUPING SETS should parse: {:?}", p6.err());
+    assert!(
+        p6.is_ok(),
+        "GROUP BY GROUPING SETS should parse: {:?}",
+        p6.err()
+    );
 
     // 7. Qualified column references inside PIVOT
     exec_batch(
@@ -2292,4 +2329,28 @@ fn tsql_query_grammar_extensions() {
     let r8 = query(&mut e, "SELECT COUNT(*), MAX(hits) FROM dbo.t_merge_comp");
     assert_eq!(r8.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r8.rows[0][1].to_integer_i64(), Some(2));
+}
+
+#[test]
+fn scalar_udf_preserves_caller_variables_with_same_name() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.ufn_inner(@x INT) RETURNS INT AS BEGIN RETURN @x + 1; END;",
+    );
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.ufn_outer(@x INT) RETURNS INT AS BEGIN RETURN dbo.ufn_inner(@x) + @x; END;",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_caller @x INT AS
+         BEGIN
+             DECLARE @r INT = dbo.ufn_outer(@x);
+             SELECT @x AS CallerX, @r AS Result;
+         END;",
+    );
+    let r = query(&mut e, "EXEC dbo.usp_caller @x = 10;");
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(10));
+    assert_eq!(r.rows[0][1].to_integer_i64(), Some(21));
 }

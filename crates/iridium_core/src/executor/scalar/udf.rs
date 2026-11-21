@@ -47,30 +47,44 @@ pub(crate) fn eval_user_scalar_function(
         )));
     }
 
+    // Evaluate all argument expressions in the caller's variable scope before switching
+    // to an isolated function scope (so same-named parameters cannot shadow or clobber
+    // caller variables or earlier arguments).
+    let mut evaluated_params = Vec::with_capacity(routine.params.len());
+    for (param, arg_expr) in routine.params.iter().zip(args.iter()) {
+        let RoutineParamType::Scalar(dt) = &param.param_type else {
+            return Err(DbError::Execution(format!(
+                "function '{}' has unsupported non-scalar parameter '{}'",
+                name, param.name
+            )));
+        };
+        let val = eval_expr(arg_expr, row, ctx, catalog, storage, clock)?;
+        let ty = type_mapping::data_type_spec_to_runtime(dt);
+        let coerced =
+            value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
+        evaluated_params.push((param.name.clone(), ty, coerced));
+    }
+
     ctx.push_module(ModuleFrame {
         object_id: routine.object_id,
         schema: routine.schema.clone(),
         name: routine.name.clone(),
         kind: ModuleKind::Function,
     });
+    let saved_caller_vars = std::mem::take(ctx.session.variables);
+    for (k, v) in &saved_caller_vars {
+        if k.starts_with("@@") {
+            ctx.session.variables.insert(k.clone(), v.clone());
+        }
+    }
     let scope_depth = ctx.frame.scope_vars.len();
     let out = (|| {
         ctx.enter_scope();
-        for (param, arg_expr) in routine.params.iter().zip(args.iter()) {
-            let RoutineParamType::Scalar(dt) = &param.param_type else {
-                return Err(DbError::Execution(format!(
-                    "function '{}' has unsupported non-scalar parameter '{}'",
-                    name, param.name
-                )));
-            };
-            let val = eval_expr(arg_expr, row, ctx, catalog, storage, clock)?;
-            let ty = type_mapping::data_type_spec_to_runtime(dt);
-            let coerced =
-                value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
+        for (param_name, ty, coerced) in evaluated_params {
             ctx.session
                 .variables
-                .insert(param.name.clone(), (ty, coerced));
-            ctx.register_declared_var(&param.name);
+                .insert(param_name.clone(), (ty, coerced));
+            ctx.register_declared_var(&param_name);
         }
         let out = match body {
             FunctionBody::ScalarReturn(expr) => eval_expr(expr, row, ctx, catalog, storage, clock),
@@ -79,12 +93,10 @@ pub(crate) fn eval_user_scalar_function(
             }
             FunctionBody::InlineTable(_)
             | FunctionBody::InlineTableWithCte(_)
-            | FunctionBody::MultiStatementTable { .. } => {
-                Err(DbError::Execution(format!(
-                    "table-valued function '{}' cannot be used in scalar context",
-                    name
-                )))
-            }
+            | FunctionBody::MultiStatementTable { .. } => Err(DbError::Execution(format!(
+                "table-valued function '{}' cannot be used in scalar context",
+                name
+            ))),
         };
         ctx.leave_scope();
         out
@@ -92,6 +104,7 @@ pub(crate) fn eval_user_scalar_function(
     while ctx.frame.scope_vars.len() > scope_depth {
         ctx.leave_scope();
     }
+    *ctx.session.variables = saved_caller_vars;
     ctx.pop_module();
     out
 }

@@ -147,10 +147,30 @@ where
     F: FnMut(Option<QueryResult>),
 {
     const MAX_GOTO_JUMPS: usize = 100_000;
+    let has_labels = stmts.iter().any(|s| {
+        matches!(
+            s,
+            Statement::Procedural(crate::ast::ProceduralStatement::Label(_))
+        )
+    });
+    let (mut stmts_owned, stmts_ref): (Vec<Option<Statement>>, Vec<Statement>) = if has_labels {
+        (Vec::new(), stmts)
+    } else {
+        (stmts.into_iter().map(Some).collect(), Vec::new())
+    };
+    let total_len = if has_labels {
+        stmts_ref.len()
+    } else {
+        stmts_owned.len()
+    };
     let mut idx = 0usize;
     let mut jumps = 0usize;
-    while idx < stmts.len() {
-        let stmt = stmts[idx].clone();
+    while idx < total_len {
+        let stmt = if has_labels {
+            stmts_ref[idx].clone()
+        } else {
+            stmts_owned[idx].take().expect("statement already consumed")
+        };
         ctx.frame.trancount = tx_manager.depth;
         ctx.frame.xact_state = tx_manager.xact_state;
         ctx.session.identity_insert = options.identity_insert.clone();
@@ -203,7 +223,7 @@ where
                         break;
                     }
                     StmtOutcome::Goto(target) => {
-                        if let Some(pos) = stmts.iter().position(|s| {
+                        if let Some(pos) = stmts_ref.iter().position(|s| {
                             matches!(
                                 s,
                                 Statement::Procedural(crate::ast::ProceduralStatement::Label(lbl))

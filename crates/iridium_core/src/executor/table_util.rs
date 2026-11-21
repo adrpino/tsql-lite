@@ -126,21 +126,86 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
         Statement::Ddl(DdlStatement::DropIndex(s)) => {
             out.insert(normalize_identifier(&s.table.name));
         }
-        Statement::Ddl(DdlStatement::CreateSchema(_))
-        | Statement::Ddl(DdlStatement::DropSchema(_)) => {
-            out.insert("__GLOBAL__".to_string());
+        Statement::Ddl(DdlStatement::CreateSchema(s)) => {
+            out.insert(format!("__SCHEMA__:{}", normalize_identifier(&s.name)));
         }
-        Statement::Ddl(DdlStatement::DropView(_))
-        | Statement::Ddl(DdlStatement::DropProcedure(_))
-        | Statement::Ddl(DdlStatement::DropFunction(_))
-        | Statement::Ddl(DdlStatement::DropTrigger(_))
-        | Statement::Ddl(DdlStatement::CreateType(_))
-        | Statement::Ddl(DdlStatement::DropType(_))
-        | Statement::Procedural(crate::ast::ProceduralStatement::CreateProcedure(_))
-        | Statement::Procedural(crate::ast::ProceduralStatement::CreateFunction(_))
-        | Statement::Procedural(crate::ast::ProceduralStatement::CreateView(_))
-        | Statement::Procedural(crate::ast::ProceduralStatement::CreateTrigger(_)) => {
-            out.insert("__GLOBAL__".to_string());
+        Statement::Ddl(DdlStatement::DropSchema(s)) => {
+            out.insert(format!("__SCHEMA__:{}", normalize_identifier(&s.name)));
+        }
+        Statement::Ddl(DdlStatement::CreateType(s)) => {
+            out.insert(format!(
+                "__TYPE__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Ddl(DdlStatement::DropType(s)) => {
+            out.insert(format!(
+                "__TYPE__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Ddl(DdlStatement::DropView(s)) => {
+            out.insert(format!(
+                "__VIEW__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Ddl(DdlStatement::DropProcedure(s)) => {
+            out.insert(format!(
+                "__PROC__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Ddl(DdlStatement::DropFunction(s)) => {
+            out.insert(format!(
+                "__FUNC__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Ddl(DdlStatement::DropTrigger(s)) => {
+            out.insert(format!(
+                "__TRIG__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Procedural(crate::ast::ProceduralStatement::CreateProcedure(s)) => {
+            out.insert(format!(
+                "__PROC__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Procedural(crate::ast::ProceduralStatement::CreateFunction(s)) => {
+            out.insert(format!(
+                "__FUNC__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Procedural(crate::ast::ProceduralStatement::CreateView(s)) => {
+            out.insert(format!(
+                "__VIEW__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Procedural(crate::ast::ProceduralStatement::CreateTrigger(s)) => {
+            out.insert(format!(
+                "__TRIG__:{}.{}",
+                normalize_identifier(s.name.schema_or_dbo()),
+                normalize_identifier(&s.name.name)
+            ));
+        }
+        Statement::Procedural(crate::ast::ProceduralStatement::BeginEnd(stmts)) => {
+            for inner in stmts {
+                out.extend(collect_write_tables(inner));
+            }
         }
         Statement::Dml(DmlStatement::Merge(s)) => {
             if let Some(name) = s.target.name_as_object() {

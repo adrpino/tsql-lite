@@ -80,7 +80,7 @@ pub(crate) async fn execute_sql<W: AsyncWriteExt + Unpin>(
                 .db
                 .session_options(session_id)
                 .map(|opts| opts.textsize.max(0) as usize)
-                .unwrap_or(4096);
+                .unwrap_or(i32::MAX as usize);
 
             for (i, result) in results.into_iter().enumerate() {
                 let is_last = i == count - 1;

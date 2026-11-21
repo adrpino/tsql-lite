@@ -706,3 +706,89 @@ fn conditional_commit_and_rollback_inside_if_persist_across_sessions() {
     assert_eq!(res2.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(res2.rows[0][1].to_integer_i64(), Some(0));
 }
+
+#[test]
+fn concurrent_disjoint_ddl_and_dml_transactions_merge_without_clobbering() {
+    let db = Database::new();
+    let s1 = db.create_session();
+    let s2 = db.create_session();
+
+    // Both sessions open transactions against the same initial snapshot.
+    db.execute_session_batch_sql_multi(s1, "BEGIN TRANSACTION;")
+        .expect("s1 begin");
+    db.execute_session_batch_sql_multi(s2, "BEGIN TRANSACTION;")
+        .expect("s2 begin");
+
+    // Each session creates disjoint tables, indexes, procedures, views, and rows.
+    db.execute_session_batch_sql_multi(
+        s1,
+        "CREATE TABLE dbo.Alpha (Id INT NOT NULL PRIMARY KEY, Val NVARCHAR(20));
+         CREATE NONCLUSTERED INDEX IX_Alpha_Val ON dbo.Alpha (Val);
+         INSERT INTO dbo.Alpha VALUES (1, N'one');
+         CREATE PROCEDURE dbo.usp_alpha AS BEGIN SELECT 101 AS v; END;",
+    )
+    .expect("s1 ddl+dml");
+
+    db.execute_session_batch_sql_multi(
+        s2,
+        "CREATE TABLE dbo.Beta (Id INT NOT NULL PRIMARY KEY, Val NVARCHAR(20));
+         CREATE NONCLUSTERED INDEX IX_Beta_Val ON dbo.Beta (Val);
+         INSERT INTO dbo.Beta VALUES (2, N'two');
+         CREATE PROCEDURE dbo.usp_beta AS BEGIN SELECT 202 AS v; END;",
+    )
+    .expect("s2 ddl+dml");
+
+    // Commit s1 first, then s2 — s2 must merge its delta without clobbering s1.
+    db.execute_session_batch_sql_multi(s1, "COMMIT TRANSACTION;")
+        .expect("s1 commit");
+    db.execute_session_batch_sql_multi(s2, "COMMIT TRANSACTION;")
+        .expect("s2 commit");
+
+    let s3 = db.create_session();
+    let a = db
+        .execute_session_batch_sql(s3, "SELECT Id, Val FROM dbo.Alpha")
+        .expect("s3 select Alpha")
+        .expect("result");
+    assert_eq!(a.rows.len(), 1);
+    assert_eq!(a.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(a.rows[0][1].to_string_value(), "one");
+
+    let b = db
+        .execute_session_batch_sql(s3, "SELECT Id, Val FROM dbo.Beta")
+        .expect("s3 select Beta")
+        .expect("result");
+    assert_eq!(b.rows.len(), 1);
+    assert_eq!(b.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(b.rows[0][1].to_string_value(), "two");
+
+    // Distinct table IDs & both indexes/procedures preserved.
+    let ids = db
+        .execute_session_batch_sql(
+            s3,
+            "SELECT COUNT(DISTINCT object_id) FROM sys.tables WHERE name IN ('Alpha', 'Beta')",
+        )
+        .expect("s3 sys.tables")
+        .expect("result");
+    assert_eq!(ids.rows[0][0].to_integer_i64(), Some(2));
+
+    let idxs = db
+        .execute_session_batch_sql(
+            s3,
+            "SELECT COUNT(*) FROM sys.indexes WHERE name IN ('IX_Alpha_Val', 'IX_Beta_Val')",
+        )
+        .expect("s3 sys.indexes")
+        .expect("result");
+    assert_eq!(idxs.rows[0][0].to_integer_i64(), Some(2));
+
+    let pa = db
+        .execute_session_batch_sql(s3, "EXEC dbo.usp_alpha")
+        .expect("s3 exec usp_alpha")
+        .expect("result");
+    assert_eq!(pa.rows[0][0].to_integer_i64(), Some(101));
+
+    let pb = db
+        .execute_session_batch_sql(s3, "EXEC dbo.usp_beta")
+        .expect("s3 exec usp_beta")
+        .expect("result");
+    assert_eq!(pb.rows[0][0].to_integer_i64(), Some(202));
+}

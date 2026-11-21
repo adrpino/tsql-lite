@@ -52,6 +52,15 @@ pub trait Storage: std::fmt::Debug + Send + Sync {
     fn as_index_storage_mut(&mut self) -> Option<&mut dyn IndexStorage> {
         None
     }
+
+    /// Merges changes made in `workspace` relative to `base` into `self` during
+    /// a concurrent transaction commit.
+    fn merge_workspace(&mut self, workspace: Self, _base: &Self)
+    where
+        Self: Sized,
+    {
+        *self = workspace;
+    }
 }
 
 pub trait CheckpointableStorage: Storage {
@@ -201,6 +210,27 @@ impl Storage for InMemoryStorage {
     }
     fn as_index_storage_mut(&mut self) -> Option<&mut dyn IndexStorage> {
         None
+    }
+
+    fn merge_workspace(&mut self, workspace: Self, base: &Self) {
+        if Arc::ptr_eq(&workspace.tables, &base.tables) {
+            return;
+        }
+        let target = Arc::make_mut(&mut self.tables);
+        for (&table_id, ws_rows) in workspace.tables.iter() {
+            let unchanged = base
+                .tables
+                .get(&table_id)
+                .is_some_and(|base_rows| Arc::ptr_eq(ws_rows, base_rows));
+            if !unchanged {
+                target.insert(table_id, Arc::clone(ws_rows));
+            }
+        }
+        for &table_id in base.tables.keys() {
+            if !workspace.tables.contains_key(&table_id) {
+                target.remove(&table_id);
+            }
+        }
     }
 }
 

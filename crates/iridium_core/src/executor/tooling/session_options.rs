@@ -63,7 +63,8 @@ impl Default for SessionOptions {
             language: "us_english".to_string(),
             dateformat: "mdy".to_string(),
             rowcount: 0,
-            textsize: 4096,
+            // SQL Server ODBC / ADO.NET / TDS 7.4 default is 2147483647 (2 GiB).
+            textsize: i32::MAX,
             query_governor_cost_limit: 0,
             deadlock_priority: 0,
             lock_timeout_ms: 0,
@@ -155,7 +156,9 @@ pub fn apply_set_option(
         }
         (SessionOption::TextSize, SessionOptionValue::Int(v)) => {
             options.textsize = if *v < 0 {
-                0
+                i32::MAX
+            } else if *v == 0 {
+                4096
             } else {
                 (*v).min(i32::MAX as i64) as i32
             };

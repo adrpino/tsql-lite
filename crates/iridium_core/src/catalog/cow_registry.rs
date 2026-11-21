@@ -114,17 +114,21 @@ impl<K: Eq + Hash, V> CowRegistry<K, V> {
     }
 
     pub fn insert_or_replace(&mut self, key: K, value: V) {
+        self.insert_or_replace_arc(key, Arc::new(value));
+    }
+
+    pub fn insert_or_replace_arc(&mut self, key: K, value: Arc<V>) {
         if self.has_no_delta() {
             if let (Some(base), Some(base_map)) = (
                 Arc::get_mut(&mut self.base),
                 Arc::get_mut(&mut self.base_map),
             ) {
                 if let Some(&idx) = base_map.get(&key) {
-                    base[idx] = Arc::new(value);
+                    base[idx] = value;
                 } else {
                     let idx = base.len();
                     base_map.insert(key, idx);
-                    base.push(Arc::new(value));
+                    base.push(value);
                 }
                 return;
             }
@@ -135,12 +139,77 @@ impl<K: Eq + Hash, V> CowRegistry<K, V> {
         }
         match self.delta_map.get(&key).copied() {
             Some(DeltaEntry::Present(d_idx)) => {
-                self.delta_items[d_idx] = Arc::new(value);
+                self.delta_items[d_idx] = value;
             }
             Some(DeltaEntry::Deleted) | None => {
                 let d_idx = self.delta_items.len();
-                self.delta_items.push(Arc::new(value));
+                self.delta_items.push(value);
                 self.delta_map.insert(key, DeltaEntry::Present(d_idx));
+            }
+        }
+    }
+
+    /// Merges every entry modified (inserted, replaced, or deleted) in `workspace`
+    /// relative to `base` into `self`, leaving keys untouched by `workspace` intact.
+    pub fn merge_delta_against_base<F>(&mut self, workspace: &Self, base: &Self, key_of: F)
+    where
+        K: Clone,
+        F: Fn(&V) -> K,
+    {
+        if Arc::ptr_eq(&workspace.base, &base.base)
+            && workspace.delta_map.is_empty()
+            && base.delta_map.is_empty()
+        {
+            return;
+        }
+        if Arc::ptr_eq(&workspace.base, &base.base) {
+            // Fast path: workspace and base share the exact same immutable `base` Arc,
+            // so only keys present in either `delta_map` can possibly differ.
+            for key in workspace.delta_map.keys() {
+                let ws_val = workspace.get_arc(key);
+                let base_val = base.get_arc(key);
+                match (ws_val, base_val) {
+                    (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => {}
+                    (None, None) => {}
+                    (Some(a), _) => self.insert_or_replace_arc(key.clone(), a),
+                    (None, Some(_)) => {
+                        let _ = self.remove(key, &key_of);
+                    }
+                }
+            }
+            for key in base.delta_map.keys() {
+                if workspace.delta_map.contains_key(key) {
+                    continue;
+                }
+                let ws_val = workspace.get_arc(key);
+                let base_val = base.get_arc(key);
+                match (ws_val, base_val) {
+                    (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => {}
+                    (None, None) => {}
+                    (Some(a), _) => self.insert_or_replace_arc(key.clone(), a),
+                    (None, Some(_)) => {
+                        let _ = self.remove(key, &key_of);
+                    }
+                }
+            }
+        } else {
+            // Fallback if workspace rebuilt its base (e.g. via rebuild_map):
+            // diff all keys across workspace and base.
+            for item in workspace.iter() {
+                let key = key_of(item);
+                let ws_val = workspace.get_arc(&key);
+                let base_val = base.get_arc(&key);
+                match (ws_val, base_val) {
+                    (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => {}
+                    (Some(a), _) => self.insert_or_replace_arc(key, a),
+                    _ => {}
+                }
+            }
+            for item in base.iter() {
+                let key = key_of(item);
+                if !workspace.contains_key(&key) {
+                    let _ = self.remove(&key, &key_of);
+                }
             }
         }
     }

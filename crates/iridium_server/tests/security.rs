@@ -280,3 +280,55 @@ async fn test_tls_enabled_accepts_encryption_off() {
     let (_, rows) = query_sql(&mut client, "SELECT 42 AS val").await;
     assert_eq!(rows[0][0], "42");
 }
+
+#[tokio::test]
+async fn test_large_nvarchar_max_for_json_streams_without_truncation() {
+    let port = start_server().await;
+    let mut client = connect(port).await;
+
+    exec_sql(
+        &mut client,
+        "CREATE TABLE dbo.LargePayload (id INT NOT NULL PRIMARY KEY, body NVARCHAR(200));",
+    )
+    .await;
+
+    // Insert 200 rows via SQL_BATCH so FOR JSON PATH exceeds 15,000 characters
+    // (far above legacy 2,048 chars / 4,096 bytes TEXTSIZE).
+    let mut insert = String::from("INSERT INTO dbo.LargePayload (id, body) VALUES ");
+    for i in 1..=200 {
+        if i > 1 {
+            insert.push(',');
+        }
+        insert.push_str(&format!(
+            "({i}, N'payload_item_{i:04}_abcdefghijklmnopqrstuvwxyz_0123456789')"
+        ));
+    }
+    client
+        .simple_query(&insert)
+        .await
+        .expect("insert batch failed")
+        .into_results()
+        .await
+        .expect("insert results failed");
+
+    let rows = client
+        .simple_query("SELECT id, body FROM dbo.LargePayload ORDER BY id FOR JSON PATH")
+        .await
+        .expect("FOR JSON query failed")
+        .into_first_result()
+        .await
+        .expect("FOR JSON result failed");
+    assert_eq!(rows.len(), 1);
+    let json_text = rows[0].get::<&str, _>(0).expect("JSON string column");
+    assert!(
+        json_text.len() > 15_000,
+        "expected > 15,000 chars JSON payload, got {} chars",
+        json_text.len()
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_text).expect("large FOR JSON payload must parse without truncation");
+    let arr = parsed.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 200);
+    assert_eq!(arr[0]["id"], 1);
+    assert_eq!(arr[199]["id"], 200);
+}

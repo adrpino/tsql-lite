@@ -379,10 +379,59 @@ pub trait Catalog:
 {
     fn clone_boxed(&self) -> Box<dyn Catalog>;
     fn rebuild_maps(&mut self) {}
+    /// Merges changes made in `workspace` relative to `base` into `self` during
+    /// a concurrent transaction commit.
+    fn merge_workspace(&mut self, workspace: Self, _base: &Self)
+    where
+        Self: Sized,
+    {
+        *self = workspace;
+    }
 }
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
+
+mod atomic_u32_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    pub fn serialize<S>(val: &Arc<AtomicU32>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        val.load(Ordering::Relaxed).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<AtomicU32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        u32::deserialize(deserializer).map(|v| Arc::new(AtomicU32::new(v)))
+    }
+}
+
+mod atomic_i32_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::Arc;
+
+    pub fn serialize<S>(val: &Arc<AtomicI32>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        val.load(Ordering::Relaxed).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<AtomicI32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        i32::deserialize(deserializer).map(|v| Arc::new(AtomicI32::new(v)))
+    }
+}
 
 mod arc_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -421,12 +470,16 @@ pub struct CatalogImpl {
     synonyms: Arc<Vec<SynonymDef>>,
     #[serde(with = "arc_serde")]
     sequences: Arc<Vec<SequenceDef>>,
-    next_schema_id: u32,
-    next_table_id: u32,
-    next_column_id: u32,
-    next_index_id: u32,
-    #[serde(default = "default_next_object_id")]
-    next_object_id: i32,
+    #[serde(with = "atomic_u32_serde")]
+    next_schema_id: Arc<AtomicU32>,
+    #[serde(with = "atomic_u32_serde")]
+    next_table_id: Arc<AtomicU32>,
+    #[serde(with = "atomic_u32_serde")]
+    next_column_id: Arc<AtomicU32>,
+    #[serde(with = "atomic_u32_serde")]
+    next_index_id: Arc<AtomicU32>,
+    #[serde(default = "default_next_object_id", with = "atomic_i32_serde")]
+    next_object_id: Arc<AtomicI32>,
 
     #[serde(skip)]
     schema_map: Arc<HashMap<String, usize>>,
@@ -562,11 +615,11 @@ impl Default for CatalogImpl {
             triggers: CowRegistry::default(),
             synonyms: Arc::new(Vec::new()),
             sequences: Arc::new(Vec::new()),
-            next_schema_id: 1,
-            next_table_id: 1234567890,
-            next_column_id: 1,
-            next_index_id: 234567890,
-            next_object_id: -1,
+            next_schema_id: Arc::new(AtomicU32::new(1)),
+            next_table_id: Arc::new(AtomicU32::new(1234567890)),
+            next_column_id: Arc::new(AtomicU32::new(1)),
+            next_index_id: Arc::new(AtomicU32::new(234567890)),
+            next_object_id: Arc::new(AtomicI32::new(-1)),
             schema_map: Arc::new(HashMap::new()),
             type_map: Arc::new(HashMap::new()),
             synonym_map: Arc::new(HashMap::new()),
@@ -576,12 +629,79 @@ impl Default for CatalogImpl {
     }
 }
 
-fn default_next_object_id() -> i32 {
-    -1
+fn default_next_object_id() -> Arc<AtomicI32> {
+    Arc::new(AtomicI32::new(-1))
 }
 
 fn default_ansi_padding_on() -> bool {
     true
+}
+
+fn merge_arc_vec<T, K, F>(
+    target: &mut Arc<Vec<T>>,
+    ws: &Arc<Vec<T>>,
+    base: &Arc<Vec<T>>,
+    key_of: F,
+) -> bool
+where
+    T: Clone,
+    K: Eq + std::hash::Hash,
+    F: Fn(&T) -> K,
+{
+    if Arc::ptr_eq(ws, base) {
+        return false;
+    }
+    let mut base_keys: HashMap<K, usize> = HashMap::with_capacity(base.len());
+    for (i, item) in base.iter().enumerate() {
+        base_keys.insert(key_of(item), i);
+    }
+    let mut ws_keys: HashMap<K, usize> = HashMap::with_capacity(ws.len());
+    for (i, item) in ws.iter().enumerate() {
+        ws_keys.insert(key_of(item), i);
+    }
+
+    let mut changed = false;
+    let mut target_idx: HashMap<K, usize> = HashMap::with_capacity(target.len());
+    for (i, item) in target.iter().enumerate() {
+        target_idx.insert(key_of(item), i);
+    }
+
+    // Apply removals (in base, absent from workspace).
+    let mut to_remove: Vec<K> = Vec::new();
+    for k in base_keys.keys() {
+        if !ws_keys.contains_key(k) {
+            to_remove.push(key_of(&base[base_keys[k]]));
+        }
+    }
+    if !to_remove.is_empty() {
+        let remove_set: std::collections::HashSet<K> = to_remove.into_iter().collect();
+        let vec = Arc::make_mut(target);
+        vec.retain(|item| !remove_set.contains(&key_of(item)));
+        changed = true;
+        target_idx.clear();
+        for (i, item) in vec.iter().enumerate() {
+            target_idx.insert(key_of(item), i);
+        }
+    }
+
+    // Apply additions (in workspace, absent from base) and updates (in workspace & base,
+    // mutated or re-inserted by workspace — e.g. sequence current_value or index replace).
+    for item in ws.iter() {
+        let k = key_of(item);
+        if !base_keys.contains_key(&k) {
+            let vec = Arc::make_mut(target);
+            if let Some(&pos) = target_idx.get(&k) {
+                vec[pos] = item.clone();
+            } else {
+                let pos = vec.len();
+                vec.push(item.clone());
+                target_idx.insert(k, pos);
+            }
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 impl Catalog for CatalogImpl {
@@ -591,5 +711,159 @@ impl Catalog for CatalogImpl {
 
     fn rebuild_maps(&mut self) {
         self.rebuild_maps();
+    }
+
+    fn merge_workspace(&mut self, workspace: Self, base: &Self) {
+        self.tables
+            .merge_delta_against_base(&workspace.tables, &base.tables, |t| {
+                (t.schema_id, normalize_identifier(&t.name))
+            });
+        self.routines
+            .merge_delta_against_base(&workspace.routines, &base.routines, |r| {
+                (
+                    normalize_identifier(&r.schema),
+                    normalize_identifier(&r.name),
+                )
+            });
+        self.views
+            .merge_delta_against_base(&workspace.views, &base.views, |v| {
+                (
+                    normalize_identifier(&v.schema),
+                    normalize_identifier(&v.name),
+                )
+            });
+        self.triggers
+            .merge_delta_against_base(&workspace.triggers, &base.triggers, |t| {
+                (
+                    normalize_identifier(&t.schema),
+                    normalize_identifier(&t.name),
+                )
+            });
+
+        if merge_arc_vec(&mut self.schemas, &workspace.schemas, &base.schemas, |s| {
+            normalize_identifier(&s.name)
+        }) {
+            self.schema_map = Arc::new(
+                self.schemas
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (normalize_identifier(&s.name), i))
+                    .collect(),
+            );
+        }
+        if merge_arc_vec(&mut self.indexes, &workspace.indexes, &base.indexes, |i| {
+            (i.schema_id, normalize_identifier(&i.name))
+        }) {
+            self.index_map = Arc::new(
+                self.indexes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
+                    .collect(),
+            );
+        }
+        if merge_arc_vec(
+            &mut self.table_types,
+            &workspace.table_types,
+            &base.table_types,
+            |t| {
+                (
+                    normalize_identifier(&t.schema),
+                    normalize_identifier(&t.name),
+                )
+            },
+        ) {
+            self.type_map = Arc::new(
+                self.table_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        (
+                            (
+                                normalize_identifier(&t.schema),
+                                normalize_identifier(&t.name),
+                            ),
+                            i,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        if merge_arc_vec(
+            &mut self.synonyms,
+            &workspace.synonyms,
+            &base.synonyms,
+            |s| {
+                (
+                    normalize_identifier(&s.schema),
+                    normalize_identifier(&s.name),
+                )
+            },
+        ) {
+            self.synonym_map = Arc::new(
+                self.synonyms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        (
+                            (
+                                normalize_identifier(&s.schema),
+                                normalize_identifier(&s.name),
+                            ),
+                            i,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        if merge_arc_vec(
+            &mut self.sequences,
+            &workspace.sequences,
+            &base.sequences,
+            |s| {
+                (
+                    normalize_identifier(&s.schema),
+                    normalize_identifier(&s.name),
+                )
+            },
+        ) {
+            self.sequence_map = Arc::new(
+                self.sequences
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        (
+                            (
+                                normalize_identifier(&s.schema),
+                                normalize_identifier(&s.name),
+                            ),
+                            i,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+
+        // Advance atomic counters defensively if workspace came from a distinct allocator.
+        let _ = self.next_schema_id.fetch_max(
+            workspace.next_schema_id.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        let _ = self.next_table_id.fetch_max(
+            workspace.next_table_id.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        let _ = self.next_column_id.fetch_max(
+            workspace.next_column_id.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        let _ = self.next_index_id.fetch_max(
+            workspace.next_index_id.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        let _ = self.next_object_id.fetch_min(
+            workspace.next_object_id.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
     }
 }

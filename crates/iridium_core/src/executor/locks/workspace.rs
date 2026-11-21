@@ -5,6 +5,8 @@ use super::types::AcquiredLock;
 pub struct TxWorkspace<C, S> {
     pub catalog: C,
     pub storage: S,
+    pub base_catalog: C,
+    pub base_storage: S,
     pub base_table_versions: HashMap<String, u64>,
     pub read_tables: HashSet<String>,
     pub write_tables: HashSet<String>,
@@ -27,6 +29,8 @@ impl<C: Clone, S: Clone> Clone for TxWorkspace<C, S> {
         Self {
             catalog: self.catalog.clone(),
             storage: self.storage.clone(),
+            base_catalog: self.base_catalog.clone(),
+            base_storage: self.base_storage.clone(),
             base_table_versions: self.base_table_versions.clone(),
             read_tables: self.read_tables.clone(),
             write_tables: self.write_tables.clone(),

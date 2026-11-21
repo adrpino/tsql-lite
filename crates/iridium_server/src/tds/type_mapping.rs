@@ -32,6 +32,29 @@ pub struct TypeInfo {
     pub flags: u16,
 }
 
+impl TypeInfo {
+    /// Returns true when this column uses MS-TDS Partially Length-Prefixed
+    /// (PLP) framing (`VARCHAR(MAX)`, `NVARCHAR(MAX)`, `VARBINARY(MAX)`, `XML`).
+    #[inline]
+    pub fn is_plp(&self) -> bool {
+        self.length_prefix == [0xFF, 0xFF]
+    }
+}
+
+fn encode_plp_bytes(payload: &[u8]) -> Vec<u8> {
+    const CHUNK_SIZE: usize = 65_536;
+    let total_len = payload.len() as u64;
+    let num_chunks = payload.len().div_ceil(CHUNK_SIZE);
+    let mut buf = Vec::with_capacity(8 + payload.len() + num_chunks * 4 + 4);
+    buf.extend_from_slice(&total_len.to_le_bytes());
+    for chunk in payload.chunks(CHUNK_SIZE) {
+        buf.extend_from_slice(&(chunk.len() as u32).to_le_bytes());
+        buf.extend_from_slice(chunk);
+    }
+    buf.extend_from_slice(&0u32.to_le_bytes()); // PLP_TERMINATOR
+    buf
+}
+
 pub fn value_to_type_info(value: &Value) -> TypeInfo {
     match value {
         Value::Bit(_) => TypeInfo {
@@ -209,6 +232,9 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
 
 pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
     if value.is_null() {
+        if ti.is_plp() {
+            return 0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes().to_vec();
+        }
         match ti.tds_type {
             BIGVARCHARTYPE | BIGCHARTYPE | NVARCHARTYPE | NCHARTYPE | BIGVARBINARYTYPE
             | BIGBINARYTYPE => {
@@ -294,20 +320,36 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
             let s = value.to_string_value();
             let is_unicode = ti.tds_type == NVARCHARTYPE || ti.tds_type == NCHARTYPE;
             if is_unicode {
-                let utf16: Vec<u16> = s.encode_utf16().collect();
-                let mut buf = Vec::with_capacity(3 + utf16.len() * 2);
-                let byte_len = (utf16.len() * 2) as u16;
-                buf.extend_from_slice(&byte_len.to_le_bytes());
-                for c in &utf16 {
-                    buf.extend_from_slice(&c.to_le_bytes());
+                let mut raw = Vec::with_capacity(s.len() * 2);
+                for c in s.encode_utf16() {
+                    raw.extend_from_slice(&c.to_le_bytes());
                 }
-                buf
+                if ti.is_plp() {
+                    encode_plp_bytes(&raw)
+                } else {
+                    if raw.len() > 8000 {
+                        raw.truncate(8000);
+                    }
+                    let mut buf = Vec::with_capacity(2 + raw.len());
+                    buf.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+                    buf.extend_from_slice(&raw);
+                    buf
+                }
             } else {
                 let bytes = s.as_bytes();
-                let mut buf = Vec::with_capacity(3 + bytes.len());
-                buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-                buf.extend_from_slice(bytes);
-                buf
+                if ti.is_plp() {
+                    encode_plp_bytes(bytes)
+                } else {
+                    let slice = if bytes.len() > 8000 {
+                        &bytes[..8000]
+                    } else {
+                        bytes
+                    };
+                    let mut buf = Vec::with_capacity(2 + slice.len());
+                    buf.extend_from_slice(&(slice.len() as u16).to_le_bytes());
+                    buf.extend_from_slice(slice);
+                    buf
+                }
             }
         }
         BIGVARBINARYTYPE | BIGBINARYTYPE => {
@@ -315,10 +357,19 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
                 Value::Binary(v) | Value::VarBinary(v) => v.clone(),
                 _ => value.to_string_value().as_bytes().to_vec(),
             };
-            let mut buf = Vec::with_capacity(3 + bytes.len());
-            buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
-            buf.extend_from_slice(&bytes);
-            buf
+            if ti.is_plp() {
+                encode_plp_bytes(&bytes)
+            } else {
+                let slice = if bytes.len() > 8000 {
+                    &bytes[..8000]
+                } else {
+                    bytes.as_slice()
+                };
+                let mut buf = Vec::with_capacity(2 + slice.len());
+                buf.extend_from_slice(&(slice.len() as u16).to_le_bytes());
+                buf.extend_from_slice(slice);
+                buf
+            }
         }
         DATENTYPE => {
             let s = value.to_string_value();
@@ -568,7 +619,11 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::VarChar { max_len } => TypeInfo {
             tds_type: BIGVARCHARTYPE,
-            length_prefix: max_len.to_le_bytes().to_vec(),
+            length_prefix: if *max_len == 0 {
+                vec![0xFF, 0xFF]
+            } else {
+                max_len.to_le_bytes().to_vec()
+            },
             collation: Some(DEFAULT_COLLATION),
             scale: None,
             precision: None,
@@ -584,7 +639,11 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::NVarChar { max_len } => TypeInfo {
             tds_type: NVARCHARTYPE,
-            length_prefix: (max_len * 2).to_le_bytes().to_vec(),
+            length_prefix: if *max_len == 0 {
+                vec![0xFF, 0xFF]
+            } else {
+                (max_len * 2).to_le_bytes().to_vec()
+            },
             collation: Some(DEFAULT_COLLATION),
             scale: None,
             precision: None,
@@ -600,7 +659,11 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::VarBinary { max_len } => TypeInfo {
             tds_type: BIGVARBINARYTYPE,
-            length_prefix: max_len.to_le_bytes().to_vec(),
+            length_prefix: if *max_len == 0 {
+                vec![0xFF, 0xFF]
+            } else {
+                max_len.to_le_bytes().to_vec()
+            },
             collation: None,
             scale: None,
             precision: None,

@@ -15,8 +15,22 @@ macro_rules! define_keywords {
         }
 
         impl Keyword {
+            #[inline]
             pub fn parse(s: &str) -> Option<Keyword> {
-                match s.to_uppercase().as_str() {
+                const MAX_KEYWORD_LEN: usize = 24;
+                let bytes = s.as_bytes();
+                if bytes.len() > MAX_KEYWORD_LEN {
+                    return None;
+                }
+                let mut buf = [0u8; MAX_KEYWORD_LEN];
+                for (dst, &b) in buf.iter_mut().zip(bytes) {
+                    if !b.is_ascii() {
+                        return None;
+                    }
+                    *dst = b.to_ascii_uppercase();
+                }
+                let upper = std::str::from_utf8(&buf[..bytes.len()]).ok()?;
+                match upper {
                     $( $sql => Some(Keyword::$variant), )*
                     _ => None,
                 }
@@ -27,6 +41,11 @@ macro_rules! define_keywords {
                     $( Keyword::$variant => $sql, )*
                 }
             }
+
+            #[cfg(test)]
+            pub const ALL: &'static [Keyword] = &[
+                $( Keyword::$variant, )*
+            ];
         }
 
         impl fmt::Display for Keyword {
@@ -329,4 +348,42 @@ define_keywords! {
     Authorization => "AUTHORIZATION",
     Browse => "BROWSE",
     Shutdown => "SHUTDOWN",
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keyword_parse_all_variants_case_insensitive_and_bounds() {
+        for &kw in Keyword::ALL {
+            let sql = kw.as_sql();
+            assert!(
+                sql.len() <= 24 && sql.is_ascii(),
+                "keyword {sql:?} exceeds stack buffer assumptions"
+            );
+            assert_eq!(Keyword::parse(sql), Some(kw));
+            assert_eq!(Keyword::parse(&sql.to_ascii_lowercase()), Some(kw));
+            let mixed: String = sql
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if i % 2 == 0 {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect();
+            assert_eq!(Keyword::parse(&mixed), Some(kw));
+        }
+        assert_eq!(Keyword::parse(""), None);
+        assert_eq!(Keyword::parse("NON_EXISTENT_KEYWORD"), None);
+        assert_eq!(
+            Keyword::parse("VERY_LONG_IDENTIFIER_EXCEEDING_24_BYTES"),
+            None
+        );
+        assert_eq!(Keyword::parse("SELECTÉ"), None);
+        assert_eq!(Keyword::parse("café"), None);
+    }
 }

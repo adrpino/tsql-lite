@@ -16,7 +16,6 @@ serde_json = { version = "1", features = ["unbounded_depth"] }
 bincode = { version = "2", features = ["serde"] }
 thiserror = "1"
 hex = "0.4"
-winnow = "0.7"
 regex = "1.12.3"
 redb = "2.1"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -29,6 +28,7 @@ uuid = { version = "1", features = ["js"] }
 js-sys = "0.3"
 
 [dev-dependencies]
+winnow = "0.7"
 tempfile = "3"
 tiberius = { version = "0.12.3", default-features = false, features = ["tokio", "tds73", "chrono"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

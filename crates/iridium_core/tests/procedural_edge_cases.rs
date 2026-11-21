@@ -2022,4 +2022,28 @@ fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromp
     exec(&mut e, "CREATE PROCEDURE dbo.p_kind (@k VARCHAR(10)) AS BEGIN SELECT @k AS k; END");
     let r7 = query(&mut e, "EXEC ('dbo.p_kind FRT')");
     assert_eq!(r7.rows[0][0].to_string_value(), "FRT");
+
+    // 8. FOR XML PATH with @Attr + FOR XML RAW + column.value(xpath, sqltype)
+    exec(&mut e, "CREATE TABLE #xdoc (id INT, note XML)");
+    exec(
+        &mut e,
+        "INSERT INTO #xdoc VALUES (1, '<Envelope><Section Status=\"3\"><Entry Code=\"OK\"/></Section></Envelope>')",
+    );
+    let r8 = query(
+        &mut e,
+        "SELECT note.value('(/Envelope/Section/@Status)[1]', 'INT'),
+                note.value('(/Envelope/Section/Entry/@Code)[1]', 'NVARCHAR(10)')
+         FROM #xdoc",
+    );
+    assert_eq!(r8.rows[0][0].to_integer_i64(), Some(3));
+    assert_eq!(r8.rows[0][1].to_string_value(), "OK");
+
+    let r9 = query(
+        &mut e,
+        "SELECT 5 AS '@Status', 'hello' AS Msg FOR XML PATH('Item'), TYPE",
+    );
+    assert_eq!(
+        r9.rows[0][0].to_string_value(),
+        "<Item Status=\"5\"><Msg>hello</Msg></Item>"
+    );
 }

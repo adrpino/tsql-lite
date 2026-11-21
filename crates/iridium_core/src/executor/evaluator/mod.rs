@@ -157,6 +157,40 @@ fn eval_expr_inner(
                 );
                 return Ok(Value::NVarChar(modified));
             }
+            if args.len() == 2 {
+                if let Some((receiver, method)) = name.rsplit_once('.') {
+                    if method.eq_ignore_ascii_case("value") {
+                        let recv_expr = if receiver.contains('.') {
+                            Expr::QualifiedIdentifier(
+                                receiver.split('.').map(|s| s.to_string()).collect(),
+                            )
+                        } else {
+                            Expr::Identifier(receiver.to_string())
+                        };
+                        let xml_val = eval_expr(&recv_expr, row, ctx, catalog, storage, clock)?;
+                        if xml_val.is_null() {
+                            return Ok(Value::Null);
+                        }
+                        let xpath_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                        let sql_ty_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                        if xpath_val.is_null() || sql_ty_val.is_null() {
+                            return Ok(Value::Null);
+                        }
+                        let Some(extracted) = eval_xml_value(
+                            &xml_val.to_string_value(),
+                            &xpath_val.to_string_value(),
+                        ) else {
+                            return Ok(Value::Null);
+                        };
+                        let target_ty = parse_xml_value_target_type(&sql_ty_val.to_string_value());
+                        return crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                            Value::NVarChar(extracted),
+                            &target_ty,
+                            &ctx.options.dateformat,
+                        );
+                    }
+                }
+            }
             eval_function(name, args, row, ctx, catalog, storage, clock)
         }
 
@@ -453,4 +487,155 @@ fn remove_xml_elements_by_tag(xml: &str, tag: &str) -> String {
         result.replace_range(start..close_end, "");
     }
     result
+}
+
+fn unescape_xml_entities(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
+    let trimmed = xpath.trim();
+    if trimmed == "." || trimmed == "text()" || trimmed == "(./text())[1]" {
+        return Some(unescape_xml_entities(xml));
+    }
+
+    // Parse optional trailing `[N]` 1-based ordinal index and outer parens.
+    let (path_body, ordinal) = if let Some(lb) = trimmed.rfind('[') {
+        if let Some(rb) = trimmed[lb..].find(']') {
+            let idx = trimmed[lb + 1..lb + rb].trim().parse::<usize>().ok().unwrap_or(1);
+            (&trimmed[..lb], idx.max(1))
+        } else {
+            (trimmed, 1)
+        }
+    } else {
+        (trimmed, 1)
+    };
+    let clean_path = path_body
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim()
+        .trim_start_matches('/');
+
+    let segments: Vec<&str> = clean_path
+        .split('/')
+        .map(|s| s.split('[').next().unwrap_or(s).trim())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("text()"))
+        .collect();
+    if segments.is_empty() {
+        return Some(unescape_xml_entities(xml));
+    }
+
+    let (elem_segments, attr_name) = if let Some(last) = segments.last() {
+        if let Some(attr) = last.strip_prefix('@') {
+            (&segments[..segments.len() - 1], Some(attr))
+        } else {
+            (segments.as_slice(), None)
+        }
+    } else {
+        (segments.as_slice(), None)
+    };
+
+    // Walk element path segments in order, narrowing slice to the matching element.
+    let mut slice = xml;
+    let mut matched_open_tag = "";
+    let mut matched_inner = "";
+    for (seg_idx, tag) in elem_segments.iter().enumerate() {
+        let target_ord = if seg_idx + 1 == elem_segments.len() {
+            ordinal
+        } else {
+            1
+        };
+        let open_prefix = format!("<{}", tag);
+        let close_tag = format!("</{}>", tag);
+        let mut search_pos = 0usize;
+        let mut seen = 0usize;
+        let mut found = false;
+        while let Some(rel) = slice[search_pos..].find(&open_prefix) {
+            let start = search_pos + rel;
+            let after_name = start + open_prefix.len();
+            let next_ch = slice.as_bytes().get(after_name).copied();
+            if !matches!(
+                next_ch,
+                Some(b'>') | Some(b'/') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+            ) {
+                search_pos = after_name;
+                continue;
+            }
+            let gt_rel = slice[start..].find('>')?;
+            let gt_idx = start + gt_rel;
+            let self_closing = slice.as_bytes().get(gt_idx.saturating_sub(1)) == Some(&b'/');
+            let (elem_open, elem_inner, elem_end) = if self_closing {
+                (&slice[start..=gt_idx], "", gt_idx + 1)
+            } else {
+                let close_rel = slice[gt_idx + 1..].find(&close_tag)?;
+                let inner = &slice[gt_idx + 1..gt_idx + 1 + close_rel];
+                (
+                    &slice[start..=gt_idx],
+                    inner,
+                    gt_idx + 1 + close_rel + close_tag.len(),
+                )
+            };
+            seen += 1;
+            if seen == target_ord {
+                matched_open_tag = elem_open;
+                matched_inner = elem_inner;
+                slice = elem_inner;
+                found = true;
+                break;
+            }
+            search_pos = elem_end;
+        }
+        if !found {
+            return None;
+        }
+    }
+
+    if let Some(attr) = attr_name {
+        let needle_dq = format!("{}=\"", attr);
+        if let Some(pos) = matched_open_tag.find(&needle_dq) {
+            let rest = &matched_open_tag[pos + needle_dq.len()..];
+            let end = rest.find('"')?;
+            return Some(unescape_xml_entities(&rest[..end]));
+        }
+        let needle_sq = format!("{}='", attr);
+        if let Some(pos) = matched_open_tag.find(&needle_sq) {
+            let rest = &matched_open_tag[pos + needle_sq.len()..];
+            let end = rest.find('\'')?;
+            return Some(unescape_xml_entities(&rest[..end]));
+        }
+        return None;
+    }
+
+    Some(unescape_xml_entities(matched_inner))
+}
+
+fn parse_xml_value_target_type(sql_type: &str) -> crate::types::DataType {
+    let t = sql_type.trim();
+    let base = t.split('(').next().unwrap_or(t).trim().to_ascii_uppercase();
+    match base.as_str() {
+        "BIT" => crate::types::DataType::Bit,
+        "TINYINT" => crate::types::DataType::TinyInt,
+        "SMALLINT" => crate::types::DataType::SmallInt,
+        "INT" | "INTEGER" => crate::types::DataType::Int,
+        "BIGINT" => crate::types::DataType::BigInt,
+        "FLOAT" | "REAL" => crate::types::DataType::Float,
+        "MONEY" => crate::types::DataType::Money,
+        "SMALLMONEY" => crate::types::DataType::SmallMoney,
+        "DECIMAL" | "NUMERIC" => crate::types::DataType::Decimal {
+            precision: 18,
+            scale: 4,
+        },
+        "DATE" => crate::types::DataType::Date,
+        "TIME" => crate::types::DataType::Time,
+        "DATETIME" => crate::types::DataType::DateTime,
+        "DATETIME2" => crate::types::DataType::DateTime2,
+        "UNIQUEIDENTIFIER" => crate::types::DataType::UniqueIdentifier,
+        "VARCHAR" | "CHAR" => crate::types::DataType::VarChar { max_len: u16::MAX },
+        _ => crate::types::DataType::NVarChar { max_len: u16::MAX },
+    }
 }

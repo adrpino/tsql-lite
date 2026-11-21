@@ -149,11 +149,9 @@ fn format_for_xml_result(
         xml.push('>');
     }
     for row in &result.rows {
-        if !row_tag.is_empty() {
-            xml.push('<');
-            xml.push_str(row_tag);
-            xml.push('>');
-        }
+        let is_raw_mode = for_xml.mode.eq_ignore_ascii_case("RAW");
+        let mut attrs = Vec::new();
+        let mut children = Vec::new();
         for (i, val) in row.iter().enumerate() {
             if matches!(val, crate::types::Value::Null) {
                 continue;
@@ -168,25 +166,51 @@ fn format_for_xml_result(
                     )
             });
             let col_name = result.columns.get(i).map(String::as_str).unwrap_or("");
-            let is_raw_text = is_unnamed_expr
-                || col_name.is_empty()
-                || col_name.eq_ignore_ascii_case("text()");
-            if is_raw_text {
-                xml.push_str(&text);
+            if let Some(attr_name) = col_name.strip_prefix('@') {
+                attrs.push((attr_name.to_string(), text));
+            } else if is_raw_mode && !is_unnamed_expr && !col_name.is_empty() {
+                attrs.push((col_name.to_string(), text));
             } else {
-                xml.push('<');
-                xml.push_str(col_name);
-                xml.push('>');
-                xml.push_str(&text);
-                xml.push_str("</");
-                xml.push_str(col_name);
-                xml.push('>');
+                let is_raw_text = is_unnamed_expr
+                    || col_name.is_empty()
+                    || col_name.eq_ignore_ascii_case("text()");
+                if is_raw_text {
+                    children.push(text);
+                } else {
+                    children.push(format!("<{col_name}>{text}</{col_name}>"));
+                }
             }
         }
         if !row_tag.is_empty() {
-            xml.push_str("</");
+            xml.push('<');
             xml.push_str(row_tag);
-            xml.push('>');
+            for (k, v) in &attrs {
+                let escaped = v
+                    .replace('&', "&amp;")
+                    .replace('"', "&quot;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
+                xml.push(' ');
+                xml.push_str(k);
+                xml.push_str("=\"");
+                xml.push_str(&escaped);
+                xml.push('"');
+            }
+            if children.is_empty() {
+                xml.push_str("/>");
+            } else {
+                xml.push('>');
+                for child in &children {
+                    xml.push_str(child);
+                }
+                xml.push_str("</");
+                xml.push_str(row_tag);
+                xml.push('>');
+            }
+        } else {
+            for child in &children {
+                xml.push_str(child);
+            }
         }
     }
     if let Some(ref root) = for_xml.root {

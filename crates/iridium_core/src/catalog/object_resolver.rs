@@ -17,9 +17,9 @@ impl ObjectResolver for CatalogImpl {
         if let Some(view) = self.find_view(schema, name) {
             return Some(view.object_id);
         }
-        let trigger_idx = self
-            .trigger_map
+        let trigger = self
+            .triggers
             .get(&(normalize_identifier(schema), normalize_identifier(name)))?;
-        Some(self.triggers[*trigger_idx].object_id)
+        Some(trigger.object_id)
     }
 }

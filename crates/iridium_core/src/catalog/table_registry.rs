@@ -2,45 +2,40 @@ use super::*;
 use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
+fn table_key(t: &TableDef) -> (u32, String) {
+    (t.schema_id, normalize_identifier(&t.name))
+}
+
 impl TableRegistry for CatalogImpl {
-    fn get_tables(&self) -> &[Arc<TableDef>] {
-        &self.tables
+    fn get_tables(&self) -> CowRegistryView<'_, TableDef> {
+        self.tables.view()
     }
 
     fn find_table(&self, schema: &str, name: &str) -> Option<&TableDef> {
         let schema_id = self.get_schema_id(schema)?;
-        let idx = self
-            .table_map
-            .get(&(schema_id, normalize_identifier(name)))?;
-        Some(&self.tables[*idx])
+        self.tables.get(&(schema_id, normalize_identifier(name)))
     }
 
     fn find_table_arc(&self, schema: &str, name: &str) -> Option<Arc<TableDef>> {
         let schema_id = self.get_schema_id(schema)?;
-        let idx = self
-            .table_map
-            .get(&(schema_id, normalize_identifier(name)))?;
-        Some(Arc::clone(&self.tables[*idx]))
+        self.tables
+            .get_arc(&(schema_id, normalize_identifier(name)))
     }
 
     fn find_table_mut(&mut self, schema: &str, name: &str) -> Option<&mut TableDef> {
         let schema_id = self.get_schema_id(schema)?;
-        let idx = *self
-            .table_map
-            .get(&(schema_id, normalize_identifier(name)))?;
-        Some(Arc::make_mut(&mut Arc::make_mut(&mut self.tables)[idx]))
+        self.tables
+            .get_mut(&(schema_id, normalize_identifier(name)))
     }
 
     fn register_table(&mut self, table: TableDef) {
-        let idx = self.tables.len();
-        Arc::make_mut(&mut self.table_map)
-            .insert((table.schema_id, normalize_identifier(&table.name)), idx);
-        Arc::make_mut(&mut self.tables).push(Arc::new(table));
+        let key = table_key(&table);
+        self.tables.insert_or_replace(key, table);
     }
 
     fn unregister_table_by_id(&mut self, id: u32) {
-        if let Some(idx) = self.tables.iter().position(|t| t.id == id) {
-            self.remove_table_at(idx);
+        if let Some(removed) = self.tables.remove_by(|t| t.id == id, table_key) {
+            self.remove_indexes_for_table_id(removed.id);
         }
     }
 
@@ -49,22 +44,22 @@ impl TableRegistry for CatalogImpl {
             .get_schema_id(schema)
             .ok_or_else(|| DbError::schema_not_found(schema))?;
 
-        let idx = *self
-            .table_map
-            .get(&(schema_id, normalize_identifier(name)))
+        let key = (schema_id, normalize_identifier(name));
+        let removed = self
+            .tables
+            .remove(&key, table_key)
             .ok_or_else(|| DbError::table_not_found(schema, name))?;
 
-        let table_id = self.tables[idx].id;
-        self.remove_table_at(idx);
+        let table_id = removed.id;
+        self.remove_indexes_for_table_id(table_id);
         Ok(table_id)
     }
 
     fn next_identity_value(&mut self, table_id: u32, column_name: &str) -> Result<i64, DbError> {
-        let table_arc = Arc::make_mut(&mut self.tables)
-            .iter_mut()
-            .find(|t| t.id == table_id)
+        let table = self
+            .tables
+            .find_mut_by(|t| t.id == table_id, table_key)
             .ok_or_else(|| DbError::object_not_found(format!("table ID {}", table_id)))?;
-        let table = Arc::make_mut(table_arc);
 
         let col = table
             .columns

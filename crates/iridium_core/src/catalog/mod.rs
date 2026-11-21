@@ -1,3 +1,4 @@
+mod cow_registry;
 mod id_allocator;
 mod index_registry;
 mod object_resolver;
@@ -9,6 +10,9 @@ mod table_registry;
 mod trigger_registry;
 mod type_registry;
 mod view_registry;
+
+use cow_registry::CowRegistry;
+pub use cow_registry::{CowRegistryIter, CowRegistryView};
 
 use crate::ast::Expr;
 use crate::ast::{DataTypeSpec, FunctionBody, RoutineParam, Statement, TriggerEvent};
@@ -244,7 +248,7 @@ pub trait SchemaRegistry {
 }
 
 pub trait TableRegistry {
-    fn get_tables(&self) -> &[Arc<TableDef>];
+    fn get_tables(&self) -> CowRegistryView<'_, TableDef>;
     fn find_table(&self, schema: &str, name: &str) -> Option<&TableDef>;
     fn find_table_arc(&self, schema: &str, name: &str) -> Option<Arc<TableDef>> {
         self.find_table(schema, name).cloned().map(Arc::new)
@@ -290,7 +294,7 @@ pub trait IndexRegistry {
 }
 
 pub trait RoutineRegistry {
-    fn get_routines(&self) -> &[Arc<RoutineDef>];
+    fn get_routines(&self) -> CowRegistryView<'_, RoutineDef>;
     fn find_routine(&self, schema: &str, name: &str) -> Option<&RoutineDef>;
     fn create_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
     fn replace_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
@@ -310,14 +314,14 @@ pub trait TypeRegistry {
 }
 
 pub trait ViewRegistry {
-    fn get_views(&self) -> &[Arc<ViewDef>];
+    fn get_views(&self) -> CowRegistryView<'_, ViewDef>;
     fn find_view(&self, schema: &str, name: &str) -> Option<&ViewDef>;
     fn create_view(&mut self, view: ViewDef) -> Result<(), DbError>;
     fn drop_view(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
 }
 
 pub trait TriggerRegistry {
-    fn get_triggers(&self) -> &[Arc<TriggerDef>];
+    fn get_triggers(&self) -> CowRegistryView<'_, TriggerDef>;
     fn find_triggers_for_table(&self, schema: &str, name: &str) -> Vec<&TriggerDef>;
     fn create_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError>;
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
@@ -401,49 +405,18 @@ mod arc_serde {
     }
 }
 
-mod arc_vec_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::Arc;
-
-    pub fn serialize<S, T>(val: &Arc<Vec<Arc<T>>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-        T: Serialize,
-    {
-        use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(val.len()))?;
-        for item in val.iter() {
-            seq.serialize_element(item.as_ref())?;
-        }
-        seq.end()
-    }
-
-    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<Vec<Arc<T>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-        T: Deserialize<'de>,
-    {
-        let v: Vec<T> = Vec::deserialize(deserializer)?;
-        Ok(Arc::new(v.into_iter().map(Arc::new).collect()))
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogImpl {
     #[serde(with = "arc_serde")]
     schemas: Arc<Vec<SchemaDef>>,
-    #[serde(with = "arc_vec_serde")]
-    tables: Arc<Vec<Arc<TableDef>>>,
+    tables: CowRegistry<(u32, String), TableDef>,
     #[serde(with = "arc_serde")]
     indexes: Arc<Vec<IndexDef>>,
-    #[serde(with = "arc_vec_serde")]
-    routines: Arc<Vec<Arc<RoutineDef>>>,
+    routines: CowRegistry<(String, String), RoutineDef>,
     #[serde(with = "arc_serde")]
     table_types: Arc<Vec<TableTypeDef>>,
-    #[serde(with = "arc_vec_serde")]
-    views: Arc<Vec<Arc<ViewDef>>>,
-    #[serde(with = "arc_vec_serde")]
-    triggers: Arc<Vec<Arc<TriggerDef>>>,
+    views: CowRegistry<(String, String), ViewDef>,
+    triggers: CowRegistry<(String, String), TriggerDef>,
     #[serde(with = "arc_serde")]
     synonyms: Arc<Vec<SynonymDef>>,
     #[serde(with = "arc_serde")]
@@ -458,15 +431,7 @@ pub struct CatalogImpl {
     #[serde(skip)]
     schema_map: Arc<HashMap<String, usize>>,
     #[serde(skip)]
-    table_map: Arc<HashMap<(u32, String), usize>>,
-    #[serde(skip)]
-    routine_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
     type_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
-    view_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
-    trigger_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
     synonym_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
@@ -495,28 +460,14 @@ impl CatalogImpl {
                 .map(|(i, s)| (normalize_identifier(&s.name), i))
                 .collect(),
         );
-        self.table_map = Arc::new(
-            self.tables
-                .iter()
-                .enumerate()
-                .map(|(i, t)| ((t.schema_id, normalize_identifier(&t.name)), i))
-                .collect(),
-        );
-        self.routine_map = Arc::new(
-            self.routines
-                .iter()
-                .enumerate()
-                .map(|(i, r)| {
-                    (
-                        (
-                            normalize_identifier(&r.schema),
-                            normalize_identifier(&r.name),
-                        ),
-                        i,
-                    )
-                })
-                .collect(),
-        );
+        self.tables
+            .rebuild_map(|t| (t.schema_id, normalize_identifier(&t.name)));
+        self.routines.rebuild_map(|r| {
+            (
+                normalize_identifier(&r.schema),
+                normalize_identifier(&r.name),
+            )
+        });
         self.type_map = Arc::new(
             self.table_types
                 .iter()
@@ -562,36 +513,18 @@ impl CatalogImpl {
                 })
                 .collect(),
         );
-        self.view_map = Arc::new(
-            self.views
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    (
-                        (
-                            normalize_identifier(&v.schema),
-                            normalize_identifier(&v.name),
-                        ),
-                        i,
-                    )
-                })
-                .collect(),
-        );
-        self.trigger_map = Arc::new(
-            self.triggers
-                .iter()
-                .enumerate()
-                .map(|(i, t)| {
-                    (
-                        (
-                            normalize_identifier(&t.schema),
-                            normalize_identifier(&t.name),
-                        ),
-                        i,
-                    )
-                })
-                .collect(),
-        );
+        self.views.rebuild_map(|v| {
+            (
+                normalize_identifier(&v.schema),
+                normalize_identifier(&v.name),
+            )
+        });
+        self.triggers.rebuild_map(|t| {
+            (
+                normalize_identifier(&t.schema),
+                normalize_identifier(&t.name),
+            )
+        });
         self.index_map = Arc::new(
             self.indexes
                 .iter()
@@ -601,27 +534,11 @@ impl CatalogImpl {
         );
     }
 
-    /// Remove the table at `idx` using swap_remove (O(1)) and fix up only the
-    /// table_map and index_map entries that were affected.
-    pub(crate) fn remove_table_at(&mut self, idx: usize) {
-        let tables = Arc::make_mut(&mut self.tables);
-        let removed = tables.swap_remove(idx);
-        let table_map = Arc::make_mut(&mut self.table_map);
-        table_map.remove(&(removed.schema_id, normalize_identifier(&removed.name)));
-
-        // If swap_remove moved the last element into `idx`, update its map entry.
-        if idx < tables.len() {
-            let swapped = &tables[idx];
-            table_map.insert(
-                (swapped.schema_id, normalize_identifier(&swapped.name)),
-                idx,
-            );
-        }
-
-        // Only clone indexes if any actually belonged to this table.
-        if self.indexes.iter().any(|i| i.table_id == removed.id) {
+    /// Remove any indexes belonging to `table_id`, cloning `indexes` only if needed.
+    pub(crate) fn remove_indexes_for_table_id(&mut self, table_id: u32) {
+        if self.indexes.iter().any(|i| i.table_id == table_id) {
             let indexes = Arc::make_mut(&mut self.indexes);
-            indexes.retain(|i| i.table_id != removed.id);
+            indexes.retain(|i| i.table_id != table_id);
             self.index_map = Arc::new(
                 indexes
                     .iter()
@@ -637,12 +554,12 @@ impl Default for CatalogImpl {
     fn default() -> Self {
         Self {
             schemas: Arc::new(Vec::new()),
-            tables: Arc::new(Vec::new()),
+            tables: CowRegistry::default(),
             indexes: Arc::new(Vec::new()),
-            routines: Arc::new(Vec::new()),
+            routines: CowRegistry::default(),
             table_types: Arc::new(Vec::new()),
-            views: Arc::new(Vec::new()),
-            triggers: Arc::new(Vec::new()),
+            views: CowRegistry::default(),
+            triggers: CowRegistry::default(),
             synonyms: Arc::new(Vec::new()),
             sequences: Arc::new(Vec::new()),
             next_schema_id: 1,
@@ -651,11 +568,7 @@ impl Default for CatalogImpl {
             next_index_id: 234567890,
             next_object_id: -1,
             schema_map: Arc::new(HashMap::new()),
-            table_map: Arc::new(HashMap::new()),
-            routine_map: Arc::new(HashMap::new()),
             type_map: Arc::new(HashMap::new()),
-            view_map: Arc::new(HashMap::new()),
-            trigger_map: Arc::new(HashMap::new()),
             synonym_map: Arc::new(HashMap::new()),
             sequence_map: Arc::new(HashMap::new()),
             index_map: Arc::new(HashMap::new()),

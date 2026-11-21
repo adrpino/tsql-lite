@@ -55,6 +55,26 @@ impl<'a> WindowExecutor<'a> {
         rows: Vec<JoinedRow>,
         ctx: &mut ExecutionContext,
     ) -> Result<super::result::QueryResult, DbError> {
+        self.execute_with_groups(projection, rows, None, ctx)
+    }
+
+    pub fn execute_grouped(
+        &self,
+        projection: &[SelectItem],
+        groups: Vec<Group>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<super::result::QueryResult, DbError> {
+        let rep_rows: Vec<JoinedRow> = groups.iter().map(|g| g.rows[0].clone()).collect();
+        self.execute_with_groups(projection, rep_rows, Some(&groups), ctx)
+    }
+
+    fn execute_with_groups(
+        &self,
+        projection: &[SelectItem],
+        rows: Vec<JoinedRow>,
+        groups: Option<&[Group]>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<super::result::QueryResult, DbError> {
         let has_window = projection
             .iter()
             .any(|item| has_window_function(&item.expr));
@@ -79,6 +99,9 @@ impl<'a> WindowExecutor<'a> {
                 .iter()
                 .enumerate()
                 .map(|(idx, row)| {
+                    if let Some(gs) = groups {
+                        ctx.row.current_group = Some(gs[idx].clone());
+                    }
                     let p_vals = spec
                         .partition_by
                         .iter()
@@ -104,6 +127,7 @@ impl<'a> WindowExecutor<'a> {
                     }
                 })
                 .collect();
+            ctx.row.current_group = None;
 
             // 2. Sort rows based on cached PARTITION BY and ORDER BY values
             window_rows.sort_by(|a, b| {
@@ -448,6 +472,9 @@ impl<'a> WindowExecutor<'a> {
         ctx.row.window_context = Some(wc);
         for (idx, row) in rows.iter().enumerate() {
             ctx.row.window_context.as_mut().unwrap().row_idx = idx;
+            if let Some(gs) = groups {
+                ctx.row.current_group = Some(gs[idx].clone());
+            }
             let mut projected_row = Vec::with_capacity(projection.len());
             for item in projection {
                 match &item.expr {
@@ -492,6 +519,7 @@ impl<'a> WindowExecutor<'a> {
             }
             final_projected_rows.push(projected_row);
         }
+        ctx.row.current_group = None;
         ctx.row.window_context = None;
 
         let columns: Vec<String> =

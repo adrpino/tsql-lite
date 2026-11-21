@@ -247,7 +247,7 @@ pub(crate) fn enforce_foreign_keys_on_insert(
             continue;
         }
         let mut row_values = Vec::new();
-        let mut all_null = true;
+        let mut any_null = false;
         for col_name in &fk.columns {
             let col_idx = table
                 .columns
@@ -255,13 +255,13 @@ pub(crate) fn enforce_foreign_keys_on_insert(
                 .position(|c| c.name.eq_ignore_ascii_case(col_name))
                 .ok_or_else(|| DbError::column_not_found(col_name))?;
             let val = &row.values[col_idx];
-            if !val.is_null() {
-                all_null = false;
+            if val.is_null() {
+                any_null = true;
             }
             row_values.push(val.clone());
         }
 
-        if all_null {
+        if any_null {
             continue;
         }
 

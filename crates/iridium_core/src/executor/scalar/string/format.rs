@@ -622,10 +622,11 @@ fn format_float_value(f: f64, fmt: &str) -> String {
         } else {
             2
         };
+        let num = format_number_with_commas(&format!("{:.*}", decimals, f.abs()));
         if f < 0.0 {
-            format!("-${:.*}", decimals, f.abs())
+            format!("-${}", num)
         } else {
-            format!("${:.*}", decimals, f)
+            format!("${}", num)
         }
     } else if fmt.starts_with('P') || fmt.starts_with('p') {
         let decimals: usize = if fmt.len() > 1 {

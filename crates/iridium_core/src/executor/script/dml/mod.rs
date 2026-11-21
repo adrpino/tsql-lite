@@ -161,10 +161,19 @@ impl<'a> ScriptExecutor<'a> {
 
         let mut columns = Vec::new();
         for (i, name) in result.columns.iter().enumerate() {
+            let data_type = match result.column_types[i].clone() {
+                crate::types::DataType::VarChar { max_len } if max_len < 4000 => {
+                    crate::types::DataType::VarChar { max_len: 4000 }
+                }
+                crate::types::DataType::NVarChar { max_len } if max_len < 4000 => {
+                    crate::types::DataType::NVarChar { max_len: 4000 }
+                }
+                other => other,
+            };
             columns.push(crate::catalog::ColumnDef {
                 id: self.catalog.alloc_column_id(),
                 name: name.clone(),
-                data_type: result.column_types[i].clone(),
+                data_type,
                 nullable: true,
                 primary_key: false,
                 unique: false,

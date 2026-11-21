@@ -181,7 +181,34 @@ impl DbError {
             DbError::DivideByZero => 8134,
             DbError::ConversionFailed { .. } => 245,
             DbError::Semantic(_) => 50000,
-            DbError::Execution(_) => 50000,
+            DbError::Execution(msg) => {
+                let lower = msg.to_ascii_lowercase();
+                if lower.contains("check constraint")
+                    || lower.contains("foreign key constraint")
+                    || lower.contains("reference constraint")
+                {
+                    547
+                } else if lower.contains("primary key")
+                    || lower.contains("unique key")
+                    || lower.contains("duplicate key")
+                {
+                    2627
+                } else if lower.contains("8672") || lower.contains("same row more than once") {
+                    8672
+                } else if lower.contains("cannot insert the value null")
+                    || lower.contains("cannot be null")
+                {
+                    515
+                } else if lower.contains("arithmetic overflow") {
+                    220
+                } else if lower.contains("would be truncated") {
+                    8152
+                } else if lower.contains("divide by zero") {
+                    8134
+                } else {
+                    50000
+                }
+            }
             DbError::Storage(_) => 50001,
             DbError::Custom { number, .. } => *number,
             _ => 50000,

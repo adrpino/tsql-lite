@@ -22,13 +22,91 @@ pub(crate) fn eval_coalesce(
             "COALESCE requires at least one argument".into(),
         ));
     }
+    let mut chosen = Value::Null;
     for arg in args {
         let val = eval_expr(arg, row, ctx, catalog, storage, clock)?;
         if !val.is_null() {
-            return Ok(val);
+            chosen = val;
+            break;
         }
     }
-    Ok(Value::Null)
+    if chosen.is_null() {
+        return Ok(Value::Null);
+    }
+    // SQL Server COALESCE returns the highest-precedence data type among all arguments;
+    // when an earlier NULL argument is a numeric column and the fallback is a string (e.g. ''),
+    // coerce the fallback to the numeric column's type.
+    if matches!(
+        chosen,
+        Value::Char(_) | Value::VarChar(_) | Value::NChar(_) | Value::NVarChar(_)
+    ) {
+        if let Some(target_ty) = highest_numeric_arg_type(args, row) {
+            if let Ok(coerced) = crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                chosen.clone(),
+                &target_ty,
+                &ctx.options.dateformat,
+            ) {
+                return Ok(coerced);
+            }
+        }
+    }
+    Ok(chosen)
+}
+
+fn highest_numeric_arg_type(
+    args: &[Expr],
+    row: &[ContextTable],
+) -> Option<crate::types::DataType> {
+    let mut best: Option<crate::types::DataType> = None;
+    for arg in args {
+        let col_ty = match arg {
+            Expr::Identifier(col) => row.iter().find_map(|ct| {
+                ct.table
+                    .columns
+                    .iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(col))
+                    .map(|c| c.data_type.clone())
+            }),
+            Expr::QualifiedIdentifier(parts) if parts.len() >= 2 => {
+                let col = parts.last().unwrap();
+                let qual = &parts[parts.len() - 2];
+                row.iter().find_map(|ct| {
+                    if ct.alias.eq_ignore_ascii_case(qual)
+                        || ct.table.name.eq_ignore_ascii_case(qual)
+                    {
+                        ct.table
+                            .columns
+                            .iter()
+                            .find(|c| c.name.eq_ignore_ascii_case(col))
+                            .map(|c| c.data_type.clone())
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => None,
+        };
+        if let Some(ty) = col_ty {
+            if matches!(
+                ty,
+                crate::types::DataType::Bit
+                    | crate::types::DataType::TinyInt
+                    | crate::types::DataType::SmallInt
+                    | crate::types::DataType::Int
+                    | crate::types::DataType::BigInt
+                    | crate::types::DataType::Decimal { .. }
+                    | crate::types::DataType::Money
+                    | crate::types::DataType::SmallMoney
+                    | crate::types::DataType::Float
+            ) {
+                best = Some(match best {
+                    None => ty,
+                    Some(prev) => crate::types::type_precedence_join(&prev, &ty),
+                });
+            }
+        }
+    }
+    best
 }
 
 pub(crate) fn eval_isnull(

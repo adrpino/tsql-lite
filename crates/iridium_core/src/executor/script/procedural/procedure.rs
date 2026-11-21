@@ -288,8 +288,32 @@ impl<'a> ScriptExecutor<'a> {
                 };
                 match &param.param_type {
                     RoutineParamType::Scalar(dt) => {
-                        let val =
-                            eval_expr(&arg.expr, &[], ctx, self.catalog, self.storage, self.clock)?;
+                        let val = match eval_expr(
+                            &arg.expr,
+                            &[],
+                            ctx,
+                            self.catalog,
+                            self.storage,
+                            self.clock,
+                        ) {
+                            Ok(v) => v,
+                            Err(DbError::ColumnNotFound { .. }) => {
+                                // T-SQL allows unquoted single-word string arguments in EXEC calls
+                                // (e.g. `EXEC dbo.p 1, 2, FRT`).
+                                if let crate::ast::Expr::Identifier(ref bare) = arg.expr {
+                                    if !bare.starts_with('@') {
+                                        Value::VarChar(bare.clone())
+                                    } else {
+                                        return Err(DbError::invalid_identifier(bare));
+                                    }
+                                } else {
+                                    return Err(DbError::Execution(
+                                        "invalid procedure argument expression".into(),
+                                    ));
+                                }
+                            }
+                            Err(e) => return Err(e),
+                        };
                         let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
                         let coerced = truncate_param_string(
                             coerce_value_to_type_with_dateformat(

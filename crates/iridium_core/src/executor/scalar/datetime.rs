@@ -526,3 +526,103 @@ pub(crate) fn eval_datediff_big(
         other => Ok(other),
     }
 }
+
+pub(crate) fn eval_datefromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 3 {
+        return Err(DbError::Execution(
+            "DATEFROMPARTS expects 3 arguments".into(),
+        ));
+    }
+    let yv = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let mv = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    let dv = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+    if yv.is_null() || mv.is_null() || dv.is_null() {
+        return Ok(Value::Null);
+    }
+    let y = yv.to_integer_i64().unwrap_or(0) as i32;
+    let m = mv.to_integer_i64().unwrap_or(0) as u32;
+    let d = dv.to_integer_i64().unwrap_or(0) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(y, m, d).ok_or_else(|| {
+        DbError::Execution(format!(
+            "Cannot construct data type date, some of the arguments have values which are not valid ({y}-{m}-{d})."
+        ))
+    })?;
+    Ok(Value::Date(date))
+}
+
+pub(crate) fn eval_datetimefromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 7 {
+        return Err(DbError::Execution(
+            "DATETIMEFROMPARTS expects 7 arguments".into(),
+        ));
+    }
+    let mut vals = Vec::with_capacity(7);
+    for a in args {
+        let v = eval_expr(a, row, ctx, catalog, storage, clock)?;
+        if v.is_null() {
+            return Ok(Value::Null);
+        }
+        vals.push(v.to_integer_i64().unwrap_or(0));
+    }
+    let date = chrono::NaiveDate::from_ymd_opt(vals[0] as i32, vals[1] as u32, vals[2] as u32)
+        .ok_or_else(|| DbError::Execution("Invalid date arguments to DATETIMEFROMPARTS".into()))?;
+    let dt = date
+        .and_hms_milli_opt(
+            vals[3] as u32,
+            vals[4] as u32,
+            vals[5] as u32,
+            vals[6] as u32,
+        )
+        .ok_or_else(|| DbError::Execution("Invalid time arguments to DATETIMEFROMPARTS".into()))?;
+    Ok(Value::DateTime(dt))
+}
+
+pub(crate) fn eval_datetime2fromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 8 {
+        return Err(DbError::Execution(
+            "DATETIME2FROMPARTS expects 8 arguments".into(),
+        ));
+    }
+    let mut vals = Vec::with_capacity(8);
+    for a in args {
+        let v = eval_expr(a, row, ctx, catalog, storage, clock)?;
+        if v.is_null() {
+            return Ok(Value::Null);
+        }
+        vals.push(v.to_integer_i64().unwrap_or(0));
+    }
+    let date = chrono::NaiveDate::from_ymd_opt(vals[0] as i32, vals[1] as u32, vals[2] as u32)
+        .ok_or_else(|| DbError::Execution("Invalid date arguments to DATETIME2FROMPARTS".into()))?;
+    let precision = vals[7].clamp(0, 7) as u32;
+    let nanos = if precision == 0 {
+        0u32
+    } else {
+        let factor = 10u64.pow(9 - precision);
+        ((vals[6] as u64) * factor).min(999_999_999) as u32
+    };
+    let dt = date
+        .and_hms_nano_opt(vals[3] as u32, vals[4] as u32, vals[5] as u32, nanos)
+        .ok_or_else(|| DbError::Execution("Invalid time arguments to DATETIME2FROMPARTS".into()))?;
+    Ok(Value::DateTime2(dt))
+}

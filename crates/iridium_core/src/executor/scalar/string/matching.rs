@@ -29,8 +29,8 @@ pub(crate) fn eval_charindex(
         return Ok(Value::Null);
     }
 
-    let search_str = search.to_string_value();
-    let target_str = target.to_string_value();
+    let search_str = search.to_string_value().to_lowercase();
+    let target_str = target.to_string_value().to_lowercase();
 
     let start_pos = if args.len() == 3 {
         let sp = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
@@ -40,9 +40,14 @@ pub(crate) fn eval_charindex(
     };
 
     let start_idx = if start_pos > 0 { start_pos - 1 } else { 0 };
-    let result = if start_idx < target_str.len() {
-        target_str[start_idx..]
-            .find(&search_str)
+    let target_chars: Vec<char> = target_str.chars().collect();
+    let search_chars: Vec<char> = search_str.chars().collect();
+    let result = if search_chars.is_empty() {
+        0
+    } else if start_idx + search_chars.len() <= target_chars.len() {
+        target_chars[start_idx..]
+            .windows(search_chars.len())
+            .position(|w| w == search_chars.as_slice())
             .map(|pos| (start_idx + pos + 1) as i64)
             .unwrap_or(0)
     } else {

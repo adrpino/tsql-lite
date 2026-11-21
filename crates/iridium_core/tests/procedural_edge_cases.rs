@@ -1958,3 +1958,68 @@ fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_va
     exec(&mut e, "CREATE TABLE dbo.t_empty (id INT)");
     assert!(e.exec("SELECT COUNT(*), MIN(no_such_col) FROM dbo.t_empty").is_err());
 }
+
+#[test]
+fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromparts_cast_trunc_currency_commas_charindex_ci_error_number_coalesce_and_bare_exec_arg() {
+    let mut e = Engine::new();
+
+    // 1. GROUP BY + SUM() + ROW_NUMBER() OVER (...) in the same SELECT
+    exec(&mut e, "CREATE TABLE #sales (grp VARCHAR(10), amt INT)");
+    exec(&mut e, "INSERT INTO #sales VALUES ('B', 10), ('B', 5), ('A', 20)");
+    let r1 = query(
+        &mut e,
+        "SELECT grp, SUM(amt) AS total, ROW_NUMBER() OVER (ORDER BY grp) AS rn FROM #sales GROUP BY grp ORDER BY grp",
+    );
+    assert_eq!(r1.rows.len(), 2);
+    assert_eq!(r1.rows[0][0].to_string_value(), "A");
+    assert_eq!(r1.rows[0][1].to_integer_i64(), Some(20));
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[1][0].to_string_value(), "B");
+    assert_eq!(r1.rows[1][1].to_integer_i64(), Some(15));
+    assert_eq!(r1.rows[1][2].to_integer_i64(), Some(2));
+
+    // 2. SELECT INTO widens inferred VARCHAR column so later UPDATE with longer string succeeds
+    exec(&mut e, "SELECT CAST(123 AS VARCHAR(50)) AS code INTO #tmp_w");
+    exec(&mut e, "UPDATE #tmp_w SET code = '0000001234'");
+    let r2 = query(&mut e, "SELECT code FROM #tmp_w");
+    assert_eq!(r2.rows[0][0].to_string_value(), "0000001234");
+
+    // 3. Composite FK skips validation when any FK column is NULL
+    exec(&mut e, "CREATE TABLE dbo.cfk_parent (a INT NOT NULL, b INT NOT NULL, CONSTRAINT PK_cfk_p PRIMARY KEY (a, b))");
+    exec(&mut e, "CREATE TABLE dbo.cfk_child (id INT, a INT NOT NULL, b INT NULL, CONSTRAINT FK_cfk FOREIGN KEY (a, b) REFERENCES dbo.cfk_parent (a, b))");
+    exec(&mut e, "INSERT INTO dbo.cfk_child VALUES (1, 99, NULL)");
+
+    // 4. DATEFROMPARTS, CAST(TIME AS VARCHAR(2)) truncation, FORMAT C4 commas, CHARINDEX CI
+    let r4 = query(
+        &mut e,
+        "SELECT DATEFROMPARTS(2026, 6, 15),
+                CAST(CAST('10:00:00' AS TIME) AS VARCHAR(2)),
+                FORMAT(CAST(1225 AS DECIMAL(18,4)), 'C4', 'en-US'),
+                CHARINDEX('<html', '<HTML>hi</HTML>')",
+    );
+    assert_eq!(r4.rows[0][0].to_string_value(), "2026-06-15");
+    assert_eq!(r4.rows[0][1].to_string_value(), "10");
+    assert_eq!(r4.rows[0][2].to_string_value(), "$1,225.0000");
+    assert_eq!(r4.rows[0][3].to_integer_i64(), Some(1));
+
+    // 5. ERROR_NUMBER() returns 547 on CHECK constraint violation
+    exec(&mut e, "CREATE TABLE dbo.t_chk (x INT, CONSTRAINT CK_t_chk CHECK (x <> 42))");
+    exec(&mut e, "DECLARE @err INT = 0");
+    exec(
+        &mut e,
+        "BEGIN TRY INSERT INTO dbo.t_chk VALUES (42); END TRY BEGIN CATCH SET @err = ERROR_NUMBER(); END CATCH",
+    );
+    let r5 = query(&mut e, "SELECT @err");
+    assert_eq!(r5.rows[0][0].to_integer_i64(), Some(547));
+
+    // 6. COALESCE(INT NULL, '') coerces to INT (0)
+    exec(&mut e, "CREATE TABLE #c_int (n INT NULL)");
+    exec(&mut e, "INSERT INTO #c_int VALUES (NULL)");
+    let r6 = query(&mut e, "SELECT COALESCE(n, '') FROM #c_int");
+    assert_eq!(r6.rows[0][0].to_integer_i64(), Some(0));
+
+    // 7. Bare unquoted word argument in EXEC proc
+    exec(&mut e, "CREATE PROCEDURE dbo.p_kind (@k VARCHAR(10)) AS BEGIN SELECT @k AS k; END");
+    let r7 = query(&mut e, "EXEC ('dbo.p_kind FRT')");
+    assert_eq!(r7.rows[0][0].to_string_value(), "FRT");
+}

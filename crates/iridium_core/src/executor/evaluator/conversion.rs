@@ -28,20 +28,16 @@ pub(crate) fn eval_conversion_expr(
         )),
         Expr::Cast { expr, target } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            coerce_value_to_type_with_dateformat(
-                value,
-                &data_type_spec_to_runtime(target),
-                &ctx.options.dateformat,
-            )
+            let runtime_ty = data_type_spec_to_runtime(target);
+            let coerced =
+                coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)?;
+            Ok(truncate_cast_string(coerced, &runtime_ty))
         }
         Expr::TryCast { expr, target } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            match coerce_value_to_type_with_dateformat(
-                value,
-                &data_type_spec_to_runtime(target),
-                &ctx.options.dateformat,
-            ) {
-                Ok(v) => Ok(v),
+            let runtime_ty = data_type_spec_to_runtime(target);
+            match coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat) {
+                Ok(v) => Ok(truncate_cast_string(v, &runtime_ty)),
                 Err(_) => Ok(Value::Null),
             }
         }
@@ -51,20 +47,13 @@ pub(crate) fn eval_conversion_expr(
             style,
         } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            if let Some(style_code) = style {
-                convert_with_style(
-                    value,
-                    &data_type_spec_to_runtime(target),
-                    *style_code,
-                    &ctx.options.dateformat,
-                )
+            let runtime_ty = data_type_spec_to_runtime(target);
+            let coerced = if let Some(style_code) = style {
+                convert_with_style(value, &runtime_ty, *style_code, &ctx.options.dateformat)?
             } else {
-                coerce_value_to_type_with_dateformat(
-                    value,
-                    &data_type_spec_to_runtime(target),
-                    &ctx.options.dateformat,
-                )
-            }
+                coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)?
+            };
+            Ok(truncate_cast_string(coerced, &runtime_ty))
         }
         Expr::TryConvert {
             target,
@@ -72,27 +61,44 @@ pub(crate) fn eval_conversion_expr(
             style,
         } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
+            let runtime_ty = data_type_spec_to_runtime(target);
             let result = if let Some(style_code) = style {
-                convert_with_style(
-                    value,
-                    &data_type_spec_to_runtime(target),
-                    *style_code,
-                    &ctx.options.dateformat,
-                )
+                convert_with_style(value, &runtime_ty, *style_code, &ctx.options.dateformat)
             } else {
-                coerce_value_to_type_with_dateformat(
-                    value,
-                    &data_type_spec_to_runtime(target),
-                    &ctx.options.dateformat,
-                )
+                coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)
             };
             match result {
-                Ok(v) => Ok(v),
+                Ok(v) => Ok(truncate_cast_string(v, &runtime_ty)),
                 Err(_) => Ok(Value::Null),
             }
         }
         _ => Err(DbError::Execution(
             "eval_conversion_expr called with non-conversion expression".into(),
         )),
+    }
+}
+
+fn truncate_cast_string(val: Value, ty: &crate::types::DataType) -> Value {
+    let limit = match ty {
+        crate::types::DataType::VarChar { max_len }
+        | crate::types::DataType::NVarChar { max_len }
+            if *max_len < u16::MAX =>
+        {
+            Some(*max_len as usize)
+        }
+        crate::types::DataType::Char { len } | crate::types::DataType::NChar { len } => {
+            Some(*len as usize)
+        }
+        _ => None,
+    };
+    let Some(limit) = limit else {
+        return val;
+    };
+    match val {
+        Value::VarChar(s) => Value::VarChar(s.chars().take(limit).collect()),
+        Value::NVarChar(s) => Value::NVarChar(s.chars().take(limit).collect()),
+        Value::Char(s) => Value::Char(s.chars().take(limit).collect()),
+        Value::NChar(s) => Value::NChar(s.chars().take(limit).collect()),
+        other => other,
     }
 }

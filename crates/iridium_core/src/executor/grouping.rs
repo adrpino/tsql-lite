@@ -194,13 +194,13 @@ impl<'a> GroupExecutor<'a> {
         Ok(groups)
     }
 
-    pub fn collect_grouped_representative_rows(
+    pub fn collect_surviving_groups(
         &self,
         rows: Vec<JoinedRow>,
         group_by: &[Expr],
         having: Option<&Expr>,
         ctx: &mut ExecutionContext,
-    ) -> Result<Vec<JoinedRow>, DbError> {
+    ) -> Result<Vec<Group>, DbError> {
         let groups = self.build_groups(rows, group_by, ctx)?;
         let mut out = Vec::with_capacity(groups.len());
         for group in groups {
@@ -223,7 +223,7 @@ impl<'a> GroupExecutor<'a> {
                 }
             }
             if !sample_row.is_empty() {
-                out.push(sample_row);
+                out.push(group);
             }
         }
         Ok(out)

@@ -28,6 +28,25 @@ use crate::tls;
 use crate::pool::CheckoutError;
 use super::PreparedStatement;
 
+/// Negotiates the `[MS-TDS] §2.2.6.5` PRELOGIN encryption byte and whether the
+/// connection upgrades to full-session TLS immediately after PRELOGIN.
+///
+/// When TLS is disabled, the server must reply `ENCRYPT_NOT_SUP` (never
+/// `ENCRYPT_OFF`, which instructs clients to still initiate a login-only TLS
+/// handshake). When TLS is enabled, `ENCRYPT_OFF`/`ENCRYPT_ON`/`ENCRYPT_REQUIRED`
+/// negotiate full-session TLS (`ENCRYPT_ON`), while `ENCRYPT_NOT_SUP` stays
+/// plaintext.
+fn negotiate_prelogin_encryption(tls_enabled: bool, client_encryption: u8) -> (u8, bool) {
+    if !tls_enabled {
+        return (ENCRYPT_NOT_SUP, false);
+    }
+    match client_encryption {
+        ENCRYPT_NOT_SUP => (ENCRYPT_NOT_SUP, false),
+        ENCRYPT_OFF | ENCRYPT_ON | ENCRYPT_REQUIRED => (ENCRYPT_ON, true),
+        _ => (ENCRYPT_ON, true),
+    }
+}
+
 impl TdsSession {
     pub async fn handle(self, mut stream: TcpStream) -> Result<(), String> {
         let mut needs_tls_upgrade = false;
@@ -56,23 +75,12 @@ impl TdsSession {
                     prelogin.encryption
                 );
 
-                let server_encrypt = if self.config.tls_enabled {
-                    ENCRYPT_ON
-                } else if prelogin.encryption == ENCRYPT_NOT_SUP
-                    || prelogin.encryption == ENCRYPT_ON
-                    || prelogin.encryption == ENCRYPT_REQUIRED
-                {
-                    ENCRYPT_NOT_SUP
-                } else {
-                    ENCRYPT_OFF
-                };
-
-                needs_tls_upgrade = self.config.tls_enabled
-                    && (prelogin.encryption == ENCRYPT_ON
-                        || prelogin.encryption == ENCRYPT_REQUIRED);
+                let (server_encrypt, upgrade_tls) =
+                    negotiate_prelogin_encryption(self.config.tls_enabled, prelogin.encryption);
+                needs_tls_upgrade = upgrade_tls;
 
                 let response = build_prelogin_response(server_encrypt);
-                packet::write_packet(&mut stream, TDS7_PRELOGIN, &response)
+                packet::write_packet(&mut stream, TABULAR_RESULT, &response)
                     .await
                     .map_err(|e| format!("Failed to write PRELOGIN response: {}", e))?;
                 stream
@@ -1115,5 +1123,50 @@ impl TdsSession {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prelogin_encryption_negotiation_matrix() {
+        // Server without TLS must always reply ENCRYPT_NOT_SUP (0x02) and stay plaintext.
+        assert_eq!(
+            negotiate_prelogin_encryption(false, ENCRYPT_OFF),
+            (ENCRYPT_NOT_SUP, false)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(false, ENCRYPT_ON),
+            (ENCRYPT_NOT_SUP, false)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(false, ENCRYPT_NOT_SUP),
+            (ENCRYPT_NOT_SUP, false)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(false, ENCRYPT_REQUIRED),
+            (ENCRYPT_NOT_SUP, false)
+        );
+
+        // Server with TLS upgrades OFF/ON/REQUIRED to full-session TLS (ENCRYPT_ON)
+        // and honors ENCRYPT_NOT_SUP as plaintext.
+        assert_eq!(
+            negotiate_prelogin_encryption(true, ENCRYPT_OFF),
+            (ENCRYPT_ON, true)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(true, ENCRYPT_ON),
+            (ENCRYPT_ON, true)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(true, ENCRYPT_REQUIRED),
+            (ENCRYPT_ON, true)
+        );
+        assert_eq!(
+            negotiate_prelogin_encryption(true, ENCRYPT_NOT_SUP),
+            (ENCRYPT_NOT_SUP, false)
+        );
     }
 }

@@ -121,7 +121,7 @@ impl<'a> ScriptExecutor<'a> {
                         .enumerate()
                         .map(|(i, name)| crate::catalog::ColumnDef {
                             id: (i + 1) as u32,
-                            name: name.clone(),
+                            name: cte_def.columns.get(i).unwrap_or(name).clone(),
                             data_type: result.column_types[i].clone(),
                             nullable: true,
                             primary_key: false,
@@ -281,7 +281,7 @@ impl<'a> ScriptExecutor<'a> {
                         .enumerate()
                         .map(|(i, name)| crate::catalog::ColumnDef {
                             id: (i + 1) as u32,
-                            name: name.clone(),
+                            name: cte_def.columns.get(i).unwrap_or(name).clone(),
                             data_type: result.column_types[i].clone(),
                             nullable: true,
                             primary_key: false,

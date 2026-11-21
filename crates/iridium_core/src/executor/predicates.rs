@@ -264,7 +264,6 @@ fn like_match(s: &str, pattern: &str, escape: Option<&str>) -> bool {
         }
     }
 
-    let sn = s.len();
     let pn = tokens.len();
 
     let mut dp = vec![false; pn + 1];

@@ -58,6 +58,16 @@ impl<'a> MutationExecutor<'a> {
                 && trigger.events.contains(&event)
                 && trigger.is_instead_of == is_instead_of
             {
+                // SQL Server defaults RECURSIVE_TRIGGERS OFF: skip direct recursion of the
+                // currently executing trigger.
+                if !ctx.options.recursive_triggers
+                    && ctx.frame.active_triggers.iter().any(|(s, n)| {
+                        s.eq_ignore_ascii_case(&trigger.schema)
+                            && n.eq_ignore_ascii_case(&trigger.name)
+                    })
+                {
+                    continue;
+                }
                 if ctx.trigger_depth() >= 16 {
                     return Err(DbError::Execution(
                         "Maximum trigger nesting level (16) exceeded.".into(),
@@ -66,6 +76,10 @@ impl<'a> MutationExecutor<'a> {
                 // Setup inserted/deleted pseudo-tables
                 let mut trigger_ctx = ctx.subquery();
                 trigger_ctx.frame.trigger_depth += 1;
+                trigger_ctx
+                    .frame
+                    .active_triggers
+                    .push((trigger.schema.clone(), trigger.name.clone()));
                 if is_instead_of {
                     trigger_ctx.frame.skip_instead_of = true;
                 }

@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::ast::{SessionOption, SessionOptionValue, SetOptionStmt, Statement};
 use crate::error::DbError;
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionOptions {
     pub ansi_nulls: bool,
@@ -33,6 +37,8 @@ pub struct SessionOptions {
     pub showplan_all: bool,
     pub showplan_xml: bool,
     pub statistics_xml: bool,
+    #[serde(default = "default_true")]
+    pub recursive_triggers: bool,
     #[serde(skip)]
     pub identity_insert: HashSet<String>,
 }
@@ -66,6 +72,7 @@ impl Default for SessionOptions {
             showplan_all: false,
             showplan_xml: false,
             statistics_xml: false,
+            recursive_triggers: true,
             identity_insert: HashSet::new(),
         }
     }

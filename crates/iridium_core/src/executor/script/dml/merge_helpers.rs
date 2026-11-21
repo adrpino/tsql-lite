@@ -213,11 +213,6 @@ pub(crate) fn merge_apply_update_action(
     let old_values = target_row.values.clone();
     let mut temp_row = target_row.clone();
     for assign in assignments {
-        let col_idx = target_table
-            .columns
-            .iter()
-            .position(|c| c.name.eq_ignore_ascii_case(&assign.column))
-            .ok_or_else(|| DbError::Semantic(format!("column '{}' not found", assign.column)))?;
         let val = crate::executor::evaluator::eval_expr(
             &assign.expr,
             combined_ctx,
@@ -226,6 +221,23 @@ pub(crate) fn merge_apply_update_action(
             storage,
             clock,
         )?;
+        if assign.column.starts_with('@') {
+            if let Some((ty, var)) = ctx.session.get_var_mut(&assign.column) {
+                *var = crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                    val,
+                    ty,
+                    &ctx.options.dateformat,
+                )?;
+            } else {
+                return Err(DbError::invalid_identifier(&assign.column));
+            }
+            continue;
+        }
+        let col_idx = target_table
+            .columns
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(&assign.column))
+            .ok_or_else(|| DbError::Semantic(format!("column '{}' not found", assign.column)))?;
         temp_row.values[col_idx] = val;
     }
     crate::executor::mutation::validation::enforce_foreign_keys_on_delete(
@@ -381,6 +393,7 @@ pub(crate) fn merge_process_matched_phase(
         if target_row.deleted {
             continue;
         }
+        let mut target_modified = false;
 
         for (s_idx, source_row) in source_rows.iter().enumerate() {
             let mut combined_ctx = merge_target_context(
@@ -437,6 +450,13 @@ pub(crate) fn merge_process_matched_phase(
                         continue;
                     }
                 }
+
+                if target_modified {
+                    return Err(DbError::Execution(
+                        "The MERGE statement attempted to UPDATE or DELETE the same row more than once. This happens when a target row matches more than one source row. (Error 8672)".into(),
+                    ));
+                }
+                target_modified = true;
 
                 match &when_clause.action {
                     crate::ast::MergeAction::Update { assignments } => {

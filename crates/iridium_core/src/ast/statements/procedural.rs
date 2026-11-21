@@ -129,6 +129,8 @@ pub struct WithCteStmt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CteDef {
     pub name: String,
+    #[serde(default)]
+    pub columns: Vec<String>,
     pub query: crate::ast::Statement,
 }
 
@@ -137,7 +139,13 @@ pub struct SelectAssignStmt {
     pub targets: Vec<SelectAssignTarget>,
     pub from: Option<TableRef>,
     pub joins: Vec<crate::ast::statements::query::JoinClause>,
+    #[serde(default)]
+    pub applies: Vec<crate::ast::statements::query::ApplyClause>,
     pub selection: Option<Expr>,
+    #[serde(default)]
+    pub order_by: Vec<crate::ast::statements::query::OrderByExpr>,
+    #[serde(default)]
+    pub top: Option<crate::ast::statements::query::TopSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

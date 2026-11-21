@@ -86,7 +86,10 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                         assignments: assigns,
                         from: s.from,
                         joins: s.joins,
+                        applies: s.applies,
                         selection: s.selection,
+                        order_by: s.order_by,
+                        top: s.top,
                     }))
                 } else {
                     Ok(Statement::Dml(DmlStatement::Select(Box::new(s))))

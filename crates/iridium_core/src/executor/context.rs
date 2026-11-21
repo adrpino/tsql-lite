@@ -71,6 +71,7 @@ pub struct FrameState {
     pub(crate) trancount: u32,
     pub(crate) xact_state: i8,
     pub(crate) trigger_depth: usize,
+    pub(crate) active_triggers: Vec<(String, String)>,
     pub(crate) module_stack: Vec<ModuleFrame>,
     pub(crate) table_vars: Vec<HashMap<String, String>>,
     pub(crate) readonly_table_vars: Vec<HashSet<String>>,

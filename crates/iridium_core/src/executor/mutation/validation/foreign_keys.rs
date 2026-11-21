@@ -13,6 +13,9 @@ pub(crate) fn enforce_foreign_keys_on_delete(
 ) -> Result<(), DbError> {
     for other_table in catalog.get_tables() {
         for fk in &other_table.foreign_keys {
+            if !fk.enabled {
+                continue;
+            }
             if fk
                 .referenced_table
                 .schema_or_dbo()
@@ -117,6 +120,9 @@ pub(crate) fn enforce_foreign_keys_on_update(
 ) -> Result<(), DbError> {
     for other_table in catalog.get_tables() {
         for fk in &other_table.foreign_keys {
+            if !fk.enabled {
+                continue;
+            }
             if fk
                 .referenced_table
                 .schema_or_dbo()
@@ -237,6 +243,9 @@ pub(crate) fn enforce_foreign_keys_on_insert(
     row: &StoredRow,
 ) -> Result<(), DbError> {
     for fk in &table.foreign_keys {
+        if !fk.enabled {
+            continue;
+        }
         let mut row_values = Vec::new();
         let mut all_null = true;
         for col_name in &fk.columns {

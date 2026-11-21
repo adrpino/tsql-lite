@@ -35,6 +35,7 @@ pub fn lower_statement(parser_stmt: ast::Statement) -> Result<executor_ast::Stat
                     )))?;
                     Ok(executor_ast::statements::procedural::CteDef {
                         name: cte.name,
+                        columns: cte.columns,
                         query,
                     })
                 })

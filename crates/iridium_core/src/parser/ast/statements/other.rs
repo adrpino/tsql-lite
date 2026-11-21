@@ -33,7 +33,10 @@ pub enum DmlStatement {
         assignments: Vec<SelectAssignTarget>,
         from: Option<TableRef>,
         joins: Vec<JoinClause>,
+        applies: Vec<super::query::ApplyClause>,
         selection: Option<Expr>,
+        order_by: Vec<super::query::OrderByExpr>,
+        top: Option<super::query::TopSpec>,
     },
 }
 

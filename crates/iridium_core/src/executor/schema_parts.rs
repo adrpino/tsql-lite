@@ -47,6 +47,7 @@ pub(crate) fn apply_table_constraint(
                 referenced_columns,
                 on_delete: on_delete.unwrap_or(crate::ast::ReferentialAction::NoAction),
                 on_update: on_update.unwrap_or(crate::ast::ReferentialAction::NoAction),
+                enabled: true,
             });
         }
         TableConstraintSpec::PrimaryKey {
@@ -203,6 +204,7 @@ pub(crate) fn create_table(
             on_update: fk_ref
                 .on_update
                 .unwrap_or(crate::ast::ReferentialAction::NoAction),
+            enabled: true,
         });
     }
 
@@ -456,7 +458,17 @@ pub(crate) fn alter_table(
                 .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
             apply_table_constraint(table_mut, constraint)?;
         }
-        AlterTableAction::CheckConstraint { .. } => {}
+        AlterTableAction::CheckConstraint { check, name } => {
+            let table_mut = executor
+                .catalog
+                .find_table_mut(&schema_name, &stmt.table.name)
+                .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
+            for fk in &mut table_mut.foreign_keys {
+                if name.as_ref().is_none_or(|n| fk.name.eq_ignore_ascii_case(n)) {
+                    fk.enabled = check;
+                }
+            }
+        }
         AlterTableAction::ToggleTrigger {
             trigger_name,
             enable,

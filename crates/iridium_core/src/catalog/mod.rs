@@ -31,6 +31,8 @@ pub struct ForeignKeyDef {
     pub referenced_columns: Vec<String>,
     pub on_delete: crate::ast::ReferentialAction,
     pub on_update: crate::ast::ReferentialAction,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

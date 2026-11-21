@@ -61,11 +61,36 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
     }
 
     pub fn fork_isolated(&self) -> Self {
+        let recursive_triggers = self
+            .db
+            .session_manager()
+            .state
+            .sessions
+            .get(&self.default_session)
+            .map(|s| s.lock().options.recursive_triggers)
+            .unwrap_or(true);
         let db = self.db.fork_isolated();
         let default_session = db.session_manager().create_session();
+        if !recursive_triggers {
+            if let Some(session) = db.session_manager().state.sessions.get(&default_session) {
+                session.lock().options.recursive_triggers = false;
+            }
+        }
         Self {
             db,
             default_session,
+        }
+    }
+
+    pub fn set_recursive_triggers(&self, enabled: bool) {
+        if let Some(session) = self
+            .db
+            .session_manager()
+            .state
+            .sessions
+            .get(&self.default_session)
+        {
+            session.lock().options.recursive_triggers = enabled;
         }
     }
 

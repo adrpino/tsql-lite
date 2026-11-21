@@ -194,14 +194,57 @@ impl<'a> GroupExecutor<'a> {
         Ok(groups)
     }
 
+    pub fn collect_grouped_representative_rows(
+        &self,
+        rows: Vec<JoinedRow>,
+        group_by: &[Expr],
+        having: Option<&Expr>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Vec<JoinedRow>, DbError> {
+        let groups = self.build_groups(rows, group_by, ctx)?;
+        let mut out = Vec::with_capacity(groups.len());
+        for group in groups {
+            let sample_row = if group.rows.is_empty() {
+                vec![]
+            } else {
+                group.rows[0].clone()
+            };
+            if let Some(having_expr) = having {
+                if !eval_having_predicate(
+                    having_expr,
+                    &sample_row,
+                    &group,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )? {
+                    continue;
+                }
+            }
+            if !sample_row.is_empty() {
+                out.push(sample_row);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn execute_grouped_select(
         &self,
         projection: Vec<crate::ast::SelectItem>,
         rows: Vec<JoinedRow>,
+        source_shape: Option<&JoinedRow>,
         group_by: Vec<Expr>,
         having: Option<Expr>,
         ctx: &mut ExecutionContext,
     ) -> Result<super::result::QueryResult, DbError> {
+        if rows.is_empty() {
+            if let Some(shape) = source_shape {
+                for item in &projection {
+                    validate_expr_columns_against_shape(&item.expr, shape, ctx)?;
+                }
+            }
+        }
         let groups = self.build_groups(rows, &group_by, ctx)?;
         let mut projected_rows = Vec::new();
 
@@ -285,5 +328,98 @@ impl<'a> GroupExecutor<'a> {
         }
         ctx.row.current_group = None;
         Ok(out)
+    }
+}
+
+fn validate_expr_columns_against_shape(
+    expr: &Expr,
+    shape: &[ContextTable],
+    ctx: &ExecutionContext,
+) -> Result<(), DbError> {
+    match expr {
+        Expr::Identifier(name) => {
+            if name.starts_with('@') {
+                return Ok(());
+            }
+            let found_in = |tables: &[ContextTable]| {
+                tables.iter().any(|ct| {
+                    ct.table
+                        .columns
+                        .iter()
+                        .any(|c| c.name.eq_ignore_ascii_case(name))
+                })
+            };
+            if found_in(shape)
+                || ctx.row.outer_stack.iter().any(|r| found_in(r))
+                || ctx.row.apply_stack.iter().any(|r| found_in(r))
+            {
+                return Ok(());
+            }
+            Err(DbError::column_not_found(name))
+        }
+        Expr::QualifiedIdentifier(parts) if parts.len() >= 2 => {
+            let col_name = parts.last().unwrap();
+            let qual = &parts[parts.len() - 2];
+            let found_in = |tables: &[ContextTable]| {
+                tables.iter().any(|ct| {
+                    (ct.alias.eq_ignore_ascii_case(qual)
+                        || ct.table.name.eq_ignore_ascii_case(qual))
+                        && ct
+                            .table
+                            .columns
+                            .iter()
+                            .any(|c| c.name.eq_ignore_ascii_case(col_name))
+                })
+            };
+            if found_in(shape)
+                || ctx.row.outer_stack.iter().any(|r| found_in(r))
+                || ctx.row.apply_stack.iter().any(|r| found_in(r))
+            {
+                return Ok(());
+            }
+            Err(DbError::column_not_found(col_name))
+        }
+        Expr::FunctionCall { name, args, .. } => {
+            let skip_first = matches!(
+                name.to_ascii_uppercase().as_str(),
+                "DATEADD" | "DATEDIFF" | "DATEDIFF_BIG" | "DATEPART" | "DATENAME" | "DATETRUNC"
+            );
+            for (idx, a) in args.iter().enumerate() {
+                if skip_first && idx == 0 {
+                    continue;
+                }
+                validate_expr_columns_against_shape(a, shape, ctx)?;
+            }
+            Ok(())
+        }
+        Expr::Binary { left, right, .. } => {
+            validate_expr_columns_against_shape(left, shape, ctx)?;
+            validate_expr_columns_against_shape(right, shape, ctx)
+        }
+        Expr::Unary { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::TryCast { expr: inner, .. }
+        | Expr::Convert { expr: inner, .. }
+        | Expr::TryConvert { expr: inner, .. }
+        | Expr::IsNull(inner)
+        | Expr::IsNotNull(inner) => validate_expr_columns_against_shape(inner, shape, ctx),
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            if let Some(op) = operand {
+                validate_expr_columns_against_shape(op, shape, ctx)?;
+            }
+            for wc in when_clauses {
+                validate_expr_columns_against_shape(&wc.condition, shape, ctx)?;
+                validate_expr_columns_against_shape(&wc.result, shape, ctx)?;
+            }
+            if let Some(el) = else_result {
+                validate_expr_columns_against_shape(el, shape, ctx)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }

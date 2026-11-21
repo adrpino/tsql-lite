@@ -24,9 +24,21 @@ pub(crate) fn execute_projection_stage(
             storage: executor.storage,
             clock: executor.clock,
         };
+        if state.has_window {
+            let grouped_rows = group_executor.collect_grouped_representative_rows(
+                source_rows,
+                &query.filter.group_by,
+                query.filter.having.as_ref(),
+                ctx,
+            )?;
+            let window_executor =
+                WindowExecutor::new(executor.catalog, executor.storage, executor.clock);
+            return window_executor.execute(&query.projection.items, grouped_rows, ctx);
+        }
         group_executor.execute_grouped_select(
             query.projection.items.clone(),
             source_rows,
+            source_shape,
             query.filter.group_by.clone(),
             query.filter.having.clone(),
             ctx,

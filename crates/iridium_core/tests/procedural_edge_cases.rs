@@ -1857,3 +1857,104 @@ fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_t
     assert_eq!(r7.rows[0][2].to_integer_i64(), Some(1));
     assert_eq!(r7.rows[0][3].to_integer_i64(), Some(1));
 }
+
+#[test]
+fn fk_check_nocheck_recursive_triggers_off_select_assign_apply_cte_cols_merge_var_8672_group_window_and_empty_agg_col() {
+    let mut e = Engine::new();
+
+    // 1. FK NOCHECK/CHECK CONSTRAINT + ON DELETE SET NULL
+    exec(&mut e, "CREATE TABLE dbo.p_parent (id INT PRIMARY KEY)");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.p_child (id INT PRIMARY KEY, pid INT NULL, CONSTRAINT FK_p_child_parent FOREIGN KEY (pid) REFERENCES dbo.p_parent(id) ON DELETE SET NULL)",
+    );
+    exec(&mut e, "ALTER TABLE dbo.p_child NOCHECK CONSTRAINT ALL");
+    exec(&mut e, "INSERT INTO dbo.p_child VALUES (1, 999)");
+    exec(&mut e, "DELETE FROM dbo.p_child");
+    exec(&mut e, "ALTER TABLE dbo.p_child CHECK CONSTRAINT FK_p_child_parent");
+    exec(&mut e, "INSERT INTO dbo.p_parent VALUES (10)");
+    exec(&mut e, "INSERT INTO dbo.p_child VALUES (1, 10)");
+    exec(&mut e, "DELETE FROM dbo.p_parent WHERE id = 10");
+    let r1 = query(&mut e, "SELECT pid FROM dbo.p_child WHERE id = 1");
+    assert!(r1.rows[0][0].is_null());
+
+    // 2. RECURSIVE_TRIGGERS OFF prevents infinite direct recursion
+    e.set_recursive_triggers(false);
+    exec(&mut e, "CREATE TABLE dbo.t_self (id INT, status INT, is_active BIT)");
+    exec(
+        &mut e,
+        "CREATE TRIGGER dbo.trg_t_self ON dbo.t_self AFTER UPDATE AS
+         BEGIN
+             UPDATE t SET is_active = CASE WHEN i.status = 0 THEN 0 ELSE 1 END
+             FROM dbo.t_self t JOIN INSERTED i ON t.id = i.id;
+         END",
+    );
+    exec(&mut e, "INSERT INTO dbo.t_self VALUES (1, 1, 1)");
+    exec(&mut e, "UPDATE dbo.t_self SET status = 0 WHERE id = 1");
+    let r2 = query(&mut e, "SELECT is_active FROM dbo.t_self WHERE id = 1");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(0));
+
+    // 3. SELECT TOP 1 @var = ... FROM T CROSS/OUTER APPLY (...) Alias ORDER BY ...
+    exec(&mut e, "CREATE TABLE dbo.t_base (id INT, grp INT)");
+    exec(&mut e, "INSERT INTO dbo.t_base VALUES (1, 10), (2, 20)");
+    exec(&mut e, "DECLARE @picked INT = 0");
+    exec(
+        &mut e,
+        "SELECT TOP 1 @picked = A.score
+         FROM dbo.t_base B
+         CROSS APPLY (SELECT B.grp * 2 AS score) A
+         ORDER BY A.score DESC",
+    );
+    let r3 = query(&mut e, "SELECT @picked");
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(40));
+
+    // 4. WITH Cte(col1, col2) column alias list used in UPDATE ... FROM
+    exec(&mut e, "CREATE TABLE #upd_t (id INT, flag INT)");
+    exec(&mut e, "INSERT INTO #upd_t VALUES (1, 0), (2, 0)");
+    exec(
+        &mut e,
+        ";WITH FlagCte(id, computed_flag) AS (SELECT id, CASE WHEN id = 1 THEN 1 ELSE 0 END FROM #upd_t)
+         UPDATE #upd_t SET flag = computed_flag FROM FlagCte S JOIN #upd_t E ON S.id = E.id",
+    );
+    let r4 = query(&mut e, "SELECT flag FROM #upd_t ORDER BY id");
+    assert_eq!(r4.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r4.rows[1][0].to_integer_i64(), Some(0));
+
+    // 5. MERGE WHEN MATCHED THEN UPDATE SET @var = 1 + Error 8672 on duplicate source match
+    exec(&mut e, "CREATE TABLE dbo.m_tgt (id INT, val INT)");
+    exec(&mut e, "INSERT INTO dbo.m_tgt VALUES (1, 100)");
+    exec(&mut e, "DECLARE @was_updated BIT = 0");
+    exec(
+        &mut e,
+        "MERGE dbo.m_tgt AS T
+         USING (SELECT 1 AS id, 200 AS val) AS S ON T.id = S.id
+         WHEN MATCHED THEN UPDATE SET @was_updated = 1;",
+    );
+    let r5 = query(&mut e, "SELECT @was_updated");
+    assert_eq!(r5.rows[0][0].to_integer_i64(), Some(1));
+    assert!(e
+        .exec(
+            "MERGE dbo.m_tgt AS T
+             USING (SELECT 1 AS id, 10 AS val UNION ALL SELECT 1, 20) AS S ON T.id = S.id
+             WHEN MATCHED THEN UPDATE SET val = S.val;"
+        )
+        .is_err());
+
+    // 6. GROUP BY + ROW_NUMBER() OVER (ORDER BY ...) in SELECT INTO
+    exec(&mut e, "CREATE TABLE #batches (code VARCHAR(10))");
+    exec(&mut e, "INSERT INTO #batches VALUES ('B'), ('A'), ('B')");
+    exec(
+        &mut e,
+        "SELECT ROW_NUMBER() OVER (ORDER BY code) AS seq, code INTO #b_out FROM #batches GROUP BY code",
+    );
+    let r6 = query(&mut e, "SELECT seq, code FROM #b_out ORDER BY seq");
+    assert_eq!(r6.rows.len(), 2);
+    assert_eq!(r6.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r6.rows[0][1].to_string_value(), "A");
+    assert_eq!(r6.rows[1][0].to_integer_i64(), Some(2));
+    assert_eq!(r6.rows[1][1].to_string_value(), "B");
+
+    // 7. Empty-table aggregate query validates nonexistent column name
+    exec(&mut e, "CREATE TABLE dbo.t_empty (id INT)");
+    assert!(e.exec("SELECT COUNT(*), MIN(no_such_col) FROM dbo.t_empty").is_err());
+}

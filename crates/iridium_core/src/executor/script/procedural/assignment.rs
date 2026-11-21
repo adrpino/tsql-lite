@@ -80,9 +80,11 @@ impl<'a> ScriptExecutor<'a> {
             return Ok(None);
         }
 
+        let order_by = stmt.order_by;
+        let top = stmt.top;
         let q = RelationalQuery {
             from_clause: build_from_clause(stmt.from, &stmt.joins),
-            applies: vec![],
+            applies: stmt.applies,
             projection: ProjectionPlan {
                 items: stmt
                     .targets
@@ -99,9 +101,11 @@ impl<'a> ScriptExecutor<'a> {
                 group_by: vec![],
                 having: None,
             },
-            sort: SortPlan { order_by: vec![] },
+            sort: SortPlan {
+                order_by: order_by.clone(),
+            },
             pagination: PaginationPlan {
-                top: None,
+                top: top.clone(),
                 offset: None,
                 fetch: None,
             },
@@ -135,12 +139,55 @@ impl<'a> ScriptExecutor<'a> {
                 }
             }
         } else {
-            let joined_rows = qe.execute_to_joined_rows(q, ctx)?;
-            let limit = if ctx.options.rowcount > 0 {
-                (ctx.options.rowcount as usize).min(joined_rows.len())
+            let mut joined_rows = qe.execute_to_joined_rows(q, ctx)?;
+            if !order_by.is_empty() && joined_rows.len() > 1 {
+                let mut keyed = Vec::with_capacity(joined_rows.len());
+                for r in joined_rows {
+                    let mut keys = Vec::with_capacity(order_by.len());
+                    for ob in &order_by {
+                        keys.push(eval_expr(
+                            &ob.expr,
+                            &r,
+                            ctx,
+                            self.catalog as &dyn Catalog,
+                            self.storage as &dyn Storage,
+                            self.clock,
+                        )?);
+                    }
+                    keyed.push((keys, r));
+                }
+                keyed.sort_by(|(ka, _), (kb, _)| {
+                    for (idx, ob) in order_by.iter().enumerate() {
+                        let ord = crate::executor::value_ops::compare_values(&ka[idx], &kb[idx]);
+                        let ord = if ob.asc { ord } else { ord.reverse() };
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                });
+                joined_rows = keyed.into_iter().map(|(_, r)| r).collect();
+            }
+            let top_limit = if let Some(ref t) = top {
+                let tv = eval_expr(
+                    &t.value,
+                    &[],
+                    ctx,
+                    self.catalog as &dyn Catalog,
+                    self.storage as &dyn Storage,
+                    self.clock,
+                )?;
+                Some(tv.to_integer_i64().unwrap_or(0).max(0) as usize)
             } else {
-                joined_rows.len()
+                None
             };
+            let mut limit = joined_rows.len();
+            if let Some(tl) = top_limit {
+                limit = limit.min(tl);
+            }
+            if ctx.options.rowcount > 0 {
+                limit = limit.min(ctx.options.rowcount as usize);
+            }
             ctx.set_last_rowcount(limit);
             for row in &joined_rows[..limit] {
                 for t in &stmt.targets {

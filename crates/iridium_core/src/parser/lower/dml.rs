@@ -60,7 +60,10 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
             assignments,
             from,
             joins: ast_joins,
+            applies,
             selection,
+            order_by,
+            top,
         } => {
             let mut joins = Vec::new();
             let from_tr = if let Some(from_ref) = from {
@@ -87,7 +90,19 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                             .collect::<Result<Vec<_>, _>>()?,
                         from: from_tr,
                         joins,
+                        applies: lower_apply_clauses(applies)?,
                         selection: selection.map(lower_expr).transpose()?,
+                        order_by: order_by
+                            .into_iter()
+                            .map(lower_order_by_expr)
+                            .collect::<Result<Vec<_>, DbError>>()?,
+                        top: top
+                            .map(|t| {
+                                Ok(executor_ast::statements::query::TopSpec {
+                                    value: lower_expr(t.value)?,
+                                })
+                            })
+                            .transpose()?,
                     },
                 ),
             ))

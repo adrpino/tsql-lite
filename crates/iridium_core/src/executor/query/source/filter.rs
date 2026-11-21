@@ -50,6 +50,55 @@ impl RowIterator for HashSemiJoinIterator {
     }
 }
 
+fn expr_contains_subquery(expr: &Expr) -> bool {
+    match expr {
+        Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => true,
+        Expr::Binary { left, right, .. } => {
+            expr_contains_subquery(left) || expr_contains_subquery(right)
+        }
+        Expr::Unary { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::TryCast { expr: inner, .. }
+        | Expr::Convert { expr: inner, .. }
+        | Expr::TryConvert { expr: inner, .. }
+        | Expr::IsNull(inner)
+        | Expr::IsNotNull(inner) => expr_contains_subquery(inner),
+        Expr::FunctionCall { args, .. } => args.iter().any(expr_contains_subquery),
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            operand.as_deref().is_some_and(expr_contains_subquery)
+                || when_clauses.iter().any(|wc| {
+                    expr_contains_subquery(&wc.condition) || expr_contains_subquery(&wc.result)
+                })
+                || else_result.as_deref().is_some_and(expr_contains_subquery)
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            expr_contains_subquery(expr)
+                || expr_contains_subquery(low)
+                || expr_contains_subquery(high)
+        }
+        Expr::InList { expr, list, .. } => {
+            expr_contains_subquery(expr) || list.iter().any(expr_contains_subquery)
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            expr_contains_subquery(expr)
+                || expr_contains_subquery(pattern)
+                || escape.as_deref().is_some_and(expr_contains_subquery)
+        }
+        _ => false,
+    }
+}
+
 fn split_and_owned(expr: &Expr, out: &mut Vec<Expr>) {
     if let Expr::Binary {
         left,
@@ -131,6 +180,9 @@ fn try_build_hash_semi_join(
     let mut outer_key_exprs = Vec::new();
 
     for c in conjuncts {
+        if expr_contains_subquery(&c) {
+            return Ok(None);
+        }
         match &c {
             Expr::Binary {
                 left,

@@ -301,6 +301,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                                 .map(|c| {
                                     Ok(executor_ast::statements::procedural::CteDef {
                                         name: c.name,
+                                        columns: c.columns,
                                         query: executor_ast::Statement::Dml(
                                             executor_ast::statements::DmlStatement::Select(
                                                 lower_select(c.query)?,

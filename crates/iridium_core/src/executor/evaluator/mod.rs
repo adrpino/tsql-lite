@@ -110,10 +110,7 @@ fn eval_expr_inner(
             conversion::eval_conversion_expr(expr, row, ctx, catalog, storage, clock)
         }
 
-        Expr::Case { .. }
-        | Expr::InList { .. }
-        | Expr::Between { .. }
-        | Expr::Like { .. } => {
+        Expr::Case { .. } | Expr::InList { .. } | Expr::Between { .. } | Expr::Like { .. } => {
             predicate::eval_predicate_expr(expr, row, ctx, catalog, storage, clock)
         }
 
@@ -137,24 +134,49 @@ fn eval_expr_inner(
                 }
                 return eval_at_time_zone(dt_val, &tz_val.to_string_value());
             }
+            if name == "__XML_MODIFY" && args.len() >= 2 {
+                let target_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                let dml_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                if target_val.is_null() || dml_val.is_null() {
+                    return Ok(target_val);
+                }
+                let injected = if args.len() >= 3 {
+                    let v = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+                    if v.is_null() {
+                        None
+                    } else {
+                        Some(v.to_string_value())
+                    }
+                } else {
+                    None
+                };
+                let modified = eval_xml_modify(
+                    &target_val.to_string_value(),
+                    &dml_val.to_string_value(),
+                    injected.as_deref(),
+                );
+                return Ok(Value::NVarChar(modified));
+            }
             eval_function(name, args, row, ctx, catalog, storage, clock)
         }
 
         Expr::Binary { left, op, right } => {
             let lv = eval_expr(left, row, ctx, catalog, storage, clock)?;
             let rv = eval_expr(right, row, ctx, catalog, storage, clock)?;
-            if let Some(cs) = expr_collation_case_sensitive(left)
-                .or_else(|| expr_collation_case_sensitive(right))
+            if let Some(cs) =
+                expr_collation_case_sensitive(left).or_else(|| expr_collation_case_sensitive(right))
             {
-                if cs && matches!(
-                    op,
-                    crate::ast::BinaryOp::Eq
-                        | crate::ast::BinaryOp::NotEq
-                        | crate::ast::BinaryOp::Gt
-                        | crate::ast::BinaryOp::Lt
-                        | crate::ast::BinaryOp::Gte
-                        | crate::ast::BinaryOp::Lte
-                ) {
+                if cs
+                    && matches!(
+                        op,
+                        crate::ast::BinaryOp::Eq
+                            | crate::ast::BinaryOp::NotEq
+                            | crate::ast::BinaryOp::Gt
+                            | crate::ast::BinaryOp::Lt
+                            | crate::ast::BinaryOp::Gte
+                            | crate::ast::BinaryOp::Lte
+                    )
+                {
                     if let (Some(ls), Some(rs)) = (value_as_str(&lv), value_as_str(&rv)) {
                         let ord = ls.trim_end_matches(' ').cmp(rs.trim_end_matches(' '));
                         let b = match op {
@@ -163,7 +185,10 @@ fn eval_expr_inner(
                             crate::ast::BinaryOp::Gt => ord == std::cmp::Ordering::Greater,
                             crate::ast::BinaryOp::Lt => ord == std::cmp::Ordering::Less,
                             crate::ast::BinaryOp::Gte => {
-                                matches!(ord, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                                matches!(
+                                    ord,
+                                    std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
+                                )
                             }
                             crate::ast::BinaryOp::Lte => {
                                 matches!(ord, std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
@@ -290,4 +315,142 @@ fn eval_at_time_zone(dt_val: Value, tz_name: &str) -> Result<Value, DbError> {
         }
         other => Ok(other),
     }
+}
+
+fn eval_xml_modify(xml: &str, dml: &str, injected: Option<&str>) -> String {
+    let trimmed = dml.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Handle `delete (/Root/Child)` or `delete /Root/Child`
+    if lower.starts_with("delete ") {
+        let path_part = trimmed["delete ".len()..]
+            .trim()
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .trim();
+        let path_clean = path_part.split('[').next().unwrap_or(path_part).trim();
+        let target_tag = path_clean.rsplit('/').next().unwrap_or("").trim();
+        if !target_tag.is_empty() {
+            return remove_xml_elements_by_tag(xml, target_tag);
+        }
+        return xml.to_string();
+    }
+
+    // Handle `insert <node|sql:column(...)> [as first|as last] into (/Root)[1]`
+    if lower.starts_with("insert ") {
+        if let Some(into_pos) = lower.rfind(" into ") {
+            let before_into = trimmed["insert ".len()..into_pos].trim();
+            let as_first = before_into.to_ascii_lowercase().ends_with("as first");
+            let fragment = if let Some(inj) = injected {
+                inj.to_string()
+            } else {
+                let b_lower = before_into.to_ascii_lowercase();
+                let frag = if b_lower.ends_with("as first") {
+                    before_into[..before_into.len() - "as first".len()].trim()
+                } else if b_lower.ends_with("as last") {
+                    before_into[..before_into.len() - "as last".len()].trim()
+                } else {
+                    before_into
+                };
+                frag.to_string()
+            };
+            let target_part = trimmed[into_pos + " into ".len()..].trim();
+            let target_no_idx = target_part.split('[').next().unwrap_or(target_part).trim();
+            let target_clean = target_no_idx
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim();
+            let target_tag = target_clean.rsplit('/').next().unwrap_or("").trim();
+            if !target_tag.is_empty() && !fragment.is_empty() {
+                if as_first {
+                    let open_prefix = format!("<{}", target_tag);
+                    if let Some(pos) = xml.find(&open_prefix) {
+                        if let Some(rel_end) = xml[pos..].find('>') {
+                            let end_idx = pos + rel_end;
+                            if xml.as_bytes().get(end_idx.saturating_sub(1)) == Some(&b'/') {
+                                // Self-closing `<Tag/>` -> `<Tag>{fragment}</Tag>`
+                                let mut out = String::with_capacity(
+                                    xml.len() + fragment.len() + target_tag.len() + 4,
+                                );
+                                out.push_str(&xml[..end_idx - 1]);
+                                out.push('>');
+                                out.push_str(&fragment);
+                                out.push_str("</");
+                                out.push_str(target_tag);
+                                out.push('>');
+                                out.push_str(&xml[end_idx + 1..]);
+                                return out;
+                            }
+                            let mut out = String::with_capacity(xml.len() + fragment.len());
+                            out.push_str(&xml[..=end_idx]);
+                            out.push_str(&fragment);
+                            out.push_str(&xml[end_idx + 1..]);
+                            return out;
+                        }
+                    }
+                } else {
+                    let close_tag = format!("</{}>", target_tag);
+                    if let Some(pos) = xml.rfind(&close_tag) {
+                        let mut out = String::with_capacity(xml.len() + fragment.len());
+                        out.push_str(&xml[..pos]);
+                        out.push_str(&fragment);
+                        out.push_str(&xml[pos..]);
+                        return out;
+                    }
+                    // Self-closing `<Tag/>` -> `<Tag>{fragment}</Tag>`
+                    let open_prefix = format!("<{}", target_tag);
+                    if let Some(pos) = xml.find(&open_prefix) {
+                        if let Some(rel_end) = xml[pos..].find("/>") {
+                            let mut out = String::with_capacity(
+                                xml.len() + fragment.len() + target_tag.len() + 4,
+                            );
+                            out.push_str(&xml[..pos + rel_end]);
+                            out.push('>');
+                            out.push_str(&fragment);
+                            out.push_str("</");
+                            out.push_str(target_tag);
+                            out.push('>');
+                            out.push_str(&xml[pos + rel_end + 2..]);
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    xml.to_string()
+}
+
+fn remove_xml_elements_by_tag(xml: &str, tag: &str) -> String {
+    let open_prefix = format!("<{}", tag);
+    let close_tag = format!("</{}>", tag);
+    let mut result = xml.to_string();
+    loop {
+        let Some(start) = result.find(&open_prefix) else {
+            break;
+        };
+        let after_name = start + open_prefix.len();
+        let next_ch = result.as_bytes().get(after_name).copied();
+        if !matches!(
+            next_ch,
+            Some(b'>') | Some(b'/') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+        ) {
+            break;
+        }
+        let Some(gt_rel) = result[start..].find('>') else {
+            break;
+        };
+        let gt_idx = start + gt_rel;
+        if result.as_bytes().get(gt_idx.saturating_sub(1)) == Some(&b'/') {
+            result.replace_range(start..=gt_idx, "");
+            continue;
+        }
+        let Some(close_rel) = result[gt_idx + 1..].find(&close_tag) else {
+            break;
+        };
+        let close_end = gt_idx + 1 + close_rel + close_tag.len();
+        result.replace_range(start..close_end, "");
+    }
+    result
 }

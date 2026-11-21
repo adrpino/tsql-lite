@@ -20,7 +20,11 @@ impl<'a> ScriptExecutor<'a> {
             definition_sql: String::new(),
         };
         routine.definition_sql = format_routine_definition(&routine);
-        self.catalog.create_routine(routine)?;
+        if stmt.or_alter {
+            self.catalog.replace_routine(routine)?;
+        } else {
+            self.catalog.create_routine(routine)?;
+        }
         Ok(())
     }
 
@@ -66,6 +70,7 @@ impl<'a> ScriptExecutor<'a> {
             table_name: stmt.table.name,
             events: stmt.events,
             is_instead_of: stmt.is_instead_of,
+            enabled: true,
             body: std::sync::Arc::new(stmt.body),
             definition_sql: String::new(),
         };

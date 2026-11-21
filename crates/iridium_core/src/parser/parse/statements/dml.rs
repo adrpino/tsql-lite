@@ -35,6 +35,10 @@ fn is_statement_starter(tok: Option<&Token>) -> bool {
                 | Keyword::Deallocate
                 | Keyword::Fetch
                 | Keyword::With
+                | Keyword::Throw
+                | Keyword::End
+                | Keyword::Else
+                | Keyword::RaiseError
         ),
         _ => false,
     }
@@ -155,6 +159,14 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             crate::parser::parse::statements::query::parse_select_body(parser)?,
         )),
         Keyword::Exec | Keyword::Execute => {
+            let mut return_variable = None;
+            if let Some(Token::Variable(v)) = parser.peek() {
+                if matches!(parser.peek_at(1), Some(Token::Operator(op)) if *op == "=") {
+                    return_variable = Some(v.clone());
+                    let _ = parser.next();
+                    let _ = parser.next();
+                }
+            }
             let procedure = super::parse_multipart_name(parser)?;
             let args = if !parser.is_empty()
                 && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
@@ -167,7 +179,11 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             } else {
                 Vec::new()
             };
-            InsertSource::Exec { procedure, args }
+            InsertSource::Exec {
+                return_variable,
+                procedure,
+                args,
+            }
         }
         _ => return parser.backtrack(Expected::Description("VALUES, SELECT, or EXEC")),
     };
@@ -249,6 +265,34 @@ pub fn parse_update(parser: &mut Parser) -> ParseResult<UpdateStmt> {
     })
 }
 
+fn extract_xml_modify_sql_ref(dml: &str) -> Option<Expr> {
+    let lower = dml.to_ascii_lowercase();
+    if let Some(pos) = lower.find("sql:column(") {
+        let rest = &dml[pos + "sql:column(".len()..];
+        let end = rest.find(')')?;
+        let inner = rest[..end].trim().trim_matches('"').trim_matches('\'');
+        let parts: Vec<String> = inner
+            .split('.')
+            .map(|p| p.trim().trim_matches(|c| c == '[' || c == ']').to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() > 1 {
+            return Some(Expr::QualifiedIdentifier(parts));
+        } else if let Some(col) = parts.into_iter().next() {
+            return Some(Expr::Identifier(col));
+        }
+    }
+    if let Some(pos) = lower.find("sql:variable(") {
+        let rest = &dml[pos + "sql:variable(".len()..];
+        let end = rest.find(')')?;
+        let inner = rest[..end].trim().trim_matches('"').trim_matches('\'');
+        if inner.starts_with('@') {
+            return Some(Expr::Variable(inner.to_string()));
+        }
+    }
+    None
+}
+
 fn consume_compound_assign_op(parser: &mut Parser) -> Option<BinaryOp> {
     let is_eq_next = matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "=");
     if !is_eq_next {
@@ -273,6 +317,44 @@ fn parse_update_assignment_group(parser: &mut Parser) -> ParseResult<Vec<UpdateA
         .last()
         .cloned()
         .ok_or_else(|| parser.error(Expected::Description("column name")))?;
+
+    // XML .modify('...') method call: SET XmlCol.modify('...') or SET alias.XmlCol.modify('...')
+    if parts.len() >= 2
+        && lhs.eq_ignore_ascii_case("modify")
+        && matches!(parser.peek(), Some(Token::LParen))
+    {
+        let _ = parser.next(); // (
+        let dml_expr = crate::parser::parse::expressions::parse_expr(parser)?;
+        parser.expect_rparen()?;
+        let col_parts = parts[..parts.len() - 1].to_vec();
+        let target_col = col_parts
+            .last()
+            .cloned()
+            .ok_or_else(|| parser.error(Expected::Description("column name")))?;
+        let target_expr = if col_parts.len() > 1 {
+            Expr::QualifiedIdentifier(col_parts)
+        } else if target_col.starts_with('@') {
+            Expr::Variable(target_col.clone())
+        } else {
+            Expr::Identifier(target_col.clone())
+        };
+        let mut fn_args = vec![target_expr, dml_expr.clone()];
+        // If DML literal references sql:column("...") or sql:variable("@..."), pass the
+        // referenced expression as the 3rd argument so the row evaluator resolves it normally.
+        if let Expr::String(ref dml) | Expr::UnicodeString(ref dml) = dml_expr {
+            if let Some(arg_expr) = extract_xml_modify_sql_ref(dml) {
+                fn_args.push(arg_expr);
+            }
+        }
+        return Ok(vec![UpdateAssignment {
+            column: target_col,
+            expr: Expr::FunctionCall {
+                name: "__XML_MODIFY".to_string(),
+                args: fn_args,
+                within_group: Vec::new(),
+            },
+        }]);
+    }
 
     // Compound assignment: col += expr, @v += expr, etc.
     if let Some(bin_op) = consume_compound_assign_op(parser) {

@@ -270,6 +270,7 @@ pub enum InsertSource {
     Values(Vec<Vec<Expr>>),
     Select(Box<SelectStmt>),
     Exec {
+        return_variable: Option<String>,
         procedure: Vec<String>,
         args: Vec<ExecArg>,
     },
@@ -361,6 +362,7 @@ pub enum CreateStmt {
         name: Vec<String>,
         params: Vec<RoutineParam>,
         body: Vec<Statement>,
+        or_alter: bool,
     },
     Function {
         name: Vec<String>,
@@ -446,6 +448,10 @@ pub enum AlterTableAction {
     CheckConstraint {
         check: bool,
         name: Option<String>,
+    },
+    ToggleTrigger {
+        trigger_name: Option<Vec<String>>,
+        enable: bool,
     },
 }
 

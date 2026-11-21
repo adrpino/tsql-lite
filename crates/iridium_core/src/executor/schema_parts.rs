@@ -8,12 +8,15 @@ use crate::catalog::{
 };
 use crate::error::DbError;
 
-use super::tooling::format_view_definition;
-use super::schema_physical;
-use super::type_mapping::data_type_spec_to_runtime;
 use super::schema::SchemaExecutor;
+use super::schema_physical;
+use super::tooling::format_view_definition;
+use super::type_mapping::data_type_spec_to_runtime;
 
-pub(crate) fn apply_table_constraint(table: &mut TableDef, tc: TableConstraintSpec) -> Result<(), DbError> {
+pub(crate) fn apply_table_constraint(
+    table: &mut TableDef,
+    tc: TableConstraintSpec,
+) -> Result<(), DbError> {
     match tc {
         TableConstraintSpec::Default { name, column, expr } => {
             let col = table
@@ -119,7 +122,10 @@ fn build_column_def(
     })
 }
 
-pub(crate) fn create_type(executor: &mut SchemaExecutor<'_>, stmt: CreateTypeStmt) -> Result<(), DbError> {
+pub(crate) fn create_type(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: CreateTypeStmt,
+) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo().to_string();
     if executor.catalog.get_schema_id(&schema).is_none() {
         return Err(DbError::schema_not_found(schema));
@@ -134,12 +140,18 @@ pub(crate) fn create_type(executor: &mut SchemaExecutor<'_>, stmt: CreateTypeStm
     })
 }
 
-pub(crate) fn drop_type(executor: &mut SchemaExecutor<'_>, stmt: DropTypeStmt) -> Result<(), DbError> {
+pub(crate) fn drop_type(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: DropTypeStmt,
+) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo().to_string();
     executor.catalog.drop_table_type(&schema, &stmt.name.name)
 }
 
-pub(crate) fn create_table(executor: &mut SchemaExecutor<'_>, stmt: CreateTableStmt) -> Result<(), DbError> {
+pub(crate) fn create_table(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: CreateTableStmt,
+) -> Result<(), DbError> {
     let schema_name = stmt.name.schema_or_dbo().to_string();
     let schema_id = executor
         .catalog
@@ -228,22 +240,34 @@ pub(crate) fn create_table(executor: &mut SchemaExecutor<'_>, stmt: CreateTableS
     Ok(())
 }
 
-pub(crate) fn drop_table(executor: &mut SchemaExecutor<'_>, stmt: DropTableStmt) -> Result<(), DbError> {
+pub(crate) fn drop_table(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: DropTableStmt,
+) -> Result<(), DbError> {
     let schema_name = stmt.name.schema_or_dbo().to_string();
     let table_id = executor.catalog.drop_table(&schema_name, &stmt.name.name)?;
     executor.storage.remove_table(table_id)?;
     Ok(())
 }
 
-pub(crate) fn create_schema(executor: &mut SchemaExecutor<'_>, stmt: CreateSchemaStmt) -> Result<(), DbError> {
+pub(crate) fn create_schema(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: CreateSchemaStmt,
+) -> Result<(), DbError> {
     executor.catalog.create_schema(&stmt.name)
 }
 
-pub(crate) fn drop_schema(executor: &mut SchemaExecutor<'_>, stmt: DropSchemaStmt) -> Result<(), DbError> {
+pub(crate) fn drop_schema(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: DropSchemaStmt,
+) -> Result<(), DbError> {
     executor.catalog.drop_schema(&stmt.name)
 }
 
-pub(crate) fn create_view(executor: &mut SchemaExecutor<'_>, stmt: crate::ast::CreateViewStmt) -> Result<(), DbError> {
+pub(crate) fn create_view(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: crate::ast::CreateViewStmt,
+) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo().to_string();
     let view_name = stmt.name.name;
     let query = stmt.query;
@@ -262,7 +286,10 @@ pub(crate) fn create_view(executor: &mut SchemaExecutor<'_>, stmt: crate::ast::C
     executor.catalog.create_view(view)
 }
 
-pub(crate) fn drop_view(executor: &mut SchemaExecutor<'_>, stmt: crate::ast::DropViewStmt) -> Result<(), DbError> {
+pub(crate) fn drop_view(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: crate::ast::DropViewStmt,
+) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo();
     executor.catalog.drop_view(schema, &stmt.name.name)
 }
@@ -296,18 +323,20 @@ pub(crate) fn create_sequence(
     let schema = stmt.name.schema_or_dbo().to_string();
     let data_type = data_type_spec_to_runtime(&stmt.data_type);
     let object_id = executor.catalog.alloc_object_id();
-    executor.catalog.create_sequence(crate::catalog::SequenceDef {
-        object_id,
-        schema,
-        name: stmt.name.name,
-        data_type,
-        start_value: stmt.start_value,
-        increment: stmt.increment,
-        current_value: stmt.start_value,
-        minimum_value: stmt.minimum_value,
-        maximum_value: stmt.maximum_value,
-        is_cycling: stmt.is_cycling,
-    })
+    executor
+        .catalog
+        .create_sequence(crate::catalog::SequenceDef {
+            object_id,
+            schema,
+            name: stmt.name.name,
+            data_type,
+            start_value: stmt.start_value,
+            increment: stmt.increment,
+            current_value: stmt.start_value,
+            minimum_value: stmt.minimum_value,
+            maximum_value: stmt.maximum_value,
+            is_cycling: stmt.is_cycling,
+        })
 }
 
 pub(crate) fn drop_sequence(
@@ -318,7 +347,10 @@ pub(crate) fn drop_sequence(
     executor.catalog.drop_sequence(schema, &stmt.name.name)
 }
 
-pub(crate) fn create_index(executor: &mut SchemaExecutor<'_>, stmt: CreateIndexStmt) -> Result<(), DbError> {
+pub(crate) fn create_index(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: CreateIndexStmt,
+) -> Result<(), DbError> {
     let index_schema = stmt.name.schema_or_dbo().to_string();
     let table_schema = stmt.table.schema_or_dbo().to_string();
 
@@ -348,7 +380,10 @@ pub(crate) fn create_index(executor: &mut SchemaExecutor<'_>, stmt: CreateIndexS
     Ok(())
 }
 
-pub(crate) fn drop_index(executor: &mut SchemaExecutor<'_>, stmt: DropIndexStmt) -> Result<(), DbError> {
+pub(crate) fn drop_index(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: DropIndexStmt,
+) -> Result<(), DbError> {
     let index_schema = stmt.name.schema_or_dbo().to_string();
     let table_schema = stmt.table.schema_or_dbo().to_string();
     executor.catalog.drop_index(
@@ -359,7 +394,10 @@ pub(crate) fn drop_index(executor: &mut SchemaExecutor<'_>, stmt: DropIndexStmt)
     )
 }
 
-pub(crate) fn alter_table(executor: &mut SchemaExecutor<'_>, stmt: AlterTableStmt) -> Result<(), DbError> {
+pub(crate) fn alter_table(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: AlterTableStmt,
+) -> Result<(), DbError> {
     let schema_name = stmt.table.schema_or_dbo().to_string();
     let table_id = executor
         .catalog
@@ -419,6 +457,22 @@ pub(crate) fn alter_table(executor: &mut SchemaExecutor<'_>, stmt: AlterTableStm
             apply_table_constraint(table_mut, constraint)?;
         }
         AlterTableAction::CheckConstraint { .. } => {}
+        AlterTableAction::ToggleTrigger {
+            trigger_name,
+            enable,
+        } => {
+            let (t_sch, t_name) = match &trigger_name {
+                Some(obj) => (obj.schema.as_deref(), Some(obj.name.as_str())),
+                None => (None, None),
+            };
+            executor.catalog.set_trigger_enabled(
+                t_sch,
+                t_name,
+                &schema_name,
+                &stmt.table.name,
+                enable,
+            )?;
+        }
         AlterTableAction::DropConstraint(constraint_name) => {
             let table_mut = executor
                 .catalog

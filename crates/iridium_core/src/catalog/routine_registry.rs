@@ -33,6 +33,19 @@ impl RoutineRegistry for CatalogImpl {
         Ok(())
     }
 
+    fn replace_routine(&mut self, routine: RoutineDef) -> Result<(), DbError> {
+        let key = (
+            normalize_identifier(&routine.schema),
+            normalize_identifier(&routine.name),
+        );
+        if let Some(&idx) = self.routine_map.get(&key) {
+            Arc::make_mut(&mut self.routines)[idx] = routine;
+            Ok(())
+        } else {
+            self.create_routine(routine)
+        }
+    }
+
     fn drop_routine(
         &mut self,
         schema: &str,

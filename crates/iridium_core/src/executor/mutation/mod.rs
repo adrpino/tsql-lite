@@ -32,7 +32,7 @@ impl<'a> MutationExecutor<'a> {
         self.catalog
             .find_triggers_for_table(table.schema_or_dbo(), &table.name)
             .into_iter()
-            .filter(|t| t.events.contains(&event))
+            .filter(|t| t.enabled && t.events.contains(&event))
             .cloned()
             .collect()
     }
@@ -54,7 +54,10 @@ impl<'a> MutationExecutor<'a> {
             .collect();
 
         for trigger in triggers {
-            if trigger.events.contains(&event) && trigger.is_instead_of == is_instead_of {
+            if trigger.enabled
+                && trigger.events.contains(&event)
+                && trigger.is_instead_of == is_instead_of
+            {
                 if ctx.trigger_depth() >= 16 {
                     return Err(DbError::Execution(
                         "Maximum trigger nesting level (16) exceeded.".into(),
@@ -141,10 +144,16 @@ impl<'a> MutationExecutor<'a> {
                 trigger_ctx.session.temp_map.remove("INSERTED");
                 trigger_ctx.session.temp_map.remove("DELETED");
                 if let Some(p) = prev_ins {
-                    trigger_ctx.session.temp_map.insert("INSERTED".to_string(), p);
+                    trigger_ctx
+                        .session
+                        .temp_map
+                        .insert("INSERTED".to_string(), p);
                 }
                 if let Some(p) = prev_del {
-                    trigger_ctx.session.temp_map.insert("DELETED".to_string(), p);
+                    trigger_ctx
+                        .session
+                        .temp_map
+                        .insert("DELETED".to_string(), p);
                 }
                 if let Some((id, _name)) = ins_physical {
                     self.catalog.unregister_table_by_id(id);

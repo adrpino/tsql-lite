@@ -58,4 +58,31 @@ impl TriggerRegistry for CatalogImpl {
         }
         Ok(())
     }
+
+    fn set_trigger_enabled(
+        &mut self,
+        trigger_schema: Option<&str>,
+        trigger_name: Option<&str>,
+        table_schema: &str,
+        table_name: &str,
+        enabled: bool,
+    ) -> Result<(), DbError> {
+        let triggers = Arc::make_mut(&mut self.triggers);
+        for t in triggers.iter_mut() {
+            let table_match = t.table_schema.eq_ignore_ascii_case(table_schema)
+                && t.table_name.eq_ignore_ascii_case(table_name);
+            if !table_match {
+                continue;
+            }
+            if let Some(tn) = trigger_name {
+                let sch_ok = trigger_schema.is_none_or(|s| t.schema.eq_ignore_ascii_case(s));
+                if sch_ok && t.name.eq_ignore_ascii_case(tn) {
+                    t.enabled = enabled;
+                }
+            } else {
+                t.enabled = enabled;
+            }
+        }
+        Ok(())
+    }
 }

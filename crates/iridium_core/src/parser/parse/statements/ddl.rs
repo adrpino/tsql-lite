@@ -289,7 +289,7 @@ fn skip_balanced_parens(parser: &mut Parser) -> ParseResult<()> {
 
 fn skip_inline_table_index(parser: &mut Parser) -> ParseResult<()> {
     let _ = parser.next(); // INDEX
-    // Index name
+                           // Index name
     match parser.next() {
         Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
         _ => return parser.backtrack(Expected::Description("index name")),
@@ -791,6 +791,20 @@ pub fn parse_alter_table_add_constraint(parser: &mut Parser) -> ParseResult<Tabl
         parser.expect_rparen()?;
         TableConstraint::Check {
             name: Some(constraint_name),
+            expr,
+        }
+    } else if parser.at_keyword(Keyword::Default) {
+        let _ = parser.next();
+        let expr = crate::parser::parse::expressions::parse_expr(parser)?;
+        parser.expect_keyword(Keyword::For)?;
+        let column = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
+            _ => return parser.backtrack(Expected::Description("column name")),
+        };
+        TableConstraint::Default {
+            name: Some(constraint_name),
+            column,
             expr,
         }
     } else {

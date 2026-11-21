@@ -113,6 +113,10 @@ pub enum AlterTableAction {
         check: bool,
         name: Option<String>,
     },
+    ToggleTrigger {
+        trigger_name: Option<ObjectName>,
+        enable: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

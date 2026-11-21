@@ -618,7 +618,10 @@ fn procedural_execute_batch_all_results_captures_multiple_result_sets() {
 fn procedural_temp_unaliased_join_return_after_select_and_declare_hoisting() {
     let mut e = Engine::new();
     exec(&mut e, "CREATE TABLE dbo.items (id INT, name VARCHAR(20))");
-    exec(&mut e, "INSERT INTO dbo.items VALUES (1, 'alpha'), (2, 'beta')");
+    exec(
+        &mut e,
+        "INSERT INTO dbo.items VALUES (1, 'alpha'), (2, 'beta')",
+    );
 
     // 1. Unaliased #temp table referenced as #ids.id in JOIN ON
     exec(
@@ -837,7 +840,10 @@ fn ddl_dml_inline_index_trailing_comma_table_hints_option_and_nocheck() {
 
     // 2. ALTER TABLE ... NOCHECK / CHECK CONSTRAINT
     exec(&mut e, "ALTER TABLE dbo.t_inline NOCHECK CONSTRAINT ALL");
-    exec(&mut e, "ALTER TABLE dbo.t_inline WITH CHECK CHECK CONSTRAINT ALL");
+    exec(
+        &mut e,
+        "ALTER TABLE dbo.t_inline WITH CHECK CHECK CONSTRAINT ALL",
+    );
 
     // 3. INSERT ... WITH (TABLOCK) and trailing OPTION (RECOMPILE)
     exec(
@@ -929,8 +935,14 @@ fn merge_not_matched_by_target_and_general_output_expressions() {
 fn query_join_after_apply_inline_tvf_cte_and_keyword_aliases() {
     let mut e = Engine::new();
     exec(&mut e, "CREATE TABLE dbo.orders (id INT, cust_id INT)");
-    exec(&mut e, "CREATE TABLE dbo.order_lines (order_id INT, prod_id INT, seq INT)");
-    exec(&mut e, "CREATE TABLE dbo.products (id INT, name VARCHAR(30))");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.order_lines (order_id INT, prod_id INT, seq INT)",
+    );
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.products (id INT, name VARCHAR(30))",
+    );
     exec(&mut e, "INSERT INTO dbo.orders VALUES (1, 10), (2, 20)");
     exec(
         &mut e,
@@ -983,10 +995,7 @@ fn query_join_after_apply_inline_tvf_cte_and_keyword_aliases() {
             JOIN dbo.products p ON p.id = f.prod_id
         )",
     );
-    let r2 = query(
-        &mut e,
-        "SELECT order_id, name FROM dbo.fn_cte_lines(2)",
-    );
+    let r2 = query(&mut e, "SELECT order_id, name FROM dbo.fn_cte_lines(2)");
     assert_eq!(r2.rows.len(), 1);
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r2.rows[0][1], Value::VarChar("Beta".to_string()));
@@ -995,8 +1004,14 @@ fn query_join_after_apply_inline_tvf_cte_and_keyword_aliases() {
 #[test]
 fn query_for_xml_path_stuff_concatenation_and_type_value() {
     let mut e = Engine::new();
-    exec(&mut e, "CREATE TABLE dbo.groups (id INT, title VARCHAR(20))");
-    exec(&mut e, "CREATE TABLE dbo.tags (group_id INT, tag VARCHAR(20))");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.groups (id INT, title VARCHAR(20))",
+    );
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.tags (group_id INT, tag VARCHAR(20))",
+    );
     exec(&mut e, "INSERT INTO dbo.groups VALUES (1, 'G1'), (2, 'G2')");
     exec(
         &mut e,
@@ -1110,12 +1125,18 @@ fn tsql_recursive_cte_without_keyword_and_merge_subquery_source() {
         INSERT INTO #dates
         SELECT DateValue FROM DateRange;",
     );
-    let r1 = query(&mut e, "SELECT COUNT(*) AS cnt, MAX(d) AS last_d FROM #dates");
+    let r1 = query(
+        &mut e,
+        "SELECT COUNT(*) AS cnt, MAX(d) AS last_d FROM #dates",
+    );
     assert_eq!(r1.rows[0][0].to_integer_i64(), Some(5));
     assert_eq!(r1.rows[0][1].to_string_value(), "2026-01-05");
 
     // 2. MERGE with derived subquery source and VALUES source
-    exec(&mut e, "CREATE TABLE dbo.m_dst (id INT PRIMARY KEY, v VARCHAR(20))");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.m_dst (id INT PRIMARY KEY, v VARCHAR(20))",
+    );
     exec(&mut e, "INSERT INTO dbo.m_dst VALUES (1, 'old')");
     exec(
         &mut e,
@@ -1186,7 +1207,10 @@ fn delete_alias_from_table_and_sp_executesql_same_name_output_var() {
     // 1. DELETE alias FROM tbl alias INNER JOIN ...
     exec(&mut e, "CREATE TABLE dbo.items (id INT, tenant INT)");
     exec(&mut e, "CREATE TABLE dbo.to_del (id INT)");
-    exec(&mut e, "INSERT INTO dbo.items VALUES (1, 10), (2, 10), (3, 20)");
+    exec(
+        &mut e,
+        "INSERT INTO dbo.items VALUES (1, 10), (2, 10), (3, 20)",
+    );
     exec(&mut e, "INSERT INTO dbo.to_del VALUES (2), (3)");
     exec(
         &mut e,
@@ -1434,8 +1458,14 @@ fn merge_unaliased_and_cte_target_update_apply_index_include_waitfor_and_stats()
     let mut e = Engine::new();
 
     // 1. Unaliased MERGE target (USING must not be consumed as alias)
-    exec(&mut e, "CREATE TABLE dbo.m_items (id INT, owner_id INT, val INT)");
-    exec(&mut e, "INSERT INTO dbo.m_items VALUES (1, 10, 100), (2, 10, 200), (3, 20, 300)");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.m_items (id INT, owner_id INT, val INT)",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO dbo.m_items VALUES (1, 10, 100), (2, 10, 200), (3, 20, 300)",
+    );
     exec(
         &mut e,
         "MERGE dbo.m_items
@@ -1457,7 +1487,10 @@ fn merge_unaliased_and_cte_target_update_apply_index_include_waitfor_and_stats()
          WHEN NOT MATCHED BY TARGET THEN INSERT (id, owner_id, val) VALUES (SOURCE.id, 10, SOURCE.val)
          WHEN NOT MATCHED BY SOURCE THEN DELETE;",
     );
-    let r1 = query(&mut e, "SELECT id, owner_id, val FROM dbo.m_items ORDER BY id");
+    let r1 = query(
+        &mut e,
+        "SELECT id, owner_id, val FROM dbo.m_items ORDER BY id",
+    );
     assert_eq!(r1.rows.len(), 3);
     assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
     assert_eq!(r1.rows[0][2].to_integer_i64(), Some(111));
@@ -1537,7 +1570,10 @@ fn wave11a_derived_col_list_delete_output_before_from_persisted_try_parse_compou
     assert_eq!(r3.rows[0][2], Value::Null);
 
     // 4. UPDATE compound += and chained @var = col += 1
-    exec(&mut e, "CREATE TABLE dbo.seq_counter (cid INT, last_val INT)");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.seq_counter (cid INT, last_val INT)",
+    );
     exec(&mut e, "INSERT INTO dbo.seq_counter VALUES (1, 10)");
     exec(
         &mut e,
@@ -1573,7 +1609,10 @@ fn wave11b_rowcount_insert_skips_identity_select_into_union_distinct_and_datetim
     let mut e = Engine::new();
 
     // 1. @@ROWCOUNT across INSERT, UPDATE, DELETE, SELECT
-    exec(&mut e, "CREATE TABLE #rc (id INT IDENTITY(1,1), tag VARCHAR(20))");
+    exec(
+        &mut e,
+        "CREATE TABLE #rc (id INT IDENTITY(1,1), tag VARCHAR(20))",
+    );
     // INSERT without column list skips IDENTITY column automatically
     let r1 = e
         .execute_batch(
@@ -1605,12 +1644,18 @@ fn wave11b_rowcount_insert_skips_identity_select_into_union_distinct_and_datetim
 
     // 3. SELECT DISTINCT normalizes case-insensitive / trimmed strings
     exec(&mut e, "CREATE TABLE #dups (s VARCHAR(10))");
-    exec(&mut e, "INSERT INTO #dups VALUES ('Abc'), ('abc  '), ('ABC')");
+    exec(
+        &mut e,
+        "INSERT INTO #dups VALUES ('Abc'), ('abc  '), ('ABC')",
+    );
     let r3 = query(&mut e, "SELECT DISTINCT s FROM #dups");
     assert_eq!(r3.rows.len(), 1);
 
     // 4. CAST(DATETIME AS FLOAT) returns SQL Server epoch days since 1900-01-01
-    let r4 = query(&mut e, "SELECT CAST(CAST('1900-01-02 12:00:00' AS DATETIME) AS FLOAT)");
+    let r4 = query(
+        &mut e,
+        "SELECT CAST(CAST('1900-01-02 12:00:00' AS DATETIME) AS FLOAT)",
+    );
     assert_eq!(r4.rows[0][0].to_f64(), Some(1.5));
 }
 
@@ -1646,4 +1691,102 @@ fn trigger_exposes_empty_inserted_on_delete_year_only_date_and_paren_insert_sele
     exec(&mut e, "INSERT INTO #p_ins (SELECT 42)");
     let r2 = query(&mut e, "SELECT v FROM #p_ins");
     assert_eq!(r2.rows[0][0].to_integer_i64(), Some(42));
+}
+
+#[test]
+fn bare_throw_nullable_param_insert_exec_rc_alter_proc_toggle_trigger_default_pk_and_xml_modify() {
+    let mut e = Engine::new();
+
+    // 1. Bare THROW followed by RETURN without semicolon + nullable procedure parameter + EXEC before END
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_rethrow (@x INT NULL) AS
+         BEGIN
+             BEGIN TRY
+                 IF @x IS NULL RAISERROR('null_x', 16, 1)
+             END TRY
+             BEGIN CATCH
+                 THROW
+                 RETURN 55555
+             END CATCH
+             EXEC dbo.p_noop
+         END",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_noop AS BEGIN SELECT 1 AS ok END",
+    );
+    assert!(e.exec("EXEC dbo.p_rethrow NULL").is_err());
+
+    // 2. INSERT INTO tbl EXEC @rc = proc + ALTER PROCEDURE + bare first-statement proc call
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_val (@n INT) AS BEGIN SELECT @n AS v; RETURN 7; END",
+    );
+    exec(&mut e, "CREATE TABLE #res (v INT)");
+    exec(&mut e, "DECLARE @rc INT = 0");
+    exec(&mut e, "INSERT INTO #res EXEC @rc = dbo.p_val 99");
+    let r = query(&mut e, "SELECT @rc, (SELECT v FROM #res)");
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(7));
+    assert_eq!(r.rows[0][1].to_integer_i64(), Some(99));
+
+    exec(
+        &mut e,
+        "ALTER PROCEDURE dbo.p_val (@n INT) AS BEGIN SELECT @n + 1 AS v; RETURN 8; END",
+    );
+    let r2 = query(&mut e, "EXEC ('dbo.p_val 10')");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(11));
+
+    // 3. ALTER TABLE ADD CONSTRAINT DEFAULT + composite PRIMARY KEY enforcement
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_c (a INT NOT NULL, b INT NOT NULL, c INT)",
+    );
+    exec(
+        &mut e,
+        "ALTER TABLE dbo.t_c ADD CONSTRAINT DF_t_c_c DEFAULT (42) FOR c",
+    );
+    exec(
+        &mut e,
+        "ALTER TABLE dbo.t_c ADD CONSTRAINT PK_t_c PRIMARY KEY CLUSTERED (a, b)",
+    );
+    exec(&mut e, "INSERT INTO dbo.t_c (a, b) VALUES (1, 2)");
+    let r3 = query(&mut e, "SELECT c FROM dbo.t_c WHERE a = 1 AND b = 2");
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(42));
+    assert!(e.exec("INSERT INTO dbo.t_c (a, b) VALUES (1, 2)").is_err());
+
+    // 4. DISABLE TRIGGER / ENABLE TRIGGER
+    exec(&mut e, "CREATE TABLE dbo.t_tr (id INT)");
+    exec(&mut e, "CREATE TABLE dbo.t_tr_log (id INT)");
+    exec(
+        &mut e,
+        "CREATE TRIGGER dbo.trg_t_tr ON dbo.t_tr AFTER INSERT AS
+         BEGIN INSERT INTO dbo.t_tr_log SELECT id FROM INSERTED; END",
+    );
+    exec(&mut e, "INSERT INTO dbo.t_tr VALUES (1)");
+    exec(&mut e, "DISABLE TRIGGER dbo.trg_t_tr ON dbo.t_tr");
+    exec(&mut e, "INSERT INTO dbo.t_tr VALUES (2)");
+    exec(&mut e, "ENABLE TRIGGER dbo.trg_t_tr ON dbo.t_tr");
+    exec(&mut e, "INSERT INTO dbo.t_tr VALUES (3)");
+    let r4 = query(&mut e, "SELECT COUNT(*) FROM dbo.t_tr_log");
+    assert_eq!(r4.rows[0][0].to_integer_i64(), Some(2));
+
+    // 5. XML .modify('delete (...)') and .modify('insert sql:column(...) into (...)')
+    exec(&mut e, "CREATE TABLE #x1 (id INT, doc XML)");
+    exec(&mut e, "CREATE TABLE #x2 (id INT, frag XML)");
+    exec(
+        &mut e,
+        "INSERT INTO #x1 VALUES (1, '<Root><Old>x</Old><Keep>y</Keep></Root>')",
+    );
+    exec(&mut e, "INSERT INTO #x2 VALUES (1, '<New>z</New>')");
+    exec(&mut e, "UPDATE #x1 SET doc.modify('delete (/Root/Old)')");
+    exec(
+        &mut e,
+        "UPDATE a SET doc.modify('insert sql:column(\"b.frag\") into (/Root)[1]') FROM #x1 a JOIN #x2 b ON a.id = b.id",
+    );
+    let r5 = query(&mut e, "SELECT doc FROM #x1 WHERE id = 1");
+    assert_eq!(
+        r5.rows[0][0].to_string_value(),
+        "<Root><Keep>y</Keep><New>z</New></Root>"
+    );
 }

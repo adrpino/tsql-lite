@@ -36,6 +36,9 @@ fn is_statement_starter(tok: Option<&Token>) -> bool {
                 | Keyword::Fetch
                 | Keyword::With
                 | Keyword::Throw
+                | Keyword::End
+                | Keyword::Else
+                | Keyword::RaiseError
         ),
         _ => false,
     }

@@ -167,7 +167,12 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
         }
         stmts
     };
-    Ok(CreateStmt::Procedure { name, params, body })
+    Ok(CreateStmt::Procedure {
+        name,
+        params,
+        body,
+        or_alter: false,
+    })
 }
 
 fn parse_function_with_options(parser: &mut Parser) -> ParseResult<()> {

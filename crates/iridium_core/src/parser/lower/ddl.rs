@@ -239,7 +239,12 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                 ),
             ))
         }
-        ast::CreateStmt::Procedure { name, params, body } => {
+        ast::CreateStmt::Procedure {
+            name,
+            params,
+            body,
+            or_alter,
+        } => {
             Ok(executor_ast::Statement::Procedural(
                 executor_ast::statements::ProceduralStatement::CreateProcedure(
                     executor_ast::statements::procedural::CreateProcedureStmt {
@@ -252,6 +257,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                             .into_iter()
                             .map(lower_statement)
                             .collect::<Result<Vec<_>, _>>()?,
+                        or_alter,
                     },
                 ),
             ))
@@ -475,8 +481,17 @@ pub fn lower_alter_action(
         ast::AlterTableAction::DropConstraint(c) => {
             Ok(executor_ast::statements::ddl::AlterTableAction::DropConstraint(c))
         }
-        ast::AlterTableAction::CheckConstraint { check, name } => Ok(
-            executor_ast::statements::ddl::AlterTableAction::CheckConstraint { check, name },
+        ast::AlterTableAction::CheckConstraint { check, name } => {
+            Ok(executor_ast::statements::ddl::AlterTableAction::CheckConstraint { check, name })
+        }
+        ast::AlterTableAction::ToggleTrigger {
+            trigger_name,
+            enable,
+        } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::ToggleTrigger {
+                trigger_name: trigger_name.map(lower_object_name),
+                enable,
+            },
         ),
     }
 }

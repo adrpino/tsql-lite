@@ -180,6 +180,10 @@ pub struct ViewDef {
     pub definition_sql: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerDef {
     #[serde(default)]
@@ -190,6 +194,8 @@ pub struct TriggerDef {
     pub table_name: String,
     pub events: Vec<TriggerEvent>,
     pub is_instead_of: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(with = "serde_arc")]
     pub body: std::sync::Arc<Vec<Statement>>,
     #[serde(default)]
@@ -282,6 +288,7 @@ pub trait RoutineRegistry {
     fn get_routines(&self) -> &[RoutineDef];
     fn find_routine(&self, schema: &str, name: &str) -> Option<&RoutineDef>;
     fn create_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
+    fn replace_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
     fn drop_routine(
         &mut self,
         schema: &str,
@@ -309,6 +316,14 @@ pub trait TriggerRegistry {
     fn find_triggers_for_table(&self, schema: &str, name: &str) -> Vec<&TriggerDef>;
     fn create_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError>;
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
+    fn set_trigger_enabled(
+        &mut self,
+        trigger_schema: Option<&str>,
+        trigger_name: Option<&str>,
+        table_schema: &str,
+        table_name: &str,
+        enabled: bool,
+    ) -> Result<(), DbError>;
 }
 
 pub trait SynonymRegistry {

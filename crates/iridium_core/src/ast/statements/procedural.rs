@@ -78,6 +78,8 @@ pub struct CreateProcedureStmt {
     pub name: ObjectName,
     pub params: Vec<crate::ast::RoutineParam>,
     pub body: Vec<crate::ast::Statement>,
+    #[serde(default)]
+    pub or_alter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

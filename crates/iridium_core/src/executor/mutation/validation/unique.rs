@@ -31,6 +31,33 @@ pub(crate) fn enforce_unique_on_insert(
             }
         }
     }
+    let pk_cols: Vec<usize> = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.primary_key)
+        .map(|(i, _)| i)
+        .collect();
+    if pk_cols.len() >= 2 {
+        for existing in storage.scan_rows(table_id)? {
+            let existing = existing?;
+            if existing.deleted {
+                continue;
+            }
+            let all_match = pk_cols.iter().all(|&ci| {
+                let nv = &new_row.values[ci];
+                let ev = &existing.values[ci];
+                !nv.is_null()
+                    && !ev.is_null()
+                    && compare_values(nv, ev) == std::cmp::Ordering::Equal
+            });
+            if all_match {
+                return Err(DbError::Execution(
+                    "Violation of PRIMARY KEY constraint. Cannot insert duplicate key.".to_string(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -59,6 +86,33 @@ pub(crate) fn enforce_unique_on_update(
                     "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
                     col.name
                 )));
+            }
+        }
+    }
+    let pk_cols: Vec<usize> = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.primary_key)
+        .map(|(i, _)| i)
+        .collect();
+    if pk_cols.len() >= 2 {
+        for (i, existing) in storage.scan_rows(table_id)?.enumerate() {
+            let existing = existing?;
+            if i == updated_idx || existing.deleted {
+                continue;
+            }
+            let all_match = pk_cols.iter().all(|&ci| {
+                let nv = &updated_row.values[ci];
+                let ev = &existing.values[ci];
+                !nv.is_null()
+                    && !ev.is_null()
+                    && compare_values(nv, ev) == std::cmp::Ordering::Equal
+            });
+            if all_match {
+                return Err(DbError::Execution(
+                    "Violation of PRIMARY KEY constraint. Cannot insert duplicate key.".to_string(),
+                ));
             }
         }
     }

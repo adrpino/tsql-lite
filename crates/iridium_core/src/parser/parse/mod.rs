@@ -37,7 +37,24 @@ pub fn parse_batch(parser: &mut Parser) -> ParseResult<Vec<Statement>> {
             let _ = parser.next();
             continue;
         }
-        statements.push(parse_statement(parser)?);
+        // In T-SQL, the first statement of a batch may invoke a stored procedure without EXEC.
+        let saved = parser.save();
+        match parse_statement(parser) {
+            Ok(stmt) => statements.push(stmt),
+            Err(err) => {
+                if statements.is_empty() {
+                    parser.restore(saved);
+                    if matches!(parser.peek(), Some(Token::Identifier(_))) {
+                        if let Ok(stmt) = parse_exec_dispatch(parser) {
+                            statements.push(stmt);
+                            continue;
+                        }
+                        parser.restore(saved);
+                    }
+                }
+                return Err(err);
+            }
+        }
     }
     Ok(statements)
 }
@@ -340,8 +357,40 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             Keyword::Throw => {
                 let _ = parser.next();
                 if parser.is_empty()
-                    || matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
-                    || matches!(parser.peek(), Some(Token::Keyword(Keyword::End)))
+                    || matches!(
+                        parser.peek(),
+                        Some(Token::Semicolon)
+                            | Some(Token::Go)
+                            | Some(Token::Keyword(
+                                Keyword::End
+                                    | Keyword::Else
+                                    | Keyword::Select
+                                    | Keyword::Insert
+                                    | Keyword::Update
+                                    | Keyword::Delete
+                                    | Keyword::Declare
+                                    | Keyword::Set
+                                    | Keyword::If
+                                    | Keyword::While
+                                    | Keyword::Begin
+                                    | Keyword::Exec
+                                    | Keyword::Execute
+                                    | Keyword::Return
+                                    | Keyword::Break
+                                    | Keyword::Continue
+                                    | Keyword::Print
+                                    | Keyword::Throw
+                                    | Keyword::RaiseError
+                                    | Keyword::Commit
+                                    | Keyword::Rollback
+                                    | Keyword::Save
+                                    | Keyword::Create
+                                    | Keyword::Drop
+                                    | Keyword::Alter
+                                    | Keyword::Merge
+                                    | Keyword::With
+                            ))
+                    )
                 {
                     Ok(Statement::Procedural(ProceduralStatement::Throw {
                         error_number: None,
@@ -446,6 +495,28 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             _ => parser.backtrack(Expected::Description("statement keyword")),
         },
+        Some(Token::Identifier(id))
+            if id.eq_ignore_ascii_case("DISABLE") || id.eq_ignore_ascii_case("ENABLE") =>
+        {
+            let enable = id.eq_ignore_ascii_case("ENABLE");
+            let _ = parser.next();
+            parser.expect_keyword(Keyword::Trigger)?;
+            let trigger_name = if parser.at_keyword(Keyword::All) {
+                let _ = parser.next();
+                None
+            } else {
+                Some(multipart_name(parser)?)
+            };
+            parser.expect_keyword(Keyword::On)?;
+            let table = multipart_name(parser)?;
+            Ok(Statement::Ddl(DdlStatement::AlterTable {
+                table,
+                action: AlterTableAction::ToggleTrigger {
+                    trigger_name,
+                    enable,
+                },
+            }))
+        }
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WAITFOR") => {
             let _ = parser.next();
             // WAITFOR DELAY <expr> | WAITFOR TIME <expr>
@@ -500,8 +571,8 @@ fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parser.next();
             }
             let _ = parser.next(); // CURSOR
-            // Optional T-SQL cursor options before FOR (LOCAL, GLOBAL, FORWARD_ONLY, SCROLL,
-            // STATIC, KEYSET, DYNAMIC, FAST_FORWARD, READ_ONLY, SCROLL_LOCKS, OPTIMISTIC, TYPE_WARNING).
+                                   // Optional T-SQL cursor options before FOR (LOCAL, GLOBAL, FORWARD_ONLY, SCROLL,
+                                   // STATIC, KEYSET, DYNAMIC, FAST_FORWARD, READ_ONLY, SCROLL_LOCKS, OPTIMISTIC, TYPE_WARNING).
             while !parser.at_keyword(Keyword::For) && !parser.is_empty() {
                 match parser.peek() {
                     Some(Token::Identifier(id))
@@ -1148,6 +1219,13 @@ pub fn parse_routine_param(parser: &mut Parser) -> ParseResult<RoutineParam> {
         if default.is_none() && matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
             let _ = parser.next();
             default = Some(parse_expr(parser)?);
+            continue;
+        }
+        if parser.at_keyword(Keyword::Null) {
+            let _ = parser.next();
+            if default.is_none() {
+                default = Some(Expr::Null);
+            }
             continue;
         }
         break;

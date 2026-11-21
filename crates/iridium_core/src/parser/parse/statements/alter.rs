@@ -19,8 +19,7 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 parser.restore(saved);
             }
         }
-        let is_nocheck =
-            matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"));
+        let is_nocheck = matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"));
         if parser.at_keyword(Keyword::Check) || is_nocheck {
             let check = !is_nocheck;
             let _ = parser.next();
@@ -112,7 +111,17 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         } else {
             parser.backtrack(Expected::Description("add or drop"))
         }
+    } else if parser.at_keyword(Keyword::Procedure) || parser.at_keyword(Keyword::Proc) {
+        let _ = parser.next();
+        let mut stmt = super::create::parse_create_procedure(parser)?;
+        if let CreateStmt::Procedure {
+            ref mut or_alter, ..
+        } = stmt
+        {
+            *or_alter = true;
+        }
+        Ok(Statement::Ddl(DdlStatement::Create(Box::new(stmt))))
     } else {
-        parser.backtrack(Expected::Description("table"))
+        parser.backtrack(Expected::Description("table or procedure"))
     }
 }

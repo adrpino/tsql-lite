@@ -544,28 +544,30 @@ pub fn lower_insert(
             ast::InsertSource::Select(sel) => {
                 executor_ast::statements::dml::InsertSource::Select(Box::new(lower_select(*sel)?))
             }
-            ast::InsertSource::Exec { procedure, args } => {
-                executor_ast::statements::dml::InsertSource::Exec(Box::new(
-                    executor_ast::Statement::Procedural(
-                        executor_ast::statements::ProceduralStatement::ExecProcedure(
-                            executor_ast::statements::procedural::ExecProcedureStmt {
-                                return_variable: None,
-                                name: lower_object_name(procedure),
-                                args: args
-                                    .into_iter()
-                                    .map(|a| {
-                                        Ok(executor_ast::statements::procedural::ExecArgument {
-                                            name: a.name,
-                                            expr: lower_expr(a.expr)?,
-                                            is_output: a.is_output,
-                                        })
+            ast::InsertSource::Exec {
+                return_variable,
+                procedure,
+                args,
+            } => executor_ast::statements::dml::InsertSource::Exec(Box::new(
+                executor_ast::Statement::Procedural(
+                    executor_ast::statements::ProceduralStatement::ExecProcedure(
+                        executor_ast::statements::procedural::ExecProcedureStmt {
+                            return_variable,
+                            name: lower_object_name(procedure),
+                            args: args
+                                .into_iter()
+                                .map(|a| {
+                                    Ok(executor_ast::statements::procedural::ExecArgument {
+                                        name: a.name,
+                                        expr: lower_expr(a.expr)?,
+                                        is_output: a.is_output,
                                     })
-                                    .collect::<Result<Vec<_>, DbError>>()?,
-                            },
-                        ),
+                                })
+                                .collect::<Result<Vec<_>, DbError>>()?,
+                        },
                     ),
-                ))
-            }
+                ),
+            )),
             ast::InsertSource::DefaultValues => {
                 executor_ast::statements::dml::InsertSource::DefaultValues
             }

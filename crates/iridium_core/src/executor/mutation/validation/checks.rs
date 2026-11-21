@@ -30,6 +30,9 @@ pub(crate) fn enforce_checks_on_row(
     storage: &mut dyn crate::storage::Storage,
     clock: &dyn Clock,
 ) -> Result<(), DbError> {
+    if table.check_constraints.is_empty() && !table.columns.iter().any(|c| c.check.is_some()) {
+        return Ok(());
+    }
     let joined = single_row_context(table, row.clone());
     for col in &table.columns {
         if let Some(check_expr) = &col.check {

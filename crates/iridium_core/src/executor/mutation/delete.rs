@@ -165,6 +165,24 @@ impl<'a> MutationExecutor<'a> {
             .is_empty();
 
         let collect_rows = stmt.output.is_some() || has_after_triggers;
+        let has_incoming_fks = self.catalog.get_tables().iter().any(|other| {
+            other.foreign_keys.iter().any(|fk| {
+                fk.enabled
+                    && fk
+                        .referenced_table
+                        .schema_or_dbo()
+                        .eq_ignore_ascii_case(table.schema_or_dbo())
+                    && fk.referenced_table.name.eq_ignore_ascii_case(&table.name)
+            })
+        });
+        let table_indexes: Vec<u32> = self
+            .catalog
+            .get_indexes()
+            .iter()
+            .filter(|i| i.table_id == table_id)
+            .map(|i| i.id)
+            .collect();
+        let has_dirty = ctx.session.dirty_buffer.is_some();
         let mut deleted_rows_for_output = Vec::new();
         let rowcount_limit = rowcount_limit(ctx);
         let mut deleted_indices = HashSet::new();
@@ -175,7 +193,9 @@ impl<'a> MutationExecutor<'a> {
             rowcount_limit,
             &mut deleted_indices,
             |stored_row, _idx, _joined_row| {
-                enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
+                if has_incoming_fks {
+                    enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
+                }
                 if collect_rows {
                     deleted_rows_for_output.push(stored_row.clone());
                 }
@@ -187,31 +207,35 @@ impl<'a> MutationExecutor<'a> {
         let mut indices_to_delete: Vec<usize> = deleted_indices.into_iter().collect();
         indices_to_delete.sort_unstable_by(|a, b| b.cmp(a));
 
-        let rows = self.storage.get_rows(table_id)?;
-        let deleted_values: Vec<Vec<Value>> = indices_to_delete
-            .iter()
-            .filter_map(|&idx| rows.get(idx).map(|r| r.values.clone()))
-            .collect();
+        let deleted_values: Vec<Vec<Value>> =
+            if !indices_to_delete.is_empty() && !table_indexes.is_empty() {
+                let rows = self.storage.get_rows(table_id)?;
+                indices_to_delete
+                    .iter()
+                    .filter_map(|&idx| rows.get(idx).map(|r| r.values.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         for (i, idx) in indices_to_delete.iter().enumerate() {
             self.storage.delete_row(table_id, *idx)?;
 
-            if let Some(index_storage) = self.storage.as_index_storage_mut() {
-                if let Some(values) = deleted_values.get(i) {
-                    for idx_def in self
-                        .catalog
-                        .get_indexes()
-                        .iter()
-                        .filter(|i| i.table_id == table_id)
-                    {
-                        if let Some(bi) = index_storage.get_index_mut(idx_def.id) {
-                            let _ = bi.delete(*idx, values);
+            if !table_indexes.is_empty() {
+                if let Some(index_storage) = self.storage.as_index_storage_mut() {
+                    if let Some(values) = deleted_values.get(i) {
+                        for &idx_id in &table_indexes {
+                            if let Some(bi) = index_storage.get_index_mut(idx_id) {
+                                let _ = bi.delete(*idx, values);
+                            }
                         }
                     }
                 }
             }
 
-            self.push_dirty_delete(ctx, &table.name, *idx);
+            if has_dirty {
+                self.push_dirty_delete(ctx, &table.name, *idx);
+            }
         }
 
         self.execute_triggers(

@@ -198,6 +198,28 @@ impl<'a> MutationExecutor<'a> {
             .is_empty();
 
         let collect_rows = stmt.output.is_some() || has_after_triggers;
+        let has_incoming_fks = self.catalog.get_tables().iter().any(|other| {
+            other.foreign_keys.iter().any(|fk| {
+                fk.enabled
+                    && fk
+                        .referenced_table
+                        .schema_or_dbo()
+                        .eq_ignore_ascii_case(table.schema_or_dbo())
+                    && fk.referenced_table.name.eq_ignore_ascii_case(&table.name)
+            })
+        });
+        let has_outgoing_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
+        let has_checks = !table.check_constraints.is_empty()
+            || table.columns.iter().any(|c| c.check.is_some());
+        let has_unique = table.columns.iter().any(|c| c.unique)
+            || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
+        let table_indexes: Vec<u32> = self
+            .catalog
+            .get_indexes()
+            .iter()
+            .filter(|i| i.table_id == table_id)
+            .map(|i| i.id)
+            .collect();
         let mut inserted_rows_for_output = Vec::new();
         let mut deleted_rows_for_output = Vec::new();
         let rowcount_limit = rowcount_limit(ctx);
@@ -210,7 +232,9 @@ impl<'a> MutationExecutor<'a> {
             &mut updated_indices,
             |stored_row, idx, joined_row| {
                 let mut new_row = stored_row.clone();
-                enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
+                if has_incoming_fks {
+                    enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
+                }
                 apply_assignments(
                     &table,
                     &mut new_row,
@@ -221,38 +245,41 @@ impl<'a> MutationExecutor<'a> {
                     self.storage,
                     self.clock,
                 )?;
-                enforce_foreign_keys_on_update(
-                    &table,
-                    self.catalog,
-                    self.storage,
-                    stored_row,
-                    &new_row,
-                )?;
+                if has_incoming_fks {
+                    enforce_foreign_keys_on_update(
+                        &table,
+                        self.catalog,
+                        self.storage,
+                        stored_row,
+                        &new_row,
+                    )?;
+                }
                 validate_row_against_table(&table, &new_row.values)?;
-                enforce_foreign_keys_on_insert(&table, self.catalog, self.storage, &new_row)?;
-                enforce_checks_on_row(
-                    &table,
-                    &new_row,
-                    ctx,
-                    self.catalog,
-                    self.storage,
-                    self.clock,
-                )?;
-                enforce_unique_on_update(&table, self.storage, table_id, &new_row, idx)?;
+                if has_outgoing_fks {
+                    enforce_foreign_keys_on_insert(&table, self.catalog, self.storage, &new_row)?;
+                }
+                if has_checks {
+                    enforce_checks_on_row(
+                        &table,
+                        &new_row,
+                        ctx,
+                        self.catalog,
+                        self.storage,
+                        self.clock,
+                    )?;
+                }
+                if has_unique {
+                    enforce_unique_on_update(&table, self.storage, table_id, &new_row, idx)?;
+                }
 
                 self.storage.update_row(table_id, idx, new_row.clone())?;
 
-                if let Some(index_storage) = self.storage.as_index_storage_mut() {
-                    for idx_def in self
-                        .catalog
-                        .get_indexes()
-                        .iter()
-                        .filter(|i| i.table_id == table_id)
-                    {
-                        if let Some(bi) = index_storage.get_index_mut(idx_def.id) {
-                            let old_values: Vec<Value> = stored_row.values.clone();
-                            let new_values: Vec<Value> = new_row.values.clone();
-                            let _ = bi.update(idx, &old_values, idx, &new_values);
+                if !table_indexes.is_empty() {
+                    if let Some(index_storage) = self.storage.as_index_storage_mut() {
+                        for &idx_id in &table_indexes {
+                            if let Some(bi) = index_storage.get_index_mut(idx_id) {
+                                let _ = bi.update(idx, &stored_row.values, idx, &new_row.values);
+                            }
                         }
                     }
                 }

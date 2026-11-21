@@ -165,14 +165,28 @@ impl<'a> MutationExecutor<'a> {
         row_values: Vec<Value>,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<StoredRow, DbError> {
-        let mut final_values = vec![crate::types::Value::Null; table.columns.len()];
-        for (input_col, val) in insert_columns.iter().zip(row_values.iter()) {
-            let col_idx = table
-                .columns
-                .iter()
-                .position(|c| c.name.eq_ignore_ascii_case(input_col))
-                .ok_or_else(|| DbError::column_not_found(input_col))?;
+        let col_indices: Vec<usize> = insert_columns
+            .iter()
+            .map(|input_col| {
+                table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(input_col))
+                    .ok_or_else(|| DbError::column_not_found(input_col))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.build_row_from_values_indexed(table, &col_indices, row_values, ctx)
+    }
 
+    pub(crate) fn build_row_from_values_indexed(
+        &mut self,
+        table: &TableDef,
+        col_indices: &[usize],
+        row_values: Vec<Value>,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> Result<StoredRow, DbError> {
+        let mut final_values = vec![crate::types::Value::Null; table.columns.len()];
+        for (&col_idx, mut value) in col_indices.iter().zip(row_values.into_iter()) {
             let col = &table.columns[col_idx];
             if col.computed_expr.is_some() {
                 return Err(DbError::Execution(format!(
@@ -180,7 +194,6 @@ impl<'a> MutationExecutor<'a> {
                     col.name
                 )));
             }
-            let mut value = val.clone();
             apply_ansi_padding(&mut value, &col.data_type, col.ansi_padding_on);
             enforce_string_length(&col.data_type, &value, &col.name)?;
             final_values[col_idx] = value;
@@ -189,10 +202,17 @@ impl<'a> MutationExecutor<'a> {
             values: final_values,
             deleted: false,
         };
-        self.apply_missing_values(table, &mut temp_row.values, ctx)?;
-        for (col, value) in table.columns.iter().zip(temp_row.values.iter_mut()) {
-            apply_ansi_padding(value, &col.data_type, col.ansi_padding_on);
-            enforce_string_length(&col.data_type, value, &col.name)?;
+        let needs_defaults_or_computed = table.columns.iter().any(|c| {
+            c.identity.is_some()
+                || c.default.is_some()
+                || !c.nullable
+                || c.computed_expr.is_some()
+        });
+        if needs_defaults_or_computed {
+            self.apply_missing_values(table, &mut temp_row.values, ctx)?;
+            for (col, value) in table.columns.iter().zip(temp_row.values.iter_mut()) {
+                enforce_string_length(&col.data_type, value, &col.name)?;
+            }
         }
         Ok(temp_row)
     }

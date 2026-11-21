@@ -117,14 +117,29 @@ impl<'a> MutationExecutor<'a> {
             )));
         }
 
-        let mut rows = Vec::new();
+        let col_indices: Vec<usize> = insert_columns
+            .iter()
+            .map(|input_col| {
+                table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(input_col))
+                    .ok_or_else(|| DbError::column_not_found(input_col))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let cap = match rowcount_limit {
+            Some(limit) => query_result.rows.len().min(limit),
+            None => query_result.rows.len(),
+        };
+        let mut rows = Vec::with_capacity(cap);
         for row_values in query_result.rows {
             if let Some(limit) = rowcount_limit {
                 if rows.len() >= limit {
                     break;
                 }
             }
-            rows.push(self.build_row_from_values(table, insert_columns, row_values, ctx)?);
+            rows.push(self.build_row_from_values_indexed(table, &col_indices, row_values, ctx)?);
         }
         Ok(rows)
     }
@@ -137,51 +152,86 @@ impl<'a> MutationExecutor<'a> {
         ctx: &mut ExecutionContext<'_>,
         collect_rows: bool,
     ) -> Result<Vec<StoredRow>, DbError> {
-        let mut inserted_rows_for_output = Vec::new();
+        let mut inserted_rows_for_output = if collect_rows {
+            Vec::with_capacity(rows.len())
+        } else {
+            Vec::new()
+        };
+
+        let has_unique = table.columns.iter().any(|c| c.unique)
+            || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
+        let has_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
+        let has_checks = !table.check_constraints.is_empty()
+            || table.columns.iter().any(|c| c.check.is_some());
+        let has_dirty = ctx.session.dirty_buffer.is_some();
+        let table_indexes: Vec<u32> = self
+            .catalog
+            .get_indexes()
+            .iter()
+            .filter(|i| i.table_id == table_id)
+            .map(|i| i.id)
+            .collect();
+        let mut next_row_index = if !table_indexes.is_empty()
+            && self.storage.as_index_storage_mut().is_some()
+        {
+            self.storage
+                .get_rows(table_id)
+                .map(|r| r.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         for row in rows {
-            crate::executor::mutation::validation::enforce_unique_on_insert(
-                table,
-                self.storage,
-                table_id,
-                &row,
-            )?;
-            crate::executor::mutation::validation::enforce_foreign_keys_on_insert(
-                table,
-                self.catalog,
-                self.storage,
-                &row,
-            )?;
-            crate::executor::mutation::validation::enforce_checks_on_row(
-                table,
-                &row,
-                ctx,
-                self.catalog,
-                self.storage,
-                self.clock,
-            )?;
+            if has_unique {
+                crate::executor::mutation::validation::enforce_unique_on_insert(
+                    table,
+                    self.storage,
+                    table_id,
+                    &row,
+                )?;
+            }
+            if has_fks {
+                crate::executor::mutation::validation::enforce_foreign_keys_on_insert(
+                    table,
+                    self.catalog,
+                    self.storage,
+                    &row,
+                )?;
+            }
+            if has_checks {
+                crate::executor::mutation::validation::enforce_checks_on_row(
+                    table,
+                    &row,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
+            }
+
+            if !collect_rows && table_indexes.is_empty() && !has_dirty {
+                self.storage.insert_row(table_id, row)?;
+                continue;
+            }
+
             self.storage.insert_row(table_id, row.clone())?;
+            let row_index = next_row_index;
+            next_row_index += 1;
 
-            let row_index = self
-                .storage
-                .get_rows(table_id)
-                .map(|r| r.len() - 1)
-                .unwrap_or(0);
-
-            if let Some(index_storage) = self.storage.as_index_storage_mut() {
-                for idx in self
-                    .catalog
-                    .get_indexes()
-                    .iter()
-                    .filter(|i| i.table_id == table_id)
-                {
-                    if let Some(bi) = index_storage.get_index_mut(idx.id) {
-                        let _ = bi.insert(row_index, &row.values);
+            if !table_indexes.is_empty() {
+                if let Some(index_storage) = self.storage.as_index_storage_mut() {
+                    for &idx_id in &table_indexes {
+                        if let Some(bi) = index_storage.get_index_mut(idx_id) {
+                            let _ = bi.insert(row_index, &row.values);
+                        }
                     }
                 }
             }
 
-            self.push_dirty_insert(ctx, &table.name, &row);
+            if has_dirty {
+                self.push_dirty_insert(ctx, &table.name, &row);
+            }
             if collect_rows {
                 inserted_rows_for_output.push(row);
             }

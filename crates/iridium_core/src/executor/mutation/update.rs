@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::ast::UpdateStmt;
 use crate::error::DbError;
-use crate::types::Value;
 
 use super::super::context::ExecutionContext;
 use super::super::query::QueryExecutor;

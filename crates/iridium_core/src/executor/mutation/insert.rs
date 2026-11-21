@@ -158,26 +158,6 @@ impl<'a> MutationExecutor<'a> {
         }
     }
 
-    pub(crate) fn build_row_from_values(
-        &mut self,
-        table: &TableDef,
-        insert_columns: &[String],
-        row_values: Vec<Value>,
-        ctx: &mut ExecutionContext<'_>,
-    ) -> Result<StoredRow, DbError> {
-        let col_indices: Vec<usize> = insert_columns
-            .iter()
-            .map(|input_col| {
-                table
-                    .columns
-                    .iter()
-                    .position(|c| c.name.eq_ignore_ascii_case(input_col))
-                    .ok_or_else(|| DbError::column_not_found(input_col))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        self.build_row_from_values_indexed(table, &col_indices, row_values, ctx)
-    }
-
     pub(crate) fn build_row_from_values_indexed(
         &mut self,
         table: &TableDef,

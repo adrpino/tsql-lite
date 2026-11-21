@@ -18,6 +18,7 @@ pub enum Token {
     RParen,
     Comma,
     Semicolon,
+    Colon,
     Dot,
     Star,
     Tilde,

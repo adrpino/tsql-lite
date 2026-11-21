@@ -174,6 +174,10 @@ pub(crate) fn execute_sp_executesql(
             Ok(StmtOutcome::Return(_)) | Ok(StmtOutcome::Break) | Ok(StmtOutcome::Continue) => {
                 Ok(None)
             }
+            Ok(StmtOutcome::Goto(label)) => Err(DbError::Execution(format!(
+                "Label '{}' has not been declared.",
+                label
+            ))),
             Ok(StmtOutcome::Ok(r)) => Ok(r),
             Err(e) => Err(e),
         }

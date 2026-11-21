@@ -465,6 +465,16 @@ impl SqlHashKey {
         }
     }
 
+    pub fn from_value_case_sensitive(v: &Value) -> Self {
+        match v {
+            Value::SqlVariant(inner) => Self::from_value_case_sensitive(inner),
+            Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
+                SqlHashKey::String(s.trim_end_matches(' ').to_string())
+            }
+            other => Self::from_value(other),
+        }
+    }
+
     pub fn family(&self) -> HashKeyFamily {
         match self {
             SqlHashKey::Null => HashKeyFamily::Null,

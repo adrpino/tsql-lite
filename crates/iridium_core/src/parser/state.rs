@@ -133,6 +133,7 @@ fn token_display(tok: &Token) -> String {
         Token::RParen => "')'".to_string(),
         Token::Comma => "','".to_string(),
         Token::Semicolon => "';'".to_string(),
+        Token::Colon => "':'".to_string(),
         Token::Dot => "'.'".to_string(),
         Token::Star => "'*'".to_string(),
         Token::Tilde => "'~'".to_string(),

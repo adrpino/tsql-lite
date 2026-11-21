@@ -195,6 +195,12 @@ pub fn lower_procedural(
         ast::ProceduralStatement::Continue => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::Continue,
         )),
+        ast::ProceduralStatement::Goto(label) => Ok(executor_ast::Statement::Procedural(
+            executor_ast::statements::ProceduralStatement::Goto(label),
+        )),
+        ast::ProceduralStatement::Label(label) => Ok(executor_ast::Statement::Procedural(
+            executor_ast::statements::ProceduralStatement::Label(label),
+        )),
         ast::ProceduralStatement::Return(expr) => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::Return(
                 expr.map(lower_expr).transpose()?,

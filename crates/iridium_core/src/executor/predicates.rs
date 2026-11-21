@@ -72,19 +72,27 @@ pub(crate) fn eval_in_list(
     if val.is_null() {
         return Ok(Value::Null);
     }
+    let lhs_cs = super::evaluator::expr_collation_case_sensitive(in_expr);
     let mut found = false;
     for item in list {
         let item_val = eval_expr(item, row, ctx, catalog, storage, clock)?;
         if item_val.is_null() {
             return Ok(Value::Null);
         }
-        if compare_bool(
-            val.clone(),
-            item_val,
-            |o| o == Ordering::Equal,
-            ctx.metadata.ansi_nulls,
-        ) == Value::Bit(true)
-        {
+        let is_cs = lhs_cs
+            .or_else(|| super::evaluator::expr_collation_case_sensitive(item))
+            .unwrap_or(false);
+        let matched = if is_cs {
+            super::evaluator::compare_values_case_sensitive(&val, &item_val) == Ordering::Equal
+        } else {
+            compare_bool(
+                val.clone(),
+                item_val,
+                |o| o == Ordering::Equal,
+                ctx.metadata.ansi_nulls,
+            ) == Value::Bit(true)
+        };
+        if matched {
             found = true;
             break;
         }
@@ -159,7 +167,10 @@ pub(crate) fn eval_like(
         }
         None => None,
     };
-    let matched = like_match(&s, &p, esc.as_deref());
+    let case_sensitive = super::evaluator::expr_collation_case_sensitive(like_expr)
+        .or_else(|| super::evaluator::expr_collation_case_sensitive(pattern))
+        .unwrap_or(false);
+    let matched = like_match(&s, &p, esc.as_deref(), case_sensitive);
     Ok(Value::Bit(if negated { !matched } else { matched }))
 }
 
@@ -196,10 +207,22 @@ fn like_token_matches_char(tok: &LikeToken, ch: char) -> bool {
     }
 }
 
-fn like_match(s: &str, pattern: &str, escape: Option<&str>) -> bool {
-    let s: Vec<char> = s.to_ascii_uppercase().chars().collect();
-    let p_raw: Vec<char> = pattern.to_ascii_uppercase().chars().collect();
-    let esc_char = escape.and_then(|e| e.chars().next().map(|c| c.to_ascii_uppercase()));
+fn like_match(s: &str, pattern: &str, escape: Option<&str>, case_sensitive: bool) -> bool {
+    let s: Vec<char> = if case_sensitive {
+        s.chars().collect()
+    } else {
+        s.to_ascii_uppercase().chars().collect()
+    };
+    let p_raw: Vec<char> = if case_sensitive {
+        pattern.chars().collect()
+    } else {
+        pattern.to_ascii_uppercase().chars().collect()
+    };
+    let esc_char = escape.and_then(|e| {
+        e.chars()
+            .next()
+            .map(|c| if case_sensitive { c } else { c.to_ascii_uppercase() })
+    });
 
     let mut tokens: Vec<LikeToken> = Vec::with_capacity(p_raw.len());
     let mut i = 0;
@@ -332,7 +355,7 @@ pub(crate) fn eval_exists(
     let exists = if stmt.group_by.is_empty()
         && stmt.having.is_none()
         && stmt.set_op.is_none()
-        && stmt.for_xml.is_none()
+        && stmt.extra.is_none()
         && stmt.offset.is_none()
         && stmt.fetch.is_none()
         && stmt.top.is_none()

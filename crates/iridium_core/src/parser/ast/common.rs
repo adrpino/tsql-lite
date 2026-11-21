@@ -76,6 +76,7 @@ pub enum TableFactor {
         args: Vec<crate::parser::ast::expressions::Expr>,
         alias: Option<String>,
         with_schema: Vec<OpenJsonColumn>,
+        column_aliases: Vec<String>,
     },
 }
 

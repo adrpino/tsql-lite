@@ -1,6 +1,6 @@
 use crate::ast::{
-    ApplyClause, Expr, ForXmlClause, FromNode, ObjectName, OrderByExpr, SelectItem, SelectStmt,
-    SetOpClause, TopSpec,
+    ApplyClause, Expr, ForJsonClause, ForXmlClause, FromNode, ObjectName, OrderByExpr, SelectItem,
+    SelectStmt, SetOpClause, TopSpec,
 };
 
 #[derive(Debug, Clone)]
@@ -13,6 +13,7 @@ pub(crate) struct ProjectionPlan {
 pub(crate) struct FilterPlan {
     pub(crate) selection: Option<Expr>,
     pub(crate) group_by: Vec<Expr>,
+    pub(crate) grouping_sets: Vec<Vec<Expr>>,
     pub(crate) having: Option<Expr>,
 }
 
@@ -39,10 +40,19 @@ pub(crate) struct RelationalQuery {
     pub(crate) into_table: Option<ObjectName>,
     pub(crate) set_op: Option<Box<SetOpClause>>,
     pub(crate) for_xml: Option<Box<ForXmlClause>>,
+    pub(crate) for_json: Option<Box<ForJsonClause>>,
 }
 
 impl From<SelectStmt> for RelationalQuery {
     fn from(stmt: SelectStmt) -> Self {
+        let (for_xml, for_json, grouping_sets) = match stmt.extra {
+            Some(ex) => (
+                ex.for_xml.map(Box::new),
+                ex.for_json.map(Box::new),
+                ex.grouping_sets,
+            ),
+            None => (None, None, Vec::new()),
+        };
         Self {
             from_clause: stmt.from_clause,
             applies: stmt.applies,
@@ -53,6 +63,7 @@ impl From<SelectStmt> for RelationalQuery {
             filter: FilterPlan {
                 selection: stmt.selection,
                 group_by: stmt.group_by,
+                grouping_sets,
                 having: stmt.having,
             },
             sort: SortPlan {
@@ -65,7 +76,8 @@ impl From<SelectStmt> for RelationalQuery {
             },
             into_table: stmt.into_table,
             set_op: stmt.set_op,
-            for_xml: stmt.for_xml,
+            for_xml,
+            for_json,
         }
     }
 }

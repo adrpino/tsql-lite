@@ -39,7 +39,13 @@ pub(crate) fn apply_source_ordering(
                 executor.clock,
             )
             .unwrap_or(Value::Null);
-            let ord = value_ops::compare_values(&va, &vb);
+            let ord = if crate::executor::evaluator::expr_collation_case_sensitive(&item.expr)
+                .unwrap_or(false)
+            {
+                crate::executor::evaluator::compare_values_case_sensitive(&va, &vb)
+            } else {
+                value_ops::compare_values(&va, &vb)
+            };
             if ord != Ordering::Equal {
                 return if item.asc { ord } else { ord.reverse() };
             }

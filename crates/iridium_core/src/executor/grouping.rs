@@ -177,8 +177,17 @@ impl<'a> GroupExecutor<'a> {
                     self.clock,
                 )?);
             }
-            let hash_key: Vec<super::value_ops::SqlHashKey> =
-                key.iter().map(super::value_ops::SqlHashKey::from_value).collect();
+            let hash_key: Vec<super::value_ops::SqlHashKey> = group_by
+                .iter()
+                .zip(key.iter())
+                .map(|(expr, v)| {
+                    if super::evaluator::expr_collation_case_sensitive(expr).unwrap_or(false) {
+                        super::value_ops::SqlHashKey::from_value_case_sensitive(v)
+                    } else {
+                        super::value_ops::SqlHashKey::from_value(v)
+                    }
+                })
+                .collect();
 
             if let Some(&idx) = map.get(&hash_key) {
                 groups[idx].rows.push(row);
@@ -238,6 +247,18 @@ impl<'a> GroupExecutor<'a> {
         having: Option<Expr>,
         ctx: &mut ExecutionContext,
     ) -> Result<super::result::QueryResult, DbError> {
+        let rewritten_proj: Vec<crate::ast::SelectItem> = projection
+            .into_iter()
+            .map(|item| crate::ast::SelectItem {
+                expr: rewrite_grouping_expr(&item.expr, &group_by, &[]),
+                alias: item.alias,
+            })
+            .collect();
+        let rewritten_having = having
+            .as_ref()
+            .map(|h| rewrite_grouping_expr(h, &group_by, &[]));
+        let projection = rewritten_proj;
+        let having = rewritten_having;
         if rows.is_empty() {
             if let Some(shape) = source_shape {
                 for item in &projection {
@@ -278,6 +299,93 @@ impl<'a> GroupExecutor<'a> {
                     val.data_type()
                         .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 }),
                 );
+            }
+        } else {
+            column_types = vec![crate::types::DataType::VarChar { max_len: 4000 }; columns.len()];
+        }
+        let column_nullabilities = vec![true; columns.len()];
+        Ok(super::result::QueryResult {
+            columns,
+            column_types,
+            column_nullabilities,
+            rows: projected_rows,
+            ..Default::default()
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_grouping_sets_select(
+        &self,
+        projection: Vec<crate::ast::SelectItem>,
+        rows: Vec<JoinedRow>,
+        source_shape: Option<&JoinedRow>,
+        all_group_by: &[Expr],
+        grouping_sets: &[Vec<Expr>],
+        having: Option<&Expr>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<super::result::QueryResult, DbError> {
+        if rows.is_empty() {
+            if let Some(shape) = source_shape {
+                for item in &projection {
+                    let probe = rewrite_grouping_expr(&item.expr, all_group_by, &[]);
+                    validate_expr_columns_against_shape(&probe, shape, ctx)?;
+                }
+            }
+        }
+
+        let mut projected_rows: Vec<Vec<Value>> = Vec::new();
+        for active_set in grouping_sets {
+            let omitted: Vec<Expr> = all_group_by
+                .iter()
+                .filter(|e| !expr_in_list(e, active_set))
+                .cloned()
+                .collect();
+
+            let set_proj: Vec<crate::ast::SelectItem> = projection
+                .iter()
+                .map(|item| crate::ast::SelectItem {
+                    expr: rewrite_grouping_expr(&item.expr, active_set, &omitted),
+                    alias: item.alias.clone(),
+                })
+                .collect();
+            let set_having = having.map(|h| rewrite_grouping_expr(h, active_set, &omitted));
+
+            let groups = self.build_groups(rows.clone(), active_set, ctx)?;
+            for group in groups {
+                if group.rows.is_empty() && !active_set.is_empty() {
+                    continue;
+                }
+                if let Some(ref having_expr) = set_having {
+                    let sample_row = if group.rows.is_empty() {
+                        vec![]
+                    } else {
+                        group.rows[0].clone()
+                    };
+                    if !eval_having_predicate(
+                        having_expr,
+                        &sample_row,
+                        &group,
+                        ctx,
+                        self.catalog,
+                        self.storage,
+                        self.clock,
+                    )? {
+                        continue;
+                    }
+                }
+                projected_rows.push(self.project_group_row(&set_proj, &group, ctx)?);
+            }
+        }
+
+        let columns = expand_projection_columns(&projection, None);
+        let mut column_types = Vec::new();
+        if !projected_rows.is_empty() {
+            for col_idx in 0..columns.len() {
+                let ty = projected_rows
+                    .iter()
+                    .find_map(|r| r.get(col_idx).and_then(|v| v.data_type()))
+                    .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 });
+                column_types.push(ty);
             }
         } else {
             column_types = vec![crate::types::DataType::VarChar { max_len: 4000 }; columns.len()];
@@ -421,5 +529,173 @@ fn validate_expr_columns_against_shape(
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+fn expr_matches_grouping(a: &Expr, b: &Expr) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (Expr::Identifier(x), Expr::Identifier(y)) => x.eq_ignore_ascii_case(y),
+        (Expr::QualifiedIdentifier(xs), Expr::QualifiedIdentifier(ys)) => {
+            xs.len() == ys.len()
+                && xs
+                    .iter()
+                    .zip(ys.iter())
+                    .all(|(x, y)| x.eq_ignore_ascii_case(y))
+        }
+        (Expr::QualifiedIdentifier(xs), Expr::Identifier(y))
+        | (Expr::Identifier(y), Expr::QualifiedIdentifier(xs)) => xs
+            .last()
+            .is_some_and(|last| last.eq_ignore_ascii_case(y)),
+        _ => false,
+    }
+}
+
+fn expr_in_list(target: &Expr, list: &[Expr]) -> bool {
+    list.iter().any(|e| expr_matches_grouping(target, e))
+}
+
+fn rewrite_grouping_expr(expr: &Expr, active_set: &[Expr], omitted: &[Expr]) -> Expr {
+    if expr_in_list(expr, omitted) {
+        return Expr::Null;
+    }
+    match expr {
+        Expr::FunctionCall {
+            name,
+            args,
+            within_group,
+        } => {
+            if name.eq_ignore_ascii_case("GROUPING") && args.len() == 1 {
+                let is_agg_away = !expr_in_list(&args[0], active_set);
+                return Expr::Integer(if is_agg_away { 1 } else { 0 });
+            }
+            if name.eq_ignore_ascii_case("GROUPING_ID") && !args.is_empty() {
+                let mut mask: i64 = 0;
+                for arg in args {
+                    mask <<= 1;
+                    if !expr_in_list(arg, active_set) {
+                        mask |= 1;
+                    }
+                }
+                return Expr::Integer(mask);
+            }
+            // Do NOT rewrite column references inside aggregate functions like SUM(dept) / COUNT(dept).
+            if super::aggregates::is_aggregate_function(name) {
+                return expr.clone();
+            }
+            Expr::FunctionCall {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|a| rewrite_grouping_expr(a, active_set, omitted))
+                    .collect(),
+                within_group: within_group.clone(),
+            }
+        }
+        Expr::Binary { left, op, right } => Expr::Binary {
+            left: Box::new(rewrite_grouping_expr(left, active_set, omitted)),
+            op: *op,
+            right: Box::new(rewrite_grouping_expr(right, active_set, omitted)),
+        },
+        Expr::Unary { op, expr: inner } => Expr::Unary {
+            op: *op,
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+        },
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => Expr::Case {
+            operand: operand
+                .as_ref()
+                .map(|o| Box::new(rewrite_grouping_expr(o, active_set, omitted))),
+            when_clauses: when_clauses
+                .iter()
+                .map(|wc| crate::ast::WhenClause {
+                    condition: rewrite_grouping_expr(&wc.condition, active_set, omitted),
+                    result: rewrite_grouping_expr(&wc.result, active_set, omitted),
+                })
+                .collect(),
+            else_result: else_result
+                .as_ref()
+                .map(|e| Box::new(rewrite_grouping_expr(e, active_set, omitted))),
+        },
+        Expr::Cast {
+            expr: inner,
+            target,
+        } => Expr::Cast {
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            target: target.clone(),
+        },
+        Expr::TryCast {
+            expr: inner,
+            target,
+        } => Expr::TryCast {
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            target: target.clone(),
+        },
+        Expr::Convert {
+            target,
+            expr: inner,
+            style,
+        } => Expr::Convert {
+            target: target.clone(),
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            style: *style,
+        },
+        Expr::TryConvert {
+            target,
+            expr: inner,
+            style,
+        } => Expr::TryConvert {
+            target: target.clone(),
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            style: *style,
+        },
+        Expr::IsNull(inner) => {
+            Expr::IsNull(Box::new(rewrite_grouping_expr(inner, active_set, omitted)))
+        }
+        Expr::IsNotNull(inner) => {
+            Expr::IsNotNull(Box::new(rewrite_grouping_expr(inner, active_set, omitted)))
+        }
+        Expr::Between {
+            expr: inner,
+            low,
+            high,
+            negated,
+        } => Expr::Between {
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            low: Box::new(rewrite_grouping_expr(low, active_set, omitted)),
+            high: Box::new(rewrite_grouping_expr(high, active_set, omitted)),
+            negated: *negated,
+        },
+        Expr::InList {
+            expr: inner,
+            list,
+            negated,
+        } => Expr::InList {
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            list: list
+                .iter()
+                .map(|i| rewrite_grouping_expr(i, active_set, omitted))
+                .collect(),
+            negated: *negated,
+        },
+        Expr::Like {
+            expr: inner,
+            pattern,
+            escape,
+            negated,
+        } => Expr::Like {
+            expr: Box::new(rewrite_grouping_expr(inner, active_set, omitted)),
+            pattern: Box::new(rewrite_grouping_expr(pattern, active_set, omitted)),
+            escape: escape
+                .as_ref()
+                .map(|e| Box::new(rewrite_grouping_expr(e, active_set, omitted))),
+            negated: *negated,
+        },
+        other => other.clone(),
     }
 }

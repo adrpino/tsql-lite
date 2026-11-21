@@ -146,7 +146,11 @@ where
     S: EngineStorage,
     F: FnMut(Option<QueryResult>),
 {
-    for stmt in stmts {
+    const MAX_GOTO_JUMPS: usize = 100_000;
+    let mut idx = 0usize;
+    let mut jumps = 0usize;
+    while idx < stmts.len() {
+        let stmt = stmts[idx].clone();
         ctx.frame.trancount = tx_manager.depth;
         ctx.frame.xact_state = tx_manager.xact_state;
         ctx.session.identity_insert = options.identity_insert.clone();
@@ -161,7 +165,10 @@ where
                 options,
                 stmt,
             ) {
-                Ok(r) => on_result(r),
+                Ok(r) => {
+                    on_result(r);
+                    idx += 1;
+                }
                 Err(e) => {
                     if matches!(e, DbError::Deadlock(_)) {
                         transaction_exec::force_xact_abort(
@@ -195,6 +202,28 @@ where
                         on_result(None);
                         break;
                     }
+                    StmtOutcome::Goto(target) => {
+                        if let Some(pos) = stmts.iter().position(|s| {
+                            matches!(
+                                s,
+                                Statement::Procedural(crate::ast::ProceduralStatement::Label(lbl))
+                                    if lbl.eq_ignore_ascii_case(&target)
+                            )
+                        }) {
+                            jumps += 1;
+                            if jumps > MAX_GOTO_JUMPS {
+                                return Err(DbError::Execution(format!(
+                                    "GOTO loop exceeded maximum jump count ({MAX_GOTO_JUMPS}) targeting label '{target}'"
+                                )));
+                            }
+                            idx = pos + 1;
+                            continue;
+                        }
+                        return Err(DbError::Execution(format!(
+                            "Label '{}' has not been declared.",
+                            target
+                        )));
+                    }
                     StmtOutcome::Break | StmtOutcome::Continue => {
                         return Err(DbError::Execution(if matches!(r, StmtOutcome::Break) {
                             "BREAK outside of WHILE".into()
@@ -202,7 +231,10 @@ where
                             "CONTINUE outside of WHILE".into()
                         }));
                     }
-                    StmtOutcome::Ok(v) => on_result(v),
+                    StmtOutcome::Ok(v) => {
+                        on_result(v);
+                        idx += 1;
+                    }
                 },
                 Err(e) => {
                     if matches!(e, DbError::Deadlock(_)) {

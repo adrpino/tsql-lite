@@ -45,6 +45,8 @@ impl<'a> ScriptExecutor<'a> {
             ProceduralStatement::While(stmt) => self.execute_while(stmt, ctx),
             ProceduralStatement::Break => self.execute_break(ctx),
             ProceduralStatement::Continue => self.execute_continue(ctx),
+            ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label)),
+            ProceduralStatement::Label(_) => Ok(StmtOutcome::Ok(None)),
             ProceduralStatement::Return(expr) => self.execute_return(expr, ctx),
             ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, stmt, ctx),
             ProceduralStatement::ExecProcedure(stmt) => {

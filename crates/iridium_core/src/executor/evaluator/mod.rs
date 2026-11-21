@@ -157,38 +157,80 @@ fn eval_expr_inner(
                 );
                 return Ok(Value::NVarChar(modified));
             }
-            if args.len() == 2 {
-                if let Some((receiver, method)) = name.rsplit_once('.') {
-                    if method.eq_ignore_ascii_case("value") {
-                        let recv_expr = if receiver.contains('.') {
-                            Expr::QualifiedIdentifier(
-                                receiver.split('.').map(|s| s.to_string()).collect(),
-                            )
-                        } else {
-                            Expr::Identifier(receiver.to_string())
-                        };
-                        let xml_val = eval_expr(&recv_expr, row, ctx, catalog, storage, clock)?;
-                        if xml_val.is_null() {
-                            return Ok(Value::Null);
-                        }
-                        let xpath_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
-                        let sql_ty_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
-                        if xpath_val.is_null() || sql_ty_val.is_null() {
-                            return Ok(Value::Null);
-                        }
-                        let Some(extracted) = eval_xml_value(
-                            &xml_val.to_string_value(),
-                            &xpath_val.to_string_value(),
-                        ) else {
-                            return Ok(Value::Null);
-                        };
-                        let target_ty = parse_xml_value_target_type(&sql_ty_val.to_string_value());
-                        return crate::executor::value_ops::coerce_value_to_type_with_dateformat(
-                            Value::NVarChar(extracted),
-                            &target_ty,
-                            &ctx.options.dateformat,
-                        );
+            if let Some((receiver, method)) = name.rsplit_once('.') {
+                if args.len() == 2 && method.eq_ignore_ascii_case("value") {
+                    let recv_expr = if receiver.contains('.') {
+                        Expr::QualifiedIdentifier(
+                            receiver.split('.').map(|s| s.to_string()).collect(),
+                        )
+                    } else {
+                        Expr::Identifier(receiver.to_string())
+                    };
+                    let xml_val = eval_expr(&recv_expr, row, ctx, catalog, storage, clock)?;
+                    if xml_val.is_null() {
+                        return Ok(Value::Null);
                     }
+                    let xpath_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                    let sql_ty_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                    if xpath_val.is_null() || sql_ty_val.is_null() {
+                        return Ok(Value::Null);
+                    }
+                    let Some(extracted) = eval_xml_value(
+                        &xml_val.to_string_value(),
+                        &xpath_val.to_string_value(),
+                    ) else {
+                        return Ok(Value::Null);
+                    };
+                    let target_ty = parse_xml_value_target_type(&sql_ty_val.to_string_value());
+                    return crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                        Value::NVarChar(extracted),
+                        &target_ty,
+                        &ctx.options.dateformat,
+                    );
+                }
+                if args.len() == 1 && method.eq_ignore_ascii_case("exist") {
+                    let recv_expr = if receiver.contains('.') {
+                        Expr::QualifiedIdentifier(
+                            receiver.split('.').map(|s| s.to_string()).collect(),
+                        )
+                    } else {
+                        Expr::Identifier(receiver.to_string())
+                    };
+                    let xml_val = eval_expr(&recv_expr, row, ctx, catalog, storage, clock)?;
+                    if xml_val.is_null() {
+                        return Ok(Value::Null);
+                    }
+                    let xpath_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                    if xpath_val.is_null() {
+                        return Ok(Value::Null);
+                    }
+                    let exists = eval_xml_exist(
+                        &xml_val.to_string_value(),
+                        &xpath_val.to_string_value(),
+                    );
+                    return Ok(Value::Bit(exists));
+                }
+                if args.len() == 1 && method.eq_ignore_ascii_case("query") {
+                    let recv_expr = if receiver.contains('.') {
+                        Expr::QualifiedIdentifier(
+                            receiver.split('.').map(|s| s.to_string()).collect(),
+                        )
+                    } else {
+                        Expr::Identifier(receiver.to_string())
+                    };
+                    let xml_val = eval_expr(&recv_expr, row, ctx, catalog, storage, clock)?;
+                    if xml_val.is_null() {
+                        return Ok(Value::Null);
+                    }
+                    let xpath_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                    if xpath_val.is_null() {
+                        return Ok(Value::Null);
+                    }
+                    let fragment = eval_xml_query(
+                        &xml_val.to_string_value(),
+                        &xpath_val.to_string_value(),
+                    );
+                    return Ok(Value::NVarChar(fragment));
                 }
             }
             eval_function(name, args, row, ctx, catalog, storage, clock)
@@ -268,7 +310,7 @@ pub(crate) fn eval_predicate(
     Ok(result)
 }
 
-fn expr_collation_case_sensitive(expr: &Expr) -> Option<bool> {
+pub(crate) fn expr_collation_case_sensitive(expr: &Expr) -> Option<bool> {
     if let Expr::FunctionCall { name, args, .. } = expr {
         if name == "__COLLATE" {
             if let Some(Expr::String(col)) = args.get(1) {
@@ -285,6 +327,13 @@ fn expr_collation_case_sensitive(expr: &Expr) -> Option<bool> {
     None
 }
 
+pub(crate) fn compare_values_case_sensitive(a: &Value, b: &Value) -> std::cmp::Ordering {
+    if let (Some(ls), Some(rs)) = (value_as_str(a), value_as_str(b)) {
+        return ls.trim_end_matches(' ').cmp(rs.trim_end_matches(' '));
+    }
+    crate::executor::value_ops::compare_values(a, b)
+}
+
 fn value_as_str(v: &Value) -> Option<&str> {
     match v {
         Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => Some(s),
@@ -292,57 +341,342 @@ fn value_as_str(v: &Value) -> Option<&str> {
     }
 }
 
-fn windows_tz_offset_minutes(tz_name: &str) -> Option<i64> {
-    match tz_name.trim().to_ascii_lowercase().as_str() {
-        "utc" | "gmt standard time" | "greenwich standard time" => Some(0),
-        "eastern standard time" | "us eastern standard time" => Some(-300),
-        "central standard time" | "central america standard time" => Some(-360),
-        "mountain standard time" | "us mountain standard time" => Some(-420),
-        "pacific standard time" => Some(-480),
-        "alaskan standard time" => Some(-540),
-        "hawaiian standard time" => Some(-600),
-        "atlantic standard time" => Some(-240),
-        "central european standard time" | "w. europe standard time" => Some(60),
+#[derive(Clone, Copy)]
+enum DstRule {
+    None,
+    /// US/Canada: 2nd Sunday of March 02:00 local -> 1st Sunday of November 02:00 local.
+    Us,
+    /// EU/UK: last Sunday of March 01:00 UTC -> last Sunday of October 01:00 UTC.
+    Eu,
+    /// Australia (AEST/AEDT): 1st Sunday of October 02:00 local -> 1st Sunday of April 03:00 local.
+    Au,
+    /// New Zealand: last Sunday of September 02:00 local -> 1st Sunday of April 03:00 local.
+    Nz,
+}
+
+fn nth_sunday(year: i32, month: u32, nth: u32) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid first of month");
+    let offset = (7 - first.weekday().num_days_from_sunday()) % 7;
+    chrono::NaiveDate::from_ymd_opt(year, month, 1 + offset + (nth - 1) * 7).expect("valid date")
+}
+
+fn last_sunday(year: i32, month: u32) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let next_month_first = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .expect("valid next month");
+    let last = next_month_first - chrono::Duration::days(1);
+    let back = last.weekday().num_days_from_sunday() as i64;
+    last - chrono::Duration::days(back)
+}
+
+fn resolve_timezone_spec(tz_name: &str) -> Option<(i64, DstRule)> {
+    let trimmed = tz_name.trim();
+    if let Some(mins) = parse_offset_minutes(trimmed) {
+        return Some((mins, DstRule::None));
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "utc" | "etc/utc" | "greenwich standard time" | "coordinated universal time" => {
+            Some((0, DstRule::None))
+        }
+        "gmt standard time" | "europe/london" | "europe/dublin" => Some((0, DstRule::Eu)),
+        "eastern standard time" | "america/new_york" | "america/toronto" => {
+            Some((-300, DstRule::Us))
+        }
+        "us eastern standard time" | "america/indiana/indianapolis" => Some((-300, DstRule::Us)),
+        "central standard time" | "america/chicago" => Some((-360, DstRule::Us)),
+        "central america standard time" => Some((-360, DstRule::None)),
+        "mountain standard time" | "america/denver" => Some((-420, DstRule::Us)),
+        "us mountain standard time" | "america/phoenix" => Some((-420, DstRule::None)),
+        "pacific standard time" | "america/los_angeles" => Some((-480, DstRule::Us)),
+        "alaskan standard time" | "america/anchorage" => Some((-540, DstRule::Us)),
+        "hawaiian standard time" | "pacific/honolulu" => Some((-600, DstRule::None)),
+        "atlantic standard time" | "america/halifax" => Some((-240, DstRule::Us)),
+        "central european standard time"
+        | "romance standard time"
+        | "w. europe standard time"
+        | "central europe standard time"
+        | "europe/berlin"
+        | "europe/paris"
+        | "europe/madrid"
+        | "europe/rome"
+        | "europe/amsterdam" => Some((60, DstRule::Eu)),
+        "e. europe standard time"
+        | "fle standard time"
+        | "gtb standard time"
+        | "europe/athens"
+        | "europe/helsinki" => Some((120, DstRule::Eu)),
+        "russian standard time" | "europe/moscow" => Some((180, DstRule::None)),
+        "arabian standard time" | "asia/dubai" => Some((240, DstRule::None)),
+        "india standard time" | "asia/kolkata" | "asia/calcutta" => Some((330, DstRule::None)),
+        "china standard time" | "singapore standard time" | "asia/shanghai" | "asia/singapore" => {
+            Some((480, DstRule::None))
+        }
+        "tokyo standard time" | "korea standard time" | "asia/tokyo" | "asia/seoul" => {
+            Some((540, DstRule::None))
+        }
+        "aus eastern standard time" | "australia/sydney" | "australia/melbourne" => {
+            Some((600, DstRule::Au))
+        }
+        "new zealand standard time" | "pacific/auckland" => Some((720, DstRule::Nz)),
+        "e. south america standard time" | "america/sao_paulo" => Some((-180, DstRule::None)),
+        "argentina standard time" | "america/argentina/buenos_aires" => {
+            Some((-180, DstRule::None))
+        }
+        "sa pacific standard time" | "america/bogota" | "america/lima" => {
+            Some((-300, DstRule::None))
+        }
         _ => None,
     }
 }
 
-fn eval_at_time_zone(dt_val: Value, tz_name: &str) -> Result<Value, DbError> {
-    let offset_mins = windows_tz_offset_minutes(tz_name).unwrap_or(0);
+fn is_dst_for_utc(utc_dt: chrono::NaiveDateTime, std_offset_mins: i64, rule: DstRule) -> bool {
+    use chrono::Datelike;
+    let year = utc_dt.year();
+    match rule {
+        DstRule::None => false,
+        DstRule::Us => {
+            let start_local = nth_sunday(year, 3, 2)
+                .and_hms_opt(2, 0, 0)
+                .expect("valid hms");
+            let start_utc = start_local - chrono::Duration::minutes(std_offset_mins);
+            let end_local = nth_sunday(year, 11, 1)
+                .and_hms_opt(2, 0, 0)
+                .expect("valid hms");
+            // End occurs while in DST (std_offset + 60)
+            let end_utc = end_local - chrono::Duration::minutes(std_offset_mins + 60);
+            utc_dt >= start_utc && utc_dt < end_utc
+        }
+        DstRule::Eu => {
+            let start_utc = last_sunday(year, 3)
+                .and_hms_opt(1, 0, 0)
+                .expect("valid hms");
+            let end_utc = last_sunday(year, 10)
+                .and_hms_opt(1, 0, 0)
+                .expect("valid hms");
+            utc_dt >= start_utc && utc_dt < end_utc
+        }
+        DstRule::Au => {
+            let end_local = nth_sunday(year, 4, 1)
+                .and_hms_opt(3, 0, 0)
+                .expect("valid hms");
+            let end_utc = end_local - chrono::Duration::minutes(std_offset_mins + 60);
+            let start_local = nth_sunday(year, 10, 1)
+                .and_hms_opt(2, 0, 0)
+                .expect("valid hms");
+            let start_utc = start_local - chrono::Duration::minutes(std_offset_mins);
+            utc_dt < end_utc || utc_dt >= start_utc
+        }
+        DstRule::Nz => {
+            let end_local = nth_sunday(year, 4, 1)
+                .and_hms_opt(3, 0, 0)
+                .expect("valid hms");
+            let end_utc = end_local - chrono::Duration::minutes(std_offset_mins + 60);
+            let start_local = last_sunday(year, 9)
+                .and_hms_opt(2, 0, 0)
+                .expect("valid hms");
+            let start_utc = start_local - chrono::Duration::minutes(std_offset_mins);
+            utc_dt < end_utc || utc_dt >= start_utc
+        }
+    }
+}
+
+fn is_dst_for_local(local_dt: chrono::NaiveDateTime, std_offset_mins: i64, rule: DstRule) -> bool {
+    let approx_utc = local_dt - chrono::Duration::minutes(std_offset_mins);
+    is_dst_for_utc(approx_utc, std_offset_mins, rule)
+}
+
+fn parse_offset_minutes(raw: &str) -> Option<i64> {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("Z") {
+        return Some(0);
+    }
+    let (sign, rest) = if let Some(r) = s.strip_prefix('+') {
+        (1i64, r)
+    } else if let Some(r) = s.strip_prefix('-') {
+        (-1i64, r)
+    } else {
+        return None;
+    };
+    let (h_str, m_str) = rest.split_once(':')?;
+    let h: i64 = h_str.parse().ok()?;
+    let m: i64 = m_str.parse().ok()?;
+    if !(0..=14).contains(&h) || !(0..60).contains(&m) || (h == 14 && m > 0) {
+        return None;
+    }
+    Some(sign * (h * 60 + m))
+}
+
+fn format_datetimeoffset(dt: chrono::NaiveDateTime, offset_mins: i64) -> String {
     let sign = if offset_mins < 0 { '-' } else { '+' };
     let abs_mins = offset_mins.abs();
     let off_h = abs_mins / 60;
     let off_m = abs_mins % 60;
+    format!(
+        "{} {}{:02}:{:02}",
+        dt.format("%Y-%m-%d %H:%M:%S%.f"),
+        sign,
+        off_h,
+        off_m
+    )
+}
+
+fn parse_datetimeoffset_utc(s: &str) -> Option<chrono::NaiveDateTime> {
+    let trimmed = s.trim();
+    chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f %:z")
+        .or_else(|_| chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S %:z"))
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(trimmed))
+        .ok()
+        .map(|fixed| fixed.naive_utc())
+}
+
+fn parse_offset_arg(val: &Value) -> Result<i64, DbError> {
+    if let Some(mins) = val.to_integer_i64() {
+        if !(-840..=840).contains(&mins) {
+            return Err(DbError::Execution(format!(
+                "Time zone offset '{}' is out of range (-840..840 minutes)",
+                mins
+            )));
+        }
+        return Ok(mins);
+    }
+    let s = val.to_string_value();
+    parse_offset_minutes(&s)
+        .ok_or_else(|| DbError::Execution(format!("Invalid time zone offset '{s}'")))
+}
+
+pub(crate) fn eval_todatetimeoffset(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution(
+            "TODATETIMEOFFSET expects 2 arguments".into(),
+        ));
+    }
+    let dt_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let off_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if dt_val.is_null() || off_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let offset_mins = parse_offset_arg(&off_val)?;
+    let naive = match dt_val {
+        Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => dt,
+        Value::Date(d) => d.and_hms_opt(0, 0, 0).expect("valid midnight"),
+        Value::DateTimeOffset(s) => {
+            // TODATETIMEOFFSET keeps wall-clock local time and replaces the offset.
+            let trimmed = s.trim();
+            chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f %:z")
+                .or_else(|_| chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S %:z"))
+                .or_else(|_| chrono::DateTime::parse_from_rfc3339(trimmed))
+                .map(|f| f.naive_local())
+                .map_err(|_| DbError::Execution(format!("Invalid datetimeoffset '{s}'")))?
+        }
+        other => {
+            let coerced = crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                other,
+                &crate::types::DataType::DateTime2,
+                &ctx.options.dateformat,
+            )?;
+            match coerced {
+                Value::DateTime2(dt) | Value::DateTime(dt) => dt,
+                _ => return Err(DbError::Execution("TODATETIMEOFFSET expects a datetime".into())),
+            }
+        }
+    };
+    Ok(Value::DateTimeOffset(format_datetimeoffset(
+        naive,
+        offset_mins,
+    )))
+}
+
+pub(crate) fn eval_switchoffset(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution(
+            "SWITCHOFFSET expects 2 arguments".into(),
+        ));
+    }
+    let dt_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let off_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if dt_val.is_null() || off_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let offset_mins = parse_offset_arg(&off_val)?;
+    let utc_dt = match dt_val {
+        Value::DateTimeOffset(ref s) => parse_datetimeoffset_utc(s)
+            .ok_or_else(|| DbError::Execution(format!("Invalid datetimeoffset '{s}'")))?,
+        Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => dt,
+        Value::Date(d) => d.and_hms_opt(0, 0, 0).expect("valid midnight"),
+        other => {
+            let s = other.to_string_value();
+            parse_datetimeoffset_utc(&s)
+                .ok_or_else(|| DbError::Execution(format!("Invalid datetimeoffset '{s}'")))?
+        }
+    };
+    let shifted = utc_dt + chrono::Duration::minutes(offset_mins);
+    Ok(Value::DateTimeOffset(format_datetimeoffset(
+        shifted,
+        offset_mins,
+    )))
+}
+
+fn eval_at_time_zone(dt_val: Value, tz_name: &str) -> Result<Value, DbError> {
+    let Some((std_offset_mins, dst_rule)) = resolve_timezone_spec(tz_name) else {
+        return Err(DbError::Execution(format!(
+            "The time zone parameter '{}' provided to AT TIME ZONE clause is invalid.",
+            tz_name
+        )));
+    };
     match dt_val {
         Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => {
-            Ok(Value::DateTimeOffset(format!(
-                "{} {}{:02}:{:02}",
-                dt.format("%Y-%m-%d %H:%M:%S%.f"),
-                sign,
-                off_h,
-                off_m
+            let offset_mins = if is_dst_for_local(dt, std_offset_mins, dst_rule) {
+                std_offset_mins + 60
+            } else {
+                std_offset_mins
+            };
+            Ok(Value::DateTimeOffset(format_datetimeoffset(
+                dt,
+                offset_mins,
             )))
         }
-        Value::Date(d) => Ok(Value::DateTimeOffset(format!(
-            "{} 00:00:00 {}{:02}:{:02}",
-            d.format("%Y-%m-%d"),
-            sign,
-            off_h,
-            off_m
-        ))),
+        Value::Date(d) => {
+            let dt = d.and_hms_opt(0, 0, 0).expect("valid midnight");
+            let offset_mins = if is_dst_for_local(dt, std_offset_mins, dst_rule) {
+                std_offset_mins + 60
+            } else {
+                std_offset_mins
+            };
+            Ok(Value::DateTimeOffset(format_datetimeoffset(
+                dt,
+                offset_mins,
+            )))
+        }
         Value::DateTimeOffset(s) => {
-            // Convert existing datetimeoffset to target timezone by adjusting UTC instant.
-            let trimmed = s.trim();
-            if let Ok(fixed) = chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f %:z")
-                .or_else(|_| chrono::DateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S %:z"))
-            {
-                let shifted = fixed.naive_utc() + chrono::Duration::minutes(offset_mins);
-                return Ok(Value::DateTimeOffset(format!(
-                    "{} {}{:02}:{:02}",
-                    shifted.format("%Y-%m-%d %H:%M:%S%.f"),
-                    sign,
-                    off_h,
-                    off_m
+            if let Some(utc_dt) = parse_datetimeoffset_utc(&s) {
+                let offset_mins = if is_dst_for_utc(utc_dt, std_offset_mins, dst_rule) {
+                    std_offset_mins + 60
+                } else {
+                    std_offset_mins
+                };
+                let shifted = utc_dt + chrono::Duration::minutes(offset_mins);
+                return Ok(Value::DateTimeOffset(format_datetimeoffset(
+                    shifted,
+                    offset_mins,
                 )));
             }
             Ok(Value::DateTimeOffset(s))
@@ -497,10 +831,276 @@ fn unescape_xml_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+fn strip_xml_tags(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut in_tag = false;
+    for ch in xml.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    unescape_xml_entities(&out)
+}
+
+fn extract_xml_attr(open_tag: &str, attr: &str) -> Option<String> {
+    let needle_dq = format!("{attr}=\"");
+    if let Some(pos) = open_tag.find(&needle_dq) {
+        let rest = &open_tag[pos + needle_dq.len()..];
+        let end = rest.find('"')?;
+        return Some(unescape_xml_entities(&rest[..end]));
+    }
+    let needle_sq = format!("{attr}='");
+    if let Some(pos) = open_tag.find(&needle_sq) {
+        let rest = &open_tag[pos + needle_sq.len()..];
+        let end = rest.find('\'')?;
+        return Some(unescape_xml_entities(&rest[..end]));
+    }
+    None
+}
+
+fn find_matching_xml_elements<'a>(xml: &'a str, tag: &str) -> Vec<(&'a str, &'a str, &'a str)> {
+    let open_prefix = format!("<{tag}");
+    let close_tag = format!("</{tag}>");
+    let mut out = Vec::new();
+    let mut search_pos = 0usize;
+
+    while let Some(rel) = xml[search_pos..].find(&open_prefix) {
+        let start = search_pos + rel;
+        let after_name = start + open_prefix.len();
+        let next_ch = xml.as_bytes().get(after_name).copied();
+        if !matches!(
+            next_ch,
+            Some(b'>') | Some(b'/') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+        ) {
+            search_pos = after_name;
+            continue;
+        }
+        let Some(gt_rel) = xml[start..].find('>') else {
+            break;
+        };
+        let gt_idx = start + gt_rel;
+        let self_closing = xml.as_bytes().get(gt_idx.saturating_sub(1)) == Some(&b'/');
+        if self_closing {
+            let full = &xml[start..=gt_idx];
+            out.push((full, full, ""));
+            search_pos = gt_idx + 1;
+        } else {
+            // Depth-tracked scan for the matching closing tag of the same name.
+            let mut depth = 1usize;
+            let mut cursor = gt_idx + 1;
+            let mut close_start = None;
+            while cursor < xml.len() && depth > 0 {
+                let next_open = xml[cursor..].find(&open_prefix).map(|p| cursor + p);
+                let next_close = xml[cursor..].find(&close_tag).map(|p| cursor + p);
+                match (next_open, next_close) {
+                    (Some(o), Some(c)) if o < c => {
+                        let after_o = o + open_prefix.len();
+                        let ch = xml.as_bytes().get(after_o).copied();
+                        if matches!(
+                            ch,
+                            Some(b'>')
+                                | Some(b'/')
+                                | Some(b' ')
+                                | Some(b'\t')
+                                | Some(b'\n')
+                                | Some(b'\r')
+                        ) {
+                            if let Some(ogt) = xml[o..].find('>') {
+                                let is_sc =
+                                    xml.as_bytes().get((o + ogt).saturating_sub(1)) == Some(&b'/');
+                                if !is_sc {
+                                    depth += 1;
+                                }
+                                cursor = o + ogt + 1;
+                                continue;
+                            }
+                        }
+                        cursor = after_o;
+                    }
+                    (_, Some(c)) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_start = Some(c);
+                        }
+                        cursor = c + close_tag.len();
+                    }
+                    _ => break,
+                }
+            }
+            if let Some(c_start) = close_start {
+                let full_end = c_start + close_tag.len();
+                let open_tag = &xml[start..=gt_idx];
+                let inner = &xml[gt_idx + 1..c_start];
+                let full = &xml[start..full_end];
+                out.push((full, open_tag, inner));
+                search_pos = full_end;
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn match_xml_predicate(open_tag: &str, inner: &str, pred: &str) -> bool {
+    let p = pred.trim();
+    if p.is_empty() {
+        return true;
+    }
+    if let Some((lhs, rhs)) = p.split_once('=') {
+        let lhs = lhs.trim();
+        let rhs_clean = rhs
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if let Some(attr) = lhs.strip_prefix('@') {
+            return extract_xml_attr(open_tag, attr).is_some_and(|v| v == rhs_clean);
+        }
+        if lhs.eq_ignore_ascii_case("text()") || lhs == "." {
+            return strip_xml_tags(inner) == rhs_clean;
+        }
+        return find_matching_xml_elements(inner, lhs)
+            .into_iter()
+            .any(|(_, _, child_inner)| strip_xml_tags(child_inner) == rhs_clean);
+    }
+    if let Some(attr) = p.strip_prefix('@') {
+        return extract_xml_attr(open_tag, attr).is_some();
+    }
+    !find_matching_xml_elements(inner, p).is_empty()
+}
+
+fn strip_outer_parens(s: &str) -> &str {
+    let mut cur = s.trim();
+    while let Some(inner) = cur.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+        // Only strip if the opening '(' matches the final ')'.
+        let mut depth = 0i32;
+        let mut wraps_all = true;
+        for (idx, b) in cur.bytes().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 && idx + 1 < cur.len() {
+                        wraps_all = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if wraps_all && depth == 0 {
+            cur = inner.trim();
+        } else {
+            break;
+        }
+    }
+    cur
+}
+
+/// Evaluates an XPath expression against an XML document and returns the matching
+/// outer XML element fragments.
+pub(crate) fn eval_xml_nodes(xml: &str, xpath: &str) -> Vec<String> {
+    let trimmed = strip_outer_parens(xpath);
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed == "." {
+        let t = xml.trim();
+        return if t.is_empty() {
+            Vec::new()
+        } else {
+            vec![t.to_string()]
+        };
+    }
+
+    let clean = trimmed.trim_start_matches('/');
+    let raw_segments: Vec<&str> = clean.split('/').filter(|s| !s.is_empty()).collect();
+    if raw_segments.is_empty() {
+        return Vec::new();
+    }
+
+    let mut current: Vec<(&str, &str, &str)> = vec![(xml, xml, xml)];
+    for seg in raw_segments {
+        let seg = seg.trim();
+        if seg == "." {
+            continue;
+        }
+        if seg.eq_ignore_ascii_case("text()") || seg.starts_with('@') {
+            break;
+        }
+        let (tag, pred) = if let Some(lb) = seg.find('[') {
+            if let Some(rb) = seg[lb..].rfind(']') {
+                (seg[..lb].trim(), Some(seg[lb + 1..lb + rb].trim()))
+            } else {
+                (seg, None)
+            }
+        } else {
+            (seg, None)
+        };
+        let mut next_nodes = Vec::new();
+        for &(_, _, scope_inner) in &current {
+            let mut matched = find_matching_xml_elements(scope_inner, tag);
+            if let Some(p) = pred {
+                if let Ok(ord) = p.parse::<usize>() {
+                    if ord >= 1 && ord <= matched.len() {
+                        matched = vec![matched[ord - 1]];
+                    } else {
+                        matched.clear();
+                    }
+                } else {
+                    matched.retain(|&(_, open_tag, inner)| match_xml_predicate(open_tag, inner, p));
+                }
+            }
+            next_nodes.extend(matched);
+        }
+        current = next_nodes;
+        if current.is_empty() {
+            break;
+        }
+    }
+
+    current.into_iter().map(|(full, _, _)| full.to_string()).collect()
+}
+
+pub(crate) fn eval_xml_exist(xml: &str, xpath: &str) -> bool {
+    let trimmed = strip_outer_parens(xpath);
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some((prefix, last)) = trimmed.rsplit_once('/') {
+        if let Some(attr) = last.trim().strip_prefix('@') {
+            let parents = if prefix.trim().is_empty() {
+                vec![xml.to_string()]
+            } else {
+                eval_xml_nodes(xml, prefix)
+            };
+            return parents.iter().any(|frag| {
+                let open = frag
+                    .find('>')
+                    .map(|gt| &frag[..=gt])
+                    .unwrap_or(frag.as_str());
+                extract_xml_attr(open, attr).is_some()
+            });
+        }
+    } else if let Some(attr) = trimmed.strip_prefix('@') {
+        let open = xml.find('>').map(|gt| &xml[..=gt]).unwrap_or(xml);
+        return extract_xml_attr(open, attr).is_some();
+    }
+    !eval_xml_nodes(xml, trimmed).is_empty()
+}
+
+pub(crate) fn eval_xml_query(xml: &str, xpath: &str) -> String {
+    eval_xml_nodes(xml, xpath).concat()
+}
+
 fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
     let trimmed = xpath.trim();
-    if trimmed == "." || trimmed == "text()" || trimmed == "(./text())[1]" {
-        return Some(unescape_xml_entities(xml));
+    if trimmed == "." || trimmed == "text()" || trimmed == "(./text())[1]" || trimmed == "(.)[1]" {
+        return Some(strip_xml_tags(xml));
     }
 
     // Parse optional trailing `[N]` 1-based ordinal index and outer parens.
@@ -514,20 +1114,15 @@ fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
     } else {
         (trimmed, 1)
     };
-    let clean_path = path_body
-        .trim()
-        .trim_start_matches('(')
-        .trim_end_matches(')')
-        .trim()
-        .trim_start_matches('/');
+    let clean_path = strip_outer_parens(path_body).trim_start_matches('/');
 
     let segments: Vec<&str> = clean_path
         .split('/')
         .map(|s| s.split('[').next().unwrap_or(s).trim())
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("text()"))
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("text()") && *s != ".")
         .collect();
     if segments.is_empty() {
-        return Some(unescape_xml_entities(xml));
+        return Some(strip_xml_tags(xml));
     }
 
     let (elem_segments, attr_name) = if let Some(last) = segments.last() {
@@ -540,6 +1135,16 @@ fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
         (segments.as_slice(), None)
     };
 
+    // If only `@attr` was requested (e.g. `.value('@id', 'INT')` on a `.nodes()` fragment),
+    // read directly from the root element's opening tag.
+    if elem_segments.is_empty() {
+        if let Some(attr) = attr_name {
+            let open_tag = xml.find('>').map(|gt| &xml[..=gt]).unwrap_or(xml);
+            return extract_xml_attr(open_tag, attr);
+        }
+        return Some(strip_xml_tags(xml));
+    }
+
     // Walk element path segments in order, narrowing slice to the matching element.
     let mut slice = xml;
     let mut matched_open_tag = "";
@@ -550,68 +1155,20 @@ fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
         } else {
             1
         };
-        let open_prefix = format!("<{}", tag);
-        let close_tag = format!("</{}>", tag);
-        let mut search_pos = 0usize;
-        let mut seen = 0usize;
-        let mut found = false;
-        while let Some(rel) = slice[search_pos..].find(&open_prefix) {
-            let start = search_pos + rel;
-            let after_name = start + open_prefix.len();
-            let next_ch = slice.as_bytes().get(after_name).copied();
-            if !matches!(
-                next_ch,
-                Some(b'>') | Some(b'/') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
-            ) {
-                search_pos = after_name;
-                continue;
-            }
-            let gt_rel = slice[start..].find('>')?;
-            let gt_idx = start + gt_rel;
-            let self_closing = slice.as_bytes().get(gt_idx.saturating_sub(1)) == Some(&b'/');
-            let (elem_open, elem_inner, elem_end) = if self_closing {
-                (&slice[start..=gt_idx], "", gt_idx + 1)
-            } else {
-                let close_rel = slice[gt_idx + 1..].find(&close_tag)?;
-                let inner = &slice[gt_idx + 1..gt_idx + 1 + close_rel];
-                (
-                    &slice[start..=gt_idx],
-                    inner,
-                    gt_idx + 1 + close_rel + close_tag.len(),
-                )
-            };
-            seen += 1;
-            if seen == target_ord {
-                matched_open_tag = elem_open;
-                matched_inner = elem_inner;
-                slice = elem_inner;
-                found = true;
-                break;
-            }
-            search_pos = elem_end;
-        }
-        if !found {
+        let matches = find_matching_xml_elements(slice, tag);
+        let Some(&(_, elem_open, elem_inner)) = matches.get(target_ord - 1) else {
             return None;
-        }
+        };
+        matched_open_tag = elem_open;
+        matched_inner = elem_inner;
+        slice = elem_inner;
     }
 
     if let Some(attr) = attr_name {
-        let needle_dq = format!("{}=\"", attr);
-        if let Some(pos) = matched_open_tag.find(&needle_dq) {
-            let rest = &matched_open_tag[pos + needle_dq.len()..];
-            let end = rest.find('"')?;
-            return Some(unescape_xml_entities(&rest[..end]));
-        }
-        let needle_sq = format!("{}='", attr);
-        if let Some(pos) = matched_open_tag.find(&needle_sq) {
-            let rest = &matched_open_tag[pos + needle_sq.len()..];
-            let end = rest.find('\'')?;
-            return Some(unescape_xml_entities(&rest[..end]));
-        }
-        return None;
+        return extract_xml_attr(matched_open_tag, attr);
     }
 
-    Some(unescape_xml_entities(matched_inner))
+    Some(strip_xml_tags(matched_inner))
 }
 
 fn parse_xml_value_target_type(sql_type: &str) -> crate::types::DataType {

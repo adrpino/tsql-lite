@@ -138,7 +138,7 @@ pub(crate) fn merge_source_rows(
                     offset: None,
                     fetch: None,
                     set_op: None,
-                    for_xml: None,
+                    extra: None,
                 };
                 let result = QueryExecutor {
                     catalog: executor.catalog,

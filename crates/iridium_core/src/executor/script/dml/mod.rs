@@ -79,6 +79,9 @@ impl<'a> ScriptExecutor<'a> {
                     (StmtOutcome::Return(v), _) | (_, StmtOutcome::Return(v)) => {
                         Ok(StmtOutcome::Return(v))
                     }
+                    (StmtOutcome::Goto(l), _) | (_, StmtOutcome::Goto(l)) => {
+                        Ok(StmtOutcome::Goto(l))
+                    }
                     _ => Err(DbError::Execution(
                         "set operations require both sides to return results".into(),
                     )),

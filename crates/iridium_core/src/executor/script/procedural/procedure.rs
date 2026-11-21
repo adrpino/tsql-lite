@@ -455,6 +455,12 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(crate::error::StmtOutcome::Break) | Ok(crate::error::StmtOutcome::Continue) => {
                     (captured_proc_result, Value::Int(0))
                 }
+                Ok(crate::error::StmtOutcome::Goto(label)) => {
+                    return Err(DbError::Execution(format!(
+                        "Label '{}' has not been declared.",
+                        label
+                    )));
+                }
                 Ok(crate::error::StmtOutcome::Ok(r)) => {
                     (r.or(captured_proc_result), Value::Int(0))
                 }

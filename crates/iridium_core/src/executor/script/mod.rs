@@ -35,17 +35,40 @@ impl<'a> ScriptExecutor<'a> {
         stmts: &[Statement],
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
+        const MAX_GOTO_JUMPS: usize = 100_000;
         let mut last_result = StmtOutcome::Ok(None);
-        for stmt in stmts {
-            match self.execute(stmt.clone(), ctx) {
+        let mut idx = 0usize;
+        let mut jumps = 0usize;
+        while idx < stmts.len() {
+            match self.execute(stmts[idx].clone(), ctx) {
+                Ok(StmtOutcome::Goto(target)) => {
+                    if let Some(pos) = stmts.iter().position(|s| {
+                        matches!(
+                            s,
+                            Statement::Procedural(crate::ast::ProceduralStatement::Label(lbl))
+                                if lbl.eq_ignore_ascii_case(&target)
+                        )
+                    }) {
+                        jumps += 1;
+                        if jumps > MAX_GOTO_JUMPS {
+                            return Err(DbError::Execution(format!(
+                                "GOTO loop exceeded maximum jump count ({MAX_GOTO_JUMPS}) targeting label '{target}'"
+                            )));
+                        }
+                        idx = pos + 1;
+                        continue;
+                    }
+                    return Ok(StmtOutcome::Goto(target));
+                }
                 Ok(r) => {
                     if r.is_control_flow() {
                         return Ok(r);
                     }
                     last_result = r;
+                    idx += 1;
                 }
                 Err(e) => return Err(e),
-            };
+            }
         }
         Ok(last_result)
     }

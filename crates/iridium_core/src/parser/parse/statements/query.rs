@@ -31,7 +31,7 @@ fn wrap_parenthesized_set_op(inner: SelectStmt) -> SelectStmt {
         offset: None,
         fetch: None,
         set_op: None,
-        for_xml: None,
+        extra: None,
     }
 }
 
@@ -50,7 +50,9 @@ pub fn parse_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
             parse_set_op_tail(parser, &mut current)?;
         }
         if let Some(for_xml) = parse_for_xml_clause(parser)? {
-            current.for_xml = Some(Box::new(for_xml));
+            current.extra.get_or_insert_with(Default::default).for_xml = Some(for_xml);
+        } else if let Some(for_json) = parse_for_json_clause(parser)? {
+            current.extra.get_or_insert_with(Default::default).for_json = Some(for_json);
         }
         skip_query_option_clause(parser)?;
         return Ok(current);
@@ -64,7 +66,9 @@ pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
     parse_set_op_tail(parser, &mut current)?;
 
     if let Some(for_xml) = parse_for_xml_clause(parser)? {
-        current.for_xml = Some(Box::new(for_xml));
+        current.extra.get_or_insert_with(Default::default).for_xml = Some(for_xml);
+    } else if let Some(for_json) = parse_for_json_clause(parser)? {
+        current.extra.get_or_insert_with(Default::default).for_json = Some(for_json);
     }
 
     skip_query_option_clause(parser)?;
@@ -197,6 +201,73 @@ fn parse_for_xml_clause(parser: &mut Parser) -> ParseResult<Option<ForXmlClause>
     }))
 }
 
+fn parse_for_json_clause(parser: &mut Parser) -> ParseResult<Option<ForJsonClause>> {
+    if !parser.at_keyword(Keyword::For) {
+        return Ok(None);
+    }
+    let is_json = match parser.peek_at(1) {
+        Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("JSON"),
+        Some(Token::Keyword(k)) => k.as_sql().eq_ignore_ascii_case("JSON"),
+        _ => false,
+    };
+    if !is_json {
+        return Ok(None);
+    }
+    let _ = parser.next(); // FOR
+    let _ = parser.next(); // JSON
+
+    let mode = match parser.next() {
+        Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+        Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+        _ => return parser.backtrack(Expected::Description("JSON mode (PATH, AUTO)")),
+    };
+    if mode != "PATH" && mode != "AUTO" {
+        return parser.backtrack(Expected::Description("JSON mode (PATH, AUTO)"));
+    }
+
+    let mut root = None;
+    let mut include_null_values = false;
+    let mut without_array_wrapper = false;
+
+    while matches!(parser.peek(), Some(Token::Comma)) {
+        let _ = parser.next();
+        let dir = match parser.peek() {
+            Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+            Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+            _ => break,
+        };
+        let _ = parser.next();
+        match dir.as_str() {
+            "INCLUDE_NULL_VALUES" => include_null_values = true,
+            "WITHOUT_ARRAY_WRAPPER" => without_array_wrapper = true,
+            "ROOT" => {
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    if let Some(Token::String(s)) | Some(Token::NString(s)) = parser.peek() {
+                        root = Some(s.clone());
+                        let _ = parser.next();
+                    }
+                    parser.expect_rparen()?;
+                } else {
+                    root = Some("root".to_string());
+                }
+            }
+            _ => {
+                return parser.backtrack(Expected::Description(
+                    "FOR JSON option (ROOT, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER)",
+                ));
+            }
+        }
+    }
+
+    Ok(Some(ForJsonClause {
+        mode,
+        root,
+        include_null_values,
+        without_array_wrapper,
+    }))
+}
+
 pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
     let is_option = match parser.peek() {
         Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("OPTION"),
@@ -287,12 +358,15 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
     }
 
     let mut group_by = Vec::new();
+    let mut grouping_sets = Vec::new();
     if let Some(Token::Keyword(Keyword::Group)) = parser.peek() {
         let _ = parser.next();
         if matches!(parser.peek(), Some(Token::Keyword(Keyword::By))) {
             let _ = parser.next();
         }
-        group_by = parse_group_by_items(parser)?;
+        let (gb, gs) = parse_group_by_items(parser)?;
+        group_by = gb;
+        grouping_sets = gs;
     }
 
     let mut having = None;
@@ -326,6 +400,16 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         }
     }
 
+    let extra = if grouping_sets.is_empty() {
+        None
+    } else {
+        Some(Box::new(SelectExtra {
+            for_xml: None,
+            for_json: None,
+            grouping_sets,
+        }))
+    };
+
     Ok(SelectStmt {
         distinct,
         top,
@@ -341,7 +425,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         offset,
         fetch,
         set_op: None,
-        for_xml: None,
+        extra,
     })
 }
 
@@ -382,8 +466,19 @@ fn starts_with_select_inside_parens(parser: &Parser) -> bool {
     matches!(parser.peek_at(offset), Some(Token::Keyword(Keyword::Select)))
 }
 
-fn parse_group_by_items(parser: &mut Parser) -> ParseResult<Vec<Expr>> {
-    let mut exprs = Vec::new();
+fn parse_group_by_items(parser: &mut Parser) -> ParseResult<(Vec<Expr>, Vec<Vec<Expr>>)> {
+    let mut all_exprs: Vec<Expr> = Vec::new();
+    let mut has_extended = false;
+    // Each item in GROUP BY expands to a list of grouping sets; the full clause is
+    // the Cartesian product of those item expansions.
+    let mut item_expansions: Vec<Vec<Vec<Expr>>> = Vec::new();
+
+    let push_unique = |all: &mut Vec<Expr>, e: &Expr| {
+        if !all.contains(e) {
+            all.push(e.clone());
+        }
+    };
+
     loop {
         let is_grouping_sets = matches!(
             parser.peek(),
@@ -392,38 +487,51 @@ fn parse_group_by_items(parser: &mut Parser) -> ParseResult<Vec<Expr>> {
             parser.peek_at(1),
             Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SETS")
         );
-        let is_rollup_or_cube = matches!(
-            parser.peek(),
-            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLLUP") || id.eq_ignore_ascii_case("CUBE")
-        ) && matches!(parser.peek_at(1), Some(Token::LParen));
+        let rollup_or_cube = match parser.peek() {
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("ROLLUP")
+                    && matches!(parser.peek_at(1), Some(Token::LParen)) =>
+            {
+                Some(false)
+            }
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("CUBE")
+                    && matches!(parser.peek_at(1), Some(Token::LParen)) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        };
 
         if is_grouping_sets {
+            has_extended = true;
             let _ = parser.next(); // GROUPING
             let _ = parser.next(); // SETS
             parser.expect_lparen()?;
+            let mut sets: Vec<Vec<Expr>> = Vec::new();
             loop {
                 if matches!(parser.peek(), Some(Token::RParen)) {
                     break;
                 }
                 if matches!(parser.peek(), Some(Token::LParen)) {
                     let _ = parser.next();
-                    if !matches!(parser.peek(), Some(Token::RParen)) {
-                        let set_exprs = crate::parser::parse::expressions::parse_comma_list(
+                    let set_exprs = if matches!(parser.peek(), Some(Token::RParen)) {
+                        Vec::new()
+                    } else {
+                        crate::parser::parse::expressions::parse_comma_list(
                             parser,
                             crate::parser::parse::expressions::parse_expr,
-                        )?;
-                        for e in set_exprs {
-                            if !exprs.contains(&e) {
-                                exprs.push(e);
-                            }
-                        }
-                    }
+                        )?
+                    };
                     parser.expect_rparen()?;
+                    for e in &set_exprs {
+                        push_unique(&mut all_exprs, e);
+                    }
+                    sets.push(set_exprs);
                 } else {
                     let e = crate::parser::parse::expressions::parse_expr(parser)?;
-                    if !exprs.contains(&e) {
-                        exprs.push(e);
-                    }
+                    push_unique(&mut all_exprs, &e);
+                    sets.push(vec![e]);
                 }
                 if matches!(parser.peek(), Some(Token::Comma)) {
                     let _ = parser.next();
@@ -432,24 +540,47 @@ fn parse_group_by_items(parser: &mut Parser) -> ParseResult<Vec<Expr>> {
                 }
             }
             parser.expect_rparen()?;
-        } else if is_rollup_or_cube {
+            item_expansions.push(sets);
+        } else if let Some(is_cube) = rollup_or_cube {
+            has_extended = true;
             let _ = parser.next(); // ROLLUP | CUBE
             parser.expect_lparen()?;
-            if !matches!(parser.peek(), Some(Token::RParen)) {
-                let set_exprs = crate::parser::parse::expressions::parse_comma_list(
+            let set_exprs = if matches!(parser.peek(), Some(Token::RParen)) {
+                Vec::new()
+            } else {
+                crate::parser::parse::expressions::parse_comma_list(
                     parser,
                     crate::parser::parse::expressions::parse_expr,
-                )?;
-                for e in set_exprs {
-                    if !exprs.contains(&e) {
-                        exprs.push(e);
+                )?
+            };
+            parser.expect_rparen()?;
+            for e in &set_exprs {
+                push_unique(&mut all_exprs, e);
+            }
+            let mut sets: Vec<Vec<Expr>> = Vec::new();
+            if is_cube {
+                // All 2^n subsets (capped at 10 columns to prevent blowup).
+                let n = set_exprs.len().min(10);
+                for mask in (0usize..(1usize << n)).rev() {
+                    let mut subset = Vec::new();
+                    for (bit, expr) in set_exprs.iter().take(n).enumerate() {
+                        if (mask & (1usize << (n - 1 - bit))) != 0 {
+                            subset.push(expr.clone());
+                        }
                     }
+                    sets.push(subset);
+                }
+            } else {
+                // ROLLUP(a, b, c) -> (a, b, c), (a, b), (a), ()
+                for len in (0..=set_exprs.len()).rev() {
+                    sets.push(set_exprs[..len].to_vec());
                 }
             }
-            parser.expect_rparen()?;
+            item_expansions.push(sets);
         } else {
             let e = crate::parser::parse::expressions::parse_expr(parser)?;
-            exprs.push(e);
+            push_unique(&mut all_exprs, &e);
+            item_expansions.push(vec![vec![e]]);
         }
 
         if matches!(parser.peek(), Some(Token::Comma)) {
@@ -458,7 +589,30 @@ fn parse_group_by_items(parser: &mut Parser) -> ParseResult<Vec<Expr>> {
             break;
         }
     }
-    Ok(exprs)
+
+    let grouping_sets = if !has_extended {
+        Vec::new()
+    } else {
+        let mut combined: Vec<Vec<Expr>> = vec![Vec::new()];
+        for expansion in item_expansions {
+            let mut next = Vec::with_capacity(combined.len() * expansion.len());
+            for prefix in &combined {
+                for suffix in &expansion {
+                    let mut merged = prefix.clone();
+                    for e in suffix {
+                        if !merged.contains(e) {
+                            merged.push(e.clone());
+                        }
+                    }
+                    next.push(merged);
+                }
+            }
+            combined = next;
+        }
+        combined
+    };
+
+    Ok((all_exprs, grouping_sets))
 }
 
 pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
@@ -601,15 +755,17 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                 }
                 let alias = parse_optional_alias(parser);
                 // Optional table-valued function/method column alias list: AS Split(a, b)
+                let mut column_aliases = Vec::new();
                 if alias.is_some() && matches!(parser.peek(), Some(Token::LParen)) {
                     let _ = parser.next();
-                    let _ = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
-                        match p.next() {
-                            Some(Token::Identifier(id)) => Ok(id.clone()),
-                            Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
-                            _ => p.backtrack(Expected::Description("column name")),
-                        }
-                    })?;
+                    column_aliases =
+                        crate::parser::parse::expressions::parse_comma_list(parser, |p| {
+                            match p.next() {
+                                Some(Token::Identifier(id)) => Ok(id.clone()),
+                                Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
+                                _ => p.backtrack(Expected::Description("column name")),
+                            }
+                        })?;
                     parser.expect_rparen()?;
                 }
                 let factor = TableFactor::TableValuedFunction {
@@ -617,6 +773,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     args,
                     alias: alias.clone(),
                     with_schema,
+                    column_aliases,
                 };
                 return Ok(TableRef {
                     factor,
@@ -1035,7 +1192,7 @@ pub(crate) fn parse_joins_and_applies(
                     offset: None,
                     fetch: None,
                     set_op: None,
-                    for_xml: None,
+                    extra: None,
                 };
                 applies.push(ApplyClause {
                     apply_type,

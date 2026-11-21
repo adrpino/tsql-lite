@@ -151,10 +151,17 @@ pub fn compare_projected_rows(
                 expr_label(&item.expr)
             ))
         })?;
-        let ord = compare_values(
-            a.get(idx).unwrap_or(&Value::Null),
-            b.get(idx).unwrap_or(&Value::Null),
-        );
+        let ord = if super::evaluator::expr_collation_case_sensitive(&item.expr).unwrap_or(false) {
+            super::evaluator::compare_values_case_sensitive(
+                a.get(idx).unwrap_or(&Value::Null),
+                b.get(idx).unwrap_or(&Value::Null),
+            )
+        } else {
+            compare_values(
+                a.get(idx).unwrap_or(&Value::Null),
+                b.get(idx).unwrap_or(&Value::Null),
+            )
+        };
         if ord != Ordering::Equal {
             return Ok(if item.asc { ord } else { ord.reverse() });
         }
@@ -163,14 +170,20 @@ pub fn compare_projected_rows(
 }
 
 pub fn resolve_projected_order_index(columns: &[String], item: &OrderByExpr) -> Option<usize> {
-    match &item.expr {
+    let target_expr = match &item.expr {
+        Expr::FunctionCall { name, args, .. } if name == "__COLLATE" && !args.is_empty() => {
+            &args[0]
+        }
+        other => other,
+    };
+    match target_expr {
         Expr::Identifier(name) => columns.iter().position(|c| c.eq_ignore_ascii_case(name)),
         Expr::QualifiedIdentifier(parts) => parts
             .last()
             .and_then(|name| columns.iter().position(|c| c.eq_ignore_ascii_case(name))),
         _ => columns
             .iter()
-            .position(|c| c.eq_ignore_ascii_case(&expr_label(&item.expr))),
+            .position(|c| c.eq_ignore_ascii_case(&expr_label(target_expr))),
     }
 }
 

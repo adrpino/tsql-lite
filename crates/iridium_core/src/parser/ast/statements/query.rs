@@ -18,7 +18,14 @@ pub struct SelectStmt {
     pub offset: Option<Expr>,
     pub fetch: Option<Expr>,
     pub set_op: Option<Box<SetOp>>,
-    pub for_xml: Option<Box<ForXmlClause>>,
+    pub extra: Option<Box<SelectExtra>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SelectExtra {
+    pub for_xml: Option<ForXmlClause>,
+    pub for_json: Option<ForJsonClause>,
+    pub grouping_sets: Vec<Vec<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,6 +34,14 @@ pub struct ForXmlClause {
     pub path: Option<String>,
     pub root: Option<String>,
     pub type_directive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ForJsonClause {
+    pub mode: String,
+    pub root: Option<String>,
+    pub include_null_values: bool,
+    pub without_array_wrapper: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

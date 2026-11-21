@@ -147,6 +147,8 @@ pub enum ProceduralStatement {
     },
     Break,
     Continue,
+    Goto(String),
+    Label(String),
     Return(Option<Expr>),
     Print(Expr),
     Raiserror {

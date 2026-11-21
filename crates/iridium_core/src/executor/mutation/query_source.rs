@@ -28,6 +28,7 @@ pub(crate) fn build_mutation_query(
         filter: FilterPlan {
             selection,
             group_by: vec![],
+            grouping_sets: vec![],
             having: None,
         },
         sort: SortPlan { order_by: vec![] },
@@ -38,6 +39,7 @@ pub(crate) fn build_mutation_query(
         },
         set_op: None,
         for_xml: None,
+        for_json: None,
     }
 }
 

@@ -19,7 +19,34 @@ pub struct SelectStmt {
     pub fetch: Option<Expr>,
     pub set_op: Option<Box<SetOpClause>>,
     #[serde(default)]
-    pub for_xml: Option<Box<ForXmlClause>>,
+    pub extra: Option<Box<SelectExtra>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SelectExtra {
+    #[serde(default)]
+    pub for_xml: Option<ForXmlClause>,
+    #[serde(default)]
+    pub for_json: Option<ForJsonClause>,
+    #[serde(default)]
+    pub grouping_sets: Vec<Vec<Expr>>,
+}
+
+impl SelectStmt {
+    pub fn for_xml(&self) -> Option<&ForXmlClause> {
+        self.extra.as_deref().and_then(|e| e.for_xml.as_ref())
+    }
+
+    pub fn for_json(&self) -> Option<&ForJsonClause> {
+        self.extra.as_deref().and_then(|e| e.for_json.as_ref())
+    }
+
+    pub fn grouping_sets(&self) -> &[Vec<Expr>] {
+        self.extra
+            .as_deref()
+            .map(|e| e.grouping_sets.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,6 +55,14 @@ pub struct ForXmlClause {
     pub path: Option<String>,
     pub root: Option<String>,
     pub type_directive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ForJsonClause {
+    pub mode: String,
+    pub root: Option<String>,
+    pub include_null_values: bool,
+    pub without_array_wrapper: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

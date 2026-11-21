@@ -148,13 +148,14 @@ pub fn lex(input: &mut &str, quoted_identifier: bool) -> Result<Vec<Token>, &'st
                     break;
                 }
             }
-            // '::'
+            // '::' or ':'
             b':' => {
                 if pos + 1 < len && bytes[pos + 1] == b':' {
                     tokens.push(Token::Operator("::".to_string()));
                     pos += 2;
                 } else {
-                    break;
+                    tokens.push(Token::Colon);
+                    pos += 1;
                 }
             }
             // '.' or leading-dot numeric literal like '.5'
@@ -662,6 +663,7 @@ mod tests {
                 ")".map(|_| Some(Token::RParen)),
                 ",".map(|_| Some(Token::Comma)),
                 ";".map(|_| Some(Token::Semicolon)),
+                ":".map(|_| Some(Token::Colon)),
                 ".".map(|_| Some(Token::Dot)),
             ))
             .parse_next(input)

@@ -73,6 +73,8 @@ pub enum ProceduralStatement {
     While(WhileStmt),
     Break,
     Continue,
+    Goto(String),
+    Label(String),
     Return(Option<Expr>),
     ExecDynamic(ExecStmt),
     ExecProcedure(ExecProcedureStmt),

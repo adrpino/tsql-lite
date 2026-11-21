@@ -131,7 +131,7 @@ fn try_build_hash_semi_join(
     if !subquery.group_by.is_empty()
         || subquery.having.is_some()
         || subquery.set_op.is_some()
-        || subquery.for_xml.is_some()
+        || subquery.extra.is_some()
         || subquery.top.is_some()
         || subquery.offset.is_some()
         || subquery.fetch.is_some()
@@ -156,6 +156,7 @@ fn try_build_hash_semi_join(
         filter: super::super::plan::FilterPlan {
             selection: None,
             group_by: Vec::new(),
+            grouping_sets: Vec::new(),
             having: None,
         },
         sort: super::super::plan::SortPlan {
@@ -168,6 +169,7 @@ fn try_build_hash_semi_join(
         },
         set_op: None,
         for_xml: None,
+        for_json: None,
     };
     let probe_from = from::execute_from_stage(executor, &probe_query, ctx)?;
     let inner_shape = &probe_from.shape;

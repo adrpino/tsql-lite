@@ -99,6 +99,7 @@ impl<'a> ScriptExecutor<'a> {
             filter: FilterPlan {
                 selection: stmt.selection,
                 group_by: vec![],
+                grouping_sets: vec![],
                 having: None,
             },
             sort: SortPlan {
@@ -112,6 +113,7 @@ impl<'a> ScriptExecutor<'a> {
             into_table: None,
             set_op: None,
             for_xml: None,
+            for_json: None,
         };
         let has_agg = stmt
             .targets

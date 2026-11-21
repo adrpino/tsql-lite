@@ -153,14 +153,39 @@ pub fn lower_select(
         offset: s.offset.map(lower_expr).transpose()?,
         fetch: s.fetch.map(lower_expr).transpose()?,
         set_op: lower_set_op(s.set_op)?,
-        for_xml: s.for_xml.map(|fx| {
-            Box::new(executor_ast::statements::query::ForXmlClause {
-                mode: fx.mode,
-                path: fx.path,
-                root: fx.root,
-                type_directive: fx.type_directive,
+        extra: s
+            .extra
+            .map(|ex| {
+                let grouping_sets = ex
+                    .grouping_sets
+                    .into_iter()
+                    .map(|set| {
+                        set.into_iter()
+                            .map(lower_expr)
+                            .collect::<Result<Vec<_>, DbError>>()
+                    })
+                    .collect::<Result<Vec<_>, DbError>>()?;
+                Ok::<_, DbError>(Box::new(executor_ast::statements::query::SelectExtra {
+                    for_xml: ex.for_xml.map(|fx| {
+                        executor_ast::statements::query::ForXmlClause {
+                            mode: fx.mode,
+                            path: fx.path,
+                            root: fx.root,
+                            type_directive: fx.type_directive,
+                        }
+                    }),
+                    for_json: ex.for_json.map(|fj| {
+                        executor_ast::statements::query::ForJsonClause {
+                            mode: fj.mode,
+                            root: fj.root,
+                            include_null_values: fj.include_null_values,
+                            without_array_wrapper: fj.without_array_wrapper,
+                        }
+                    }),
+                    grouping_sets,
+                }))
             })
-        }),
+            .transpose()?,
     })
 }
 
@@ -237,7 +262,7 @@ fn lower_joined_group_as_select(
         offset: None,
         fetch: None,
         set_op: None,
-        for_xml: None,
+        extra: None,
     })
 }
 
@@ -347,21 +372,47 @@ fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::Table
             args,
             alias: tvf_alias,
             with_schema,
+            column_aliases,
         } => {
             let func_name = match name.last() {
                 Some(last) => last.to_string(),
                 None => return Err(DbError::Parse("table-valued function name is empty".into())),
             };
-            let full_name = format_tvf_name(&func_name, args, with_schema)?;
+            let (schema, full_name) = if func_name.eq_ignore_ascii_case("nodes") && name.len() >= 2
+            {
+                let receiver = name[..name.len() - 1].join(".");
+                let xpath_sql = args
+                    .into_iter()
+                    .next()
+                    .map(|a| {
+                        lower_expr(a)
+                            .map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| "'.'".to_string());
+                let col_alias = column_aliases
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "value".to_string());
+                let escaped_col = col_alias.replace('\'', "''");
+                (
+                    None,
+                    format!("__XML_NODES({receiver}, {xpath_sql}, '{escaped_col}')"),
+                )
+            } else {
+                let formatted = format_tvf_name(&func_name, args, with_schema)?;
+                let sch = if name.len() > 1 {
+                    Some(name[0].to_string())
+                } else {
+                    None
+                };
+                (sch, formatted)
+            };
             return Ok(executor_ast::common::TableRef {
                 factor: executor_ast::common::TableFactor::Named(
                     executor_ast::common::ObjectName {
                         database: None,
-                        schema: if name.len() > 1 {
-                            Some(name[0].to_string())
-                        } else {
-                            None
-                        },
+                        schema,
                         name: full_name,
                     },
                 ),
@@ -530,22 +581,48 @@ pub fn lower_table_ref_recursive(
             args,
             alias: tvf_alias,
             with_schema,
+            column_aliases,
         } => {
             let func_name = match name.last() {
                 Some(last) => last.to_string(),
                 None => return Err(DbError::Parse("table-valued function name is empty".into())),
             };
-            let full_name = format_tvf_name(&func_name, args, with_schema)?;
+            let (schema, full_name) = if func_name.eq_ignore_ascii_case("nodes") && name.len() >= 2
+            {
+                let receiver = name[..name.len() - 1].join(".");
+                let xpath_sql = args
+                    .into_iter()
+                    .next()
+                    .map(|a| {
+                        lower_expr(a)
+                            .map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| "'.'".to_string());
+                let col_alias = column_aliases
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "value".to_string());
+                let escaped_col = col_alias.replace('\'', "''");
+                (
+                    None,
+                    format!("__XML_NODES({receiver}, {xpath_sql}, '{escaped_col}')"),
+                )
+            } else {
+                let formatted = format_tvf_name(&func_name, args, with_schema)?;
+                let sch = if name.len() > 1 {
+                    Some(name[0].to_string())
+                } else {
+                    None
+                };
+                (sch, formatted)
+            };
             Ok((
                 executor_ast::common::TableRef {
                     factor: executor_ast::common::TableFactor::Named(
                         executor_ast::common::ObjectName {
                             database: None,
-                            schema: if name.len() > 1 {
-                                Some(name[0].to_string())
-                            } else {
-                                None
-                            },
+                            schema,
                             name: full_name,
                         },
                     ),
@@ -658,7 +735,7 @@ fn lower_apply_clauses(
                     offset: None,
                     fetch: None,
                     set_op: None,
-                    for_xml: None,
+                    extra: None,
                 },
             };
             Ok(executor_ast::statements::query::ApplyClause {

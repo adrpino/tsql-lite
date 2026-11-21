@@ -67,6 +67,25 @@ pub fn parse_statement(parser: &mut Parser) -> ParseResult<Statement> {
 }
 
 fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
+    // Label definition: `<label>:`
+    if matches!(parser.peek_at(1), Some(Token::Colon)) {
+        match parser.peek() {
+            Some(Token::Identifier(id)) => {
+                let label = id.clone();
+                let _ = parser.next();
+                let _ = parser.next();
+                return Ok(Statement::Procedural(ProceduralStatement::Label(label)));
+            }
+            Some(Token::Keyword(k)) => {
+                let label = k.as_sql().to_string();
+                let _ = parser.next();
+                let _ = parser.next();
+                return Ok(Statement::Procedural(ProceduralStatement::Label(label)));
+            }
+            _ => {}
+        }
+    }
+
     if parser.at_keyword(Keyword::With) {
         let _ = parser.next();
         let ctes = parse_comma_list(parser, parse_cte_def)?;
@@ -527,6 +546,15 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
         {
             parse_dcl_permission_stmt(parser)
         }
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GOTO") => {
+            let _ = parser.next();
+            let label = match parser.next() {
+                Some(Token::Identifier(lbl)) => lbl.clone(),
+                Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                _ => return parser.backtrack(Expected::Description("GOTO label name")),
+            };
+            Ok(Statement::Procedural(ProceduralStatement::Goto(label)))
+        }
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WAITFOR") => {
             let _ = parser.next();
             // WAITFOR DELAY <expr> | WAITFOR TIME <expr>
@@ -982,6 +1010,7 @@ fn parse_set_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                         Token::Number { raw, .. } => parts.push(raw.clone()),
                         Token::Operator(op) => parts.push(op.clone()),
                         Token::Comma => parts.push(",".to_string()),
+                        Token::Colon => parts.push(":".to_string()),
                         Token::Dot => parts.push(".".to_string()),
                         Token::LParen => parts.push("(".to_string()),
                         Token::RParen => parts.push(")".to_string()),

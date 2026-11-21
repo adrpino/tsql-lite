@@ -18,12 +18,26 @@ pub(crate) fn execute_projection_stage(
     ctx: &mut ExecutionContext,
     state: &PipelineState,
 ) -> Result<result::QueryResult, DbError> {
-    if !query.filter.group_by.is_empty() || state.has_aggregate {
+    if !query.filter.group_by.is_empty()
+        || !query.filter.grouping_sets.is_empty()
+        || state.has_aggregate
+    {
         let group_executor = GroupExecutor {
             catalog: executor.catalog,
             storage: executor.storage,
             clock: executor.clock,
         };
+        if !query.filter.grouping_sets.is_empty() {
+            return group_executor.execute_grouping_sets_select(
+                query.projection.items.clone(),
+                source_rows,
+                source_shape,
+                &query.filter.group_by,
+                &query.filter.grouping_sets,
+                query.filter.having.as_ref(),
+                ctx,
+            );
+        }
         if state.has_window {
             let surviving_groups = group_executor.collect_surviving_groups(
                 source_rows,

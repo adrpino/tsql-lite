@@ -424,6 +424,8 @@ pub enum StmtOutcome<T> {
     Break,
     /// T-SQL CONTINUE statement inside a WHILE loop.
     Continue,
+    /// T-SQL GOTO statement targeting a label name.
+    Goto(String),
     /// T-SQL RETURN statement, optionally carrying a value (for functions/procedures).
     Return(Option<crate::types::Value>),
 }
@@ -448,6 +450,7 @@ impl<T> StmtOutcome<T> {
             StmtOutcome::Ok(v) => StmtOutcome::Ok(f(v)),
             StmtOutcome::Break => StmtOutcome::Break,
             StmtOutcome::Continue => StmtOutcome::Continue,
+            StmtOutcome::Goto(label) => StmtOutcome::Goto(label),
             StmtOutcome::Return(v) => StmtOutcome::Return(v),
         }
     }
@@ -460,6 +463,10 @@ impl<T> StmtOutcome<T> {
             StmtOutcome::Ok(v) => Ok(v),
             StmtOutcome::Break => Err(DbError::Execution("BREAK outside of WHILE".into())),
             StmtOutcome::Continue => Err(DbError::Execution("CONTINUE outside of WHILE".into())),
+            StmtOutcome::Goto(label) => Err(DbError::Execution(format!(
+                "Label '{}' has not been declared.",
+                label
+            ))),
             StmtOutcome::Return(_) => Err(DbError::Execution(
                 "RETURN outside of procedure/function".into(),
             )),
@@ -476,6 +483,10 @@ impl<T> StmtOutcome<T> {
             StmtOutcome::Ok(v) => Ok(v),
             StmtOutcome::Break => Err(DbError::Execution("BREAK outside of WHILE".into())),
             StmtOutcome::Continue => Err(DbError::Execution("CONTINUE outside of WHILE".into())),
+            StmtOutcome::Goto(label) => Err(DbError::Execution(format!(
+                "Label '{}' has not been declared.",
+                label
+            ))),
             StmtOutcome::Return(_) => Ok(T::default()),
         }
     }

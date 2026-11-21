@@ -29,6 +29,10 @@ pub(super) fn bind_builtin_tvf(
     };
     let upper = name.to_uppercase();
 
+    if upper.starts_with("__XML_NODES(") {
+        return bind_xml_nodes(catalog, storage, clock, tref, ctx, name);
+    }
+
     if upper.starts_with("OPENJSON(") {
         return bind_openjson(catalog, storage, clock, tref, ctx, name);
     }
@@ -165,6 +169,85 @@ pub(super) fn bind_builtin_tvf(
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
         alias: tref.alias.clone().unwrap_or_else(|| "STRING_SPLIT".into()),
+        virtual_rows: Some(rows),
+    }))
+}
+
+fn bind_xml_nodes(
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+    tref: &TableRef,
+    ctx: &mut ExecutionContext,
+    name: &str,
+) -> Result<Option<BoundTable>, DbError> {
+    let inner = name
+        .strip_prefix("__XML_NODES(")
+        .and_then(|s| s.strip_suffix(')'))
+        .ok_or_else(|| DbError::Parse("XML .nodes() requires (xpath)".into()))?;
+    let parts = crate::parser::utils::split_csv_top_level(inner);
+    if parts.len() < 2 {
+        return Err(DbError::Parse("XML .nodes() requires receiver and xpath".into()));
+    }
+
+    let recv_expr = parse_expr_subquery_aware(&parts[0])?;
+    let xpath_expr = parse_expr_subquery_aware(&parts[1])?;
+    let col_name = if let Some(col_raw) = parts.get(2) {
+        let col_expr = parse_expr_subquery_aware(col_raw)?;
+        eval_expr(&col_expr, &[], ctx, catalog, storage, clock)?.to_string_value()
+    } else {
+        "value".to_string()
+    };
+
+    let xml_val = eval_expr(&recv_expr, &[], ctx, catalog, storage, clock)?;
+    let xpath_val = eval_expr(&xpath_expr, &[], ctx, catalog, storage, clock)?;
+
+    let rows: Vec<StoredRow> = if xml_val.is_null() || xpath_val.is_null() {
+        Vec::new()
+    } else {
+        crate::executor::evaluator::eval_xml_nodes(
+            &xml_val.to_string_value(),
+            &xpath_val.to_string_value(),
+        )
+        .into_iter()
+        .map(|frag| StoredRow {
+            values: vec![Value::NVarChar(frag)],
+            deleted: false,
+        })
+        .collect()
+    };
+
+    let columns = vec![ColumnDef {
+        id: 1,
+        name: col_name,
+        data_type: crate::types::DataType::NVarChar { max_len: 0 },
+        nullable: true,
+        primary_key: false,
+        unique: false,
+        identity: None,
+        default: None,
+        default_constraint_name: None,
+        check: None,
+        check_constraint_name: None,
+        computed_expr: None,
+        collation: None,
+        is_clustered: false,
+        ansi_padding_on: true,
+    }];
+
+    let table_def = TableDef {
+        id: 0,
+        schema_id: 1,
+        schema_name: "dbo".to_string(),
+        name: "nodes".to_string(),
+        columns,
+        check_constraints: vec![],
+        foreign_keys: vec![],
+    };
+
+    Ok(Some(BoundTable {
+        table: std::sync::Arc::new(table_def),
+        alias: tref.alias.clone().unwrap_or_else(|| "nodes".into()),
         virtual_rows: Some(rows),
     }))
 }

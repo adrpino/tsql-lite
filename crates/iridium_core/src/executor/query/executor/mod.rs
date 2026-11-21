@@ -18,6 +18,7 @@ impl<'a> QueryExecutor<'a> {
         let set_op = query.set_op.clone();
         let into_table = query.into_table.clone();
         let for_xml = query.for_xml.clone();
+        let for_json = query.for_json.clone();
         let result = select::execute_select_internal(self, &query, ctx)?;
         let mut result = result;
 
@@ -32,6 +33,8 @@ impl<'a> QueryExecutor<'a> {
 
         if let Some(fx) = for_xml {
             result = format_for_xml_result(&result, &query.projection.items, &fx);
+        } else if let Some(fj) = for_json {
+            result = format_for_json_result(&result, &fj);
         }
 
         if into_table.is_some() {
@@ -64,6 +67,7 @@ impl<'a> QueryExecutor<'a> {
         let can_track = query.set_op.is_none()
             && query.into_table.is_none()
             && query.for_xml.is_none()
+            && query.for_json.is_none()
             && query.filter.group_by.is_empty()
             && !query.projection.distinct
             && query.sort.order_by.is_empty()
@@ -224,6 +228,137 @@ fn format_for_xml_result(
         column_types: vec![crate::types::DataType::NVarChar { max_len: 0 }],
         column_nullabilities: vec![true],
         rows: vec![vec![crate::types::Value::VarChar(xml)]],
+        ..Default::default()
+    }
+}
+
+fn value_to_for_json(val: &crate::types::Value) -> serde_json::Value {
+    match val {
+        crate::types::Value::Null => serde_json::Value::Null,
+        crate::types::Value::Bit(b) => serde_json::Value::Bool(*b),
+        crate::types::Value::TinyInt(n) => serde_json::Value::Number((*n).into()),
+        crate::types::Value::SmallInt(n) => serde_json::Value::Number((*n).into()),
+        crate::types::Value::Int(n) => serde_json::Value::Number((*n).into()),
+        crate::types::Value::BigInt(n) => serde_json::Value::Number((*n).into()),
+        crate::types::Value::Float(bits) => {
+            let f = f64::from_bits(*bits);
+            serde_json::Number::from_f64(f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        crate::types::Value::Decimal(unscaled, scale) => {
+            if *scale == 0 {
+                serde_json::from_str::<serde_json::Number>(&unscaled.to_string())
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|_| serde_json::Value::String(val.to_string_value()))
+            } else {
+                let factor = 10i128.pow(*scale as u32);
+                let sign = if *unscaled < 0 { "-" } else { "" };
+                let abs = unscaled.unsigned_abs();
+                let int_part = abs / (factor as u128);
+                let frac_part = abs % (factor as u128);
+                let raw = format!(
+                    "{sign}{int_part}.{frac_part:0width$}",
+                    width = *scale as usize
+                );
+                let trimmed = raw.trim_end_matches('0').trim_end_matches('.');
+                let normalized = if trimmed.is_empty() || trimmed == "-" {
+                    "0"
+                } else {
+                    trimmed
+                };
+                serde_json::from_str::<serde_json::Number>(normalized)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|_| serde_json::Value::String(raw))
+            }
+        }
+        other => serde_json::Value::String(other.to_string_value()),
+    }
+}
+
+fn insert_json_nested_path(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    segments: &[&str],
+    val: serde_json::Value,
+) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        map.insert((*first).to_string(), val);
+        return;
+    }
+    let entry = map
+        .entry((*first).to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !entry.is_object() {
+        *entry = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let serde_json::Value::Object(child_map) = entry {
+        insert_json_nested_path(child_map, rest, val);
+    }
+}
+
+fn format_for_json_result(
+    result: &QueryResult,
+    for_json: &crate::ast::ForJsonClause,
+) -> QueryResult {
+    let json_col = "JSON_F52E2B61-18A1-11d1-B105-00805F49916B".to_string();
+    if result.rows.is_empty() && for_json.root.is_none() {
+        return QueryResult {
+            columns: vec![json_col],
+            column_types: vec![crate::types::DataType::NVarChar { max_len: 0 }],
+            column_nullabilities: vec![true],
+            rows: Vec::new(),
+            ..Default::default()
+        };
+    }
+
+    let is_path_mode = for_json.mode.eq_ignore_ascii_case("PATH");
+    let mut objects: Vec<serde_json::Value> = Vec::with_capacity(result.rows.len());
+
+    for row in &result.rows {
+        let mut obj = serde_json::Map::new();
+        for (i, val) in row.iter().enumerate() {
+            if matches!(val, crate::types::Value::Null) && !for_json.include_null_values {
+                continue;
+            }
+            let col_name = result
+                .columns
+                .get(i)
+                .map(String::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("col");
+            let jv = value_to_for_json(val);
+            if is_path_mode && col_name.contains('.') {
+                let segments: Vec<&str> = col_name.split('.').collect();
+                insert_json_nested_path(&mut obj, &segments, jv);
+            } else {
+                obj.insert(col_name.to_string(), jv);
+            }
+        }
+        objects.push(serde_json::Value::Object(obj));
+    }
+
+    let json_text = if let Some(ref root_name) = for_json.root {
+        let mut root_map = serde_json::Map::new();
+        root_map.insert(root_name.clone(), serde_json::Value::Array(objects));
+        serde_json::to_string(&serde_json::Value::Object(root_map)).unwrap_or_default()
+    } else if for_json.without_array_wrapper {
+        objects
+            .iter()
+            .map(|o| serde_json::to_string(o).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join(",")
+    } else {
+        serde_json::to_string(&serde_json::Value::Array(objects)).unwrap_or_default()
+    };
+
+    QueryResult {
+        columns: vec![json_col],
+        column_types: vec![crate::types::DataType::NVarChar { max_len: 0 }],
+        column_nullabilities: vec![true],
+        rows: vec![vec![crate::types::Value::NVarChar(json_text)]],
         ..Default::default()
     }
 }

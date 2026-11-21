@@ -55,8 +55,10 @@ impl<'a> MutationExecutor<'a> {
         };
         let rows =
             self.collect_insert_rows(&table, &insert_columns, &stmt.source, ctx, rowcount_limit)?;
+        let inserted_count = rows.len();
 
         if !instead_of_triggers.is_empty() {
+            ctx.set_last_rowcount(inserted_count);
             self.execute_triggers(
                 &table,
                 crate::ast::TriggerEvent::Insert,
@@ -101,6 +103,7 @@ impl<'a> MutationExecutor<'a> {
         let collect_rows = stmt.output.is_some() || has_after_triggers;
         let inserted_rows_for_output =
             self.commit_insert_rows(&table, table_id, rows, ctx, collect_rows)?;
+        ctx.set_last_rowcount(inserted_count);
 
         self.execute_triggers(
             &table,
@@ -149,7 +152,7 @@ impl<'a> MutationExecutor<'a> {
             table
                 .columns
                 .iter()
-                .filter(|c| c.computed_expr.is_none())
+                .filter(|c| c.computed_expr.is_none() && c.identity.is_none())
                 .map(|c| c.name.clone())
                 .collect::<Vec<_>>()
         }

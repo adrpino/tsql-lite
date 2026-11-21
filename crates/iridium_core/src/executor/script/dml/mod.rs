@@ -13,6 +13,18 @@ use crate::executor::query::QueryExecutor;
 use crate::executor::result::QueryResult;
 use crate::storage::{Storage, StoredRow};
 
+fn take_leftmost_into_table(
+    stmt: &mut crate::ast::Statement,
+) -> Option<crate::ast::ObjectName> {
+    match stmt {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => s.into_table.take(),
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::SetOp(op)) => {
+            take_leftmost_into_table(&mut op.left)
+        }
+        _ => None,
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_dml(
         &mut self,
@@ -36,13 +48,28 @@ impl<'a> ScriptExecutor<'a> {
             DmlStatement::InsertBulk(stmt) => {
                 self.execute_insert_bulk(stmt, ctx).map(StmtOutcome::Ok)
             }
-            DmlStatement::SetOp(stmt) => {
+            DmlStatement::SetOp(mut stmt) => {
+                // In T-SQL, `SELECT ... INTO #tbl FROM a UNION [ALL] SELECT ... FROM b`
+                // attaches INTO to the leftmost SELECT; lift it so the combined result
+                // populates the target table.
+                let into_table = take_leftmost_into_table(&mut stmt.left);
                 let left_outcome = self.execute(*stmt.left, ctx)?;
                 let right_outcome = self.execute(*stmt.right, ctx)?;
 
                 match (left_outcome, right_outcome) {
                     (StmtOutcome::Ok(Some(left)), StmtOutcome::Ok(Some(right))) => {
                         let result = crate::executor::engine::execute_set_op(left, right, stmt.op)?;
+                        ctx.set_last_rowcount(result.rows.len());
+                        if let Some(target) = into_table {
+                            self.materialize_select_into_table(target, &result, ctx)?;
+                            return Ok(StmtOutcome::Ok(None));
+                        }
+                        if !result.columns.is_empty() {
+                            ctx.frame.last_proc_result = Some(result.clone());
+                            if let Some(ref sink) = ctx.frame.result_set_sink {
+                                sink.lock().push(result.clone());
+                            }
+                        }
                         Ok(StmtOutcome::Ok(Some(result)))
                     }
                     (StmtOutcome::Break, _) | (_, StmtOutcome::Break) => Ok(StmtOutcome::Break),
@@ -92,6 +119,8 @@ impl<'a> ScriptExecutor<'a> {
         }
         .execute_select(RelationalQuery::from(stmt), ctx)?;
 
+        ctx.set_last_rowcount(result.rows.len());
+
         if into_table.is_none() && !result.columns.is_empty() {
             ctx.frame.last_proc_result = Some(result.clone());
             if let Some(ref sink) = ctx.frame.result_set_sink {
@@ -99,76 +128,86 @@ impl<'a> ScriptExecutor<'a> {
             }
         }
 
-        if let Some(mut target) = into_table {
-            if target.name.starts_with('#') {
-                let logical = target.name.clone();
-                let physical = ctx.register_temp_table(&logical);
-                target.schema = Some("dbo".to_string());
-                target.name = physical;
-            }
-
-            let schema_name = target.schema_or_dbo();
-            if self.catalog.find_table(schema_name, &target.name).is_some() {
-                return Err(DbError::duplicate_table(schema_name, &target.name));
-            }
-
-            let schema_id = self
-                .catalog
-                .get_schema_id(schema_name)
-                .ok_or_else(|| DbError::schema_not_found(schema_name))?;
-
-            let mut columns = Vec::new();
-            for (i, name) in result.columns.iter().enumerate() {
-                columns.push(crate::catalog::ColumnDef {
-                    id: self.catalog.alloc_column_id(),
-                    name: name.clone(),
-                    data_type: result.column_types[i].clone(),
-                    nullable: true,
-                    primary_key: false,
-                    unique: false,
-                    identity: None,
-                    default: None,
-                    default_constraint_name: None,
-                    check: None,
-                    check_constraint_name: None,
-                    computed_expr: None,
-                    collation: None,
-                    is_clustered: false,
-                    ansi_padding_on: true,
-                });
-            }
-
-            let table_id = self.catalog.alloc_table_id();
-            let table = TableDef {
-                id: table_id,
-                schema_id,
-                schema_name: schema_name.to_string(),
-                name: target.name.clone(),
-                columns,
-                check_constraints: vec![],
-                foreign_keys: vec![],
-            };
-            self.catalog.register_table(table);
-            self.storage.ensure_table(table_id)?;
-
-            for row_values in &result.rows {
-                let row = StoredRow {
-                    values: row_values.clone(),
-                    deleted: false,
-                };
-                self.storage.insert_row(table_id, row.clone())?;
-                if let Some(db) = &ctx.session.dirty_buffer {
-                    db.lock().push_op(
-                        ctx.session_id(),
-                        target.name.to_string(),
-                        crate::executor::dirty_buffer::DirtyOp::Insert { row: row.clone() },
-                    );
-                }
-            }
+        if let Some(target) = into_table {
+            self.materialize_select_into_table(target, &result, ctx)?;
             return Ok(None);
         }
 
         Ok(Some(result))
+    }
+
+    fn materialize_select_into_table(
+        &mut self,
+        mut target: crate::ast::ObjectName,
+        result: &QueryResult,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> Result<(), DbError> {
+        if target.name.starts_with('#') {
+            let logical = target.name.clone();
+            let physical = ctx.register_temp_table(&logical);
+            target.schema = Some("dbo".to_string());
+            target.name = physical;
+        }
+
+        let schema_name = target.schema_or_dbo();
+        if self.catalog.find_table(schema_name, &target.name).is_some() {
+            return Err(DbError::duplicate_table(schema_name, &target.name));
+        }
+
+        let schema_id = self
+            .catalog
+            .get_schema_id(schema_name)
+            .ok_or_else(|| DbError::schema_not_found(schema_name))?;
+
+        let mut columns = Vec::new();
+        for (i, name) in result.columns.iter().enumerate() {
+            columns.push(crate::catalog::ColumnDef {
+                id: self.catalog.alloc_column_id(),
+                name: name.clone(),
+                data_type: result.column_types[i].clone(),
+                nullable: true,
+                primary_key: false,
+                unique: false,
+                identity: None,
+                default: None,
+                default_constraint_name: None,
+                check: None,
+                check_constraint_name: None,
+                computed_expr: None,
+                collation: None,
+                is_clustered: false,
+                ansi_padding_on: true,
+            });
+        }
+
+        let table_id = self.catalog.alloc_table_id();
+        let table = TableDef {
+            id: table_id,
+            schema_id,
+            schema_name: schema_name.to_string(),
+            name: target.name.clone(),
+            columns,
+            check_constraints: vec![],
+            foreign_keys: vec![],
+        };
+        self.catalog.register_table(table);
+        self.storage.ensure_table(table_id)?;
+
+        for row_values in &result.rows {
+            let row = StoredRow {
+                values: row_values.clone(),
+                deleted: false,
+            };
+            self.storage.insert_row(table_id, row.clone())?;
+            if let Some(db) = &ctx.session.dirty_buffer {
+                db.lock().push_op(
+                    ctx.session_id(),
+                    target.name.to_string(),
+                    crate::executor::dirty_buffer::DirtyOp::Insert { row: row.clone() },
+                );
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn execute_update(

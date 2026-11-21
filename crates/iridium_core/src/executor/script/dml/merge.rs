@@ -171,6 +171,7 @@ impl<'a> ScriptExecutor<'a> {
         for row in &inserted_new_rows {
             self.storage.insert_row(target_table.id, row.clone())?;
         }
+        ctx.set_last_rowcount(merge_output_rows.len());
 
         let mut mut_exec = crate::executor::mutation::MutationExecutor {
             catalog: self.catalog,

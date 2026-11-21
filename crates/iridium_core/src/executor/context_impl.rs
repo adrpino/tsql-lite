@@ -40,6 +40,13 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 }
 
 impl<'a> ExecutionContext<'a> {
+    pub(crate) fn set_last_rowcount(&mut self, count: usize) {
+        self.session.variables.insert(
+            "@@ROWCOUNT".to_string(),
+            (crate::types::DataType::Int, Value::Int(count as i32)),
+        );
+    }
+
     pub fn from_session<C, S>(
         session: &'a mut crate::executor::session::SessionRuntime<C, S>,
         session_id: locks::SessionId,

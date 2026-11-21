@@ -110,7 +110,7 @@ impl<'a> MutationExecutor<'a> {
             let mut deleted_rows = Vec::new();
             let rowcount_limit = rowcount_limit(ctx);
             let mut deleted_indices = HashSet::new();
-            let _deleted_count = visit_target_rows(
+            let deleted_count = visit_target_rows(
                 joined_rows,
                 table_id,
                 &target_alias,
@@ -121,6 +121,7 @@ impl<'a> MutationExecutor<'a> {
                     Ok(())
                 },
             )?;
+            ctx.set_last_rowcount(deleted_count);
 
             self.execute_triggers(
                 &table,
@@ -167,7 +168,7 @@ impl<'a> MutationExecutor<'a> {
         let mut deleted_rows_for_output = Vec::new();
         let rowcount_limit = rowcount_limit(ctx);
         let mut deleted_indices = HashSet::new();
-        let _deleted_count = visit_target_rows(
+        let deleted_count = visit_target_rows(
             joined_rows,
             table_id,
             &target_alias,
@@ -181,6 +182,7 @@ impl<'a> MutationExecutor<'a> {
                 Ok(())
             },
         )?;
+        ctx.set_last_rowcount(deleted_count);
 
         let mut indices_to_delete: Vec<usize> = deleted_indices.into_iter().collect();
         indices_to_delete.sort_unstable_by(|a, b| b.cmp(a));

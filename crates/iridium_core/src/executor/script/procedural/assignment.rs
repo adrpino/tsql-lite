@@ -120,6 +120,7 @@ impl<'a> ScriptExecutor<'a> {
         };
         if has_agg {
             let result = qe.execute_select(q, ctx)?;
+            ctx.set_last_rowcount(result.rows.len());
             if let Some(last) = result.rows.last() {
                 for (idx, t) in stmt.targets.iter().enumerate() {
                     if let Some((ty, var)) = ctx.session.get_var_mut(&t.variable) {
@@ -140,6 +141,7 @@ impl<'a> ScriptExecutor<'a> {
             } else {
                 joined_rows.len()
             };
+            ctx.set_last_rowcount(limit);
             for row in &joined_rows[..limit] {
                 for t in &stmt.targets {
                     let val = eval_expr(

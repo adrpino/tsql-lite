@@ -80,6 +80,21 @@ pub(crate) fn coerce_datetime_value(v: chrono::NaiveDateTime, ty: &DataType) -> 
         )),
         DataType::Date => Ok(Value::Date(v.date())),
         DataType::Time => Ok(Value::Time(v.time())),
+        DataType::Float => {
+            let epoch = chrono::NaiveDate::from_ymd_opt(1900, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let days = (v - epoch).num_milliseconds() as f64 / 86_400_000.0;
+            Ok(Value::Float(days.to_bits()))
+        }
+        DataType::Int => {
+            let epoch = chrono::NaiveDate::from_ymd_opt(1900, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            Ok(Value::Int((v - epoch).num_days() as i32))
+        }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::DateTime(v)))),
         _ => Err(DbError::Execution(format!(
             "cannot convert DATETIME value to {:?}",

@@ -1567,3 +1567,49 @@ fn wave11a_derived_col_list_delete_output_before_from_persisted_try_parse_compou
     );
     assert_eq!(r5.rows[0][0].to_string_value(), "2026-01-15 07:00:00");
 }
+
+#[test]
+fn wave11b_rowcount_insert_skips_identity_select_into_union_distinct_and_datetime_float() {
+    let mut e = Engine::new();
+
+    // 1. @@ROWCOUNT across INSERT, UPDATE, DELETE, SELECT
+    exec(&mut e, "CREATE TABLE #rc (id INT IDENTITY(1,1), tag VARCHAR(20))");
+    // INSERT without column list skips IDENTITY column automatically
+    let r1 = e
+        .execute_batch(
+            iridium_core::parse_batch(
+                "INSERT INTO #rc SELECT 'alpha' UNION ALL SELECT 'beta';
+                 DECLARE @ins INT = @@ROWCOUNT;
+                 UPDATE #rc SET tag = 'ALPHA' WHERE tag = 'alpha';
+                 DECLARE @upd INT = @@ROWCOUNT;
+                 DELETE FROM #rc WHERE tag = 'beta';
+                 DECLARE @del INT = @@ROWCOUNT;
+                 SELECT @ins, @upd, @del;",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(r1.rows[0][1].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][2].to_integer_i64(), Some(1));
+
+    // 2. SELECT INTO with UNION ALL
+    exec(
+        &mut e,
+        "SELECT 1 AS n INTO #union_dst UNION ALL SELECT 2 AS n;",
+    );
+    let r2 = query(&mut e, "SELECT COUNT(*), SUM(n) FROM #union_dst");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(r2.rows[0][1].to_integer_i64(), Some(3));
+
+    // 3. SELECT DISTINCT normalizes case-insensitive / trimmed strings
+    exec(&mut e, "CREATE TABLE #dups (s VARCHAR(10))");
+    exec(&mut e, "INSERT INTO #dups VALUES ('Abc'), ('abc  '), ('ABC')");
+    let r3 = query(&mut e, "SELECT DISTINCT s FROM #dups");
+    assert_eq!(r3.rows.len(), 1);
+
+    // 4. CAST(DATETIME AS FLOAT) returns SQL Server epoch days since 1900-01-01
+    let r4 = query(&mut e, "SELECT CAST(CAST('1900-01-02 12:00:00' AS DATETIME) AS FLOAT)");
+    assert_eq!(r4.rows[0][0].to_f64(), Some(1.5));
+}

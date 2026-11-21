@@ -179,7 +179,11 @@ pub fn deduplicate_projected_rows(rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for row in rows {
-        if seen.insert(row.clone()) {
+        let key: Vec<super::value_ops::SqlHashKey> = row
+            .iter()
+            .map(super::value_ops::SqlHashKey::from_value)
+            .collect();
+        if seen.insert(key) {
             result.push(row);
         }
     }

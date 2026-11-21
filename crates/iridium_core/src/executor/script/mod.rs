@@ -227,9 +227,13 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                 }
                 if let Some(root_snap) = ctx.frame.script_tx.root_snapshot.take() {
                     self.restore_transactional_tables(&root_snap)?;
+                    ctx.frame.script_tx.savepoints.clear();
+                    ctx.frame.trancount = ctx.frame.script_tx.base_depth;
+                } else {
+                    ctx.frame.script_tx.savepoints.clear();
+                    ctx.frame.script_tx.rolled_back = true;
+                    ctx.frame.trancount = 0;
                 }
-                ctx.frame.script_tx.savepoints.clear();
-                ctx.frame.trancount = ctx.frame.script_tx.base_depth;
                 if ctx.frame.trancount == 0 {
                     ctx.frame.xact_state = 0;
                 }

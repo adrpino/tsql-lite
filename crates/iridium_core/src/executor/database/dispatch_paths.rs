@@ -247,6 +247,8 @@ where
             session_options,
             Statement::Transaction(crate::ast::TransactionStatement::Begin(None)),
         )?;
+        ctx.frame.trancount = tx_manager.depth;
+        ctx.frame.xact_state = tx_manager.xact_state;
     }
 
     let isolation_level = tx_manager
@@ -360,6 +362,8 @@ where
             session_options,
             Statement::Transaction(crate::ast::TransactionStatement::Begin(None)),
         )?;
+        ctx.frame.trancount = tx_manager.depth;
+        ctx.frame.xact_state = tx_manager.xact_state;
     }
 
     let out = if read_uncommitted_dirty {
@@ -395,6 +399,40 @@ where
         session_options,
         &stmt,
     );
+
+    // Reconcile transaction state changes executed inside procedural blocks
+    // (e.g. `IF @@TRANCOUNT > 0 COMMIT TRANSACTION;` or `ROLLBACK TRANSACTION;`).
+    if ctx.frame.script_tx.rolled_back {
+        ctx.frame.script_tx.rolled_back = false;
+        if tx_manager.depth > 0 {
+            transaction_exec::execute_transaction_statement(
+                state,
+                session_id,
+                tx_manager,
+                journal,
+                workspace_slot,
+                ctx,
+                session_options,
+                Statement::Transaction(crate::ast::TransactionStatement::Rollback(None)),
+            )?;
+        }
+    } else if out.is_ok() && tx_manager.active.is_some() {
+        if ctx.frame.trancount == 0 && tx_manager.depth > 0 {
+            tx_manager.depth = 1;
+            transaction_exec::execute_transaction_statement(
+                state,
+                session_id,
+                tx_manager,
+                journal,
+                workspace_slot,
+                ctx,
+                session_options,
+                Statement::Transaction(crate::ast::TransactionStatement::Commit(None)),
+            )?;
+        } else if ctx.frame.trancount != tx_manager.depth {
+            tx_manager.depth = ctx.frame.trancount;
+        }
+    }
     out
 }
 

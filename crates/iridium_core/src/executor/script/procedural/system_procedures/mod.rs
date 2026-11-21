@@ -43,6 +43,12 @@ const SYSTEM_PROCEDURES: &[&str] = &[
     "sp_refresh_parameter_encryption",
     "sp_refreshsqlmodule",
     "sp_refreshview",
+    "sp_getapplock",
+    "sp_releaseapplock",
+    "sp_addextendedproperty",
+    "sp_updateextendedproperty",
+    "sp_dropextendedproperty",
+    "sp_tableoption",
 ];
 
 pub(crate) fn is_system_procedure(name: &str) -> bool {
@@ -131,8 +137,16 @@ pub(crate) fn execute_system_procedure(
     } else if name.eq_ignore_ascii_case("sp_refresh_parameter_encryption")
         || name.eq_ignore_ascii_case("sp_refreshsqlmodule")
         || name.eq_ignore_ascii_case("sp_refreshview")
+        || name.eq_ignore_ascii_case("sp_addextendedproperty")
+        || name.eq_ignore_ascii_case("sp_updateextendedproperty")
+        || name.eq_ignore_ascii_case("sp_dropextendedproperty")
+        || name.eq_ignore_ascii_case("sp_tableoption")
     {
         QueryResult::default()
+    } else if name.eq_ignore_ascii_case("sp_getapplock") {
+        execute_sp_getapplock(stmt, ctx, exec)?
+    } else if name.eq_ignore_ascii_case("sp_releaseapplock") {
+        execute_sp_releaseapplock(stmt, ctx, exec)?
     } else {
         return Err(DbError::Execution(format!(
             "unknown system procedure '{}'",

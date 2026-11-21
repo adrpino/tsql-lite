@@ -136,7 +136,9 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
                     negated: true,
                 })
             } else {
-                let expr = super::pratt::parse_expr(parser)?;
+                // SQL precedence: NOT binds tighter than AND (3,4) and OR (1,2),
+                // and looser than comparisons (=, LIKE, IN, BETWEEN at 5,6).
+                let expr = super::pratt::parse_pratt_expr(parser, 5)?;
                 Ok(Expr::Unary {
                     op: UnaryOp::Not,
                     expr: Box::new(expr),

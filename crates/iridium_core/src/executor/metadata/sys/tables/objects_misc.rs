@@ -7,6 +7,7 @@ use crate::types::{DataType, Value};
 
 pub(crate) struct SysDataSpaces;
 pub(crate) struct SysExtendedProperties;
+pub(crate) struct SysMaskedColumns;
 pub(crate) struct SysIndexColumns;
 pub(crate) struct SysForeignKeyColumns;
 pub(crate) struct SysXmlSchemaCollections;
@@ -114,7 +115,27 @@ impl VirtualTable for SysExtendedProperties {
                 ("major_id", DataType::Int, false),
                 ("minor_id", DataType::Int, false),
                 ("class", DataType::Int, false),
+                ("class_desc", DataType::VarChar { max_len: 60 }, false),
                 ("name", DataType::VarChar { max_len: 128 }, false),
+                ("value", DataType::NVarChar { max_len: 0 }, true),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        Vec::new()
+    }
+}
+
+impl VirtualTable for SysMaskedColumns {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "masked_columns",
+            vec![
+                ("object_id", DataType::Int, false),
+                ("column_id", DataType::Int, false),
+                ("is_masked", DataType::Bit, false),
+                ("masking_function", DataType::NVarChar { max_len: 4000 }, true),
             ],
         )
     }
@@ -618,6 +639,7 @@ impl VirtualTable for SysServerPrincipals {
             vec![
                 ("principal_id", DataType::Int, false),
                 ("name", DataType::VarChar { max_len: 128 }, false),
+                ("sid", DataType::VarBinary { max_len: 85 }, true),
                 ("type", DataType::Char { len: 1 }, false),
                 ("type_desc", DataType::VarChar { max_len: 60 }, false),
                 ("is_disabled", DataType::Bit, false),
@@ -625,6 +647,11 @@ impl VirtualTable for SysServerPrincipals {
                 ("modify_date", DataType::DateTime, false),
                 (
                     "default_database_name",
+                    DataType::VarChar { max_len: 128 },
+                    true,
+                ),
+                (
+                    "default_language_name",
                     DataType::VarChar { max_len: 128 },
                     true,
                 ),
@@ -644,12 +671,14 @@ impl VirtualTable for SysServerPrincipals {
                 values: vec![
                     Value::Int(1),
                     Value::VarChar("sa".to_string()),
+                    Value::VarBinary(vec![0x01]),
                     Value::Char("S".to_string()),
                     Value::VarChar("SQL_LOGIN".to_string()),
                     Value::Bit(false),
                     created.clone(),
                     created.clone(),
                     Value::VarChar("master".to_string()),
+                    Value::VarChar("us_english".to_string()),
                 ],
                 deleted: false,
             },
@@ -657,11 +686,13 @@ impl VirtualTable for SysServerPrincipals {
                 values: vec![
                     Value::Int(3),
                     Value::VarChar("sysadmin".to_string()),
+                    Value::VarBinary(vec![0x03]),
                     Value::Char("R".to_string()),
                     Value::VarChar("SERVER_ROLE".to_string()),
                     Value::Bit(false),
                     created.clone(),
                     created.clone(),
+                    Value::Null,
                     Value::Null,
                 ],
                 deleted: false,

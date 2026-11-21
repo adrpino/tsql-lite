@@ -3,8 +3,17 @@ use std::path::PathBuf;
 use iridium_core::{Database, PersistentDatabase};
 use iridium_server::{playground, Credentials, ServerConfig, TdsServer};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Deeply nested SQL batches and dynamic EXEC(...) scripts need more than
+    // the default 2 MiB worker stack used by #[tokio::main].
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(16 * 1024 * 1024)
+        .build()?;
+    rt.block_on(async_main())
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     init_logger();
 
     let mut args: Vec<String> = std::env::args().collect();

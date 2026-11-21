@@ -62,6 +62,10 @@ pub(crate) struct ScriptTransactionState {
     pub(crate) base_depth: u32,
     pub(crate) root_snapshot: Option<HashMap<u32, Vec<crate::storage::StoredRow>>>,
     pub(crate) savepoints: Vec<(String, HashMap<u32, Vec<crate::storage::StoredRow>>)>,
+    /// Set when a procedural block executes `ROLLBACK TRANSACTION` targeting
+    /// an outer session-level transaction so the session transaction manager
+    /// rolls back its workspace.
+    pub(crate) rolled_back: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -62,18 +62,29 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
     let mut collation = None;
     let mut is_clustered = false;
 
-    while let Some(Token::Keyword(k)) = parser.peek() {
-        match *k {
-            Keyword::Null => {
+    loop {
+        match parser.peek() {
+            Some(Token::Keyword(Keyword::Null)) => {
                 let _ = parser.next();
                 is_nullable = Some(true);
             }
-            Keyword::Not => {
+            Some(Token::Keyword(Keyword::Not)) => {
+                let saved = parser.save();
                 let _ = parser.next();
-                parser.expect_keyword(Keyword::Null)?;
-                is_nullable = Some(false);
+                if parser.at_keyword(Keyword::Null) {
+                    let _ = parser.next();
+                    is_nullable = Some(false);
+                } else if parser.at_keyword(Keyword::For)
+                    && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("REPLICATION"))
+                {
+                    let _ = parser.next();
+                    let _ = parser.next();
+                } else {
+                    parser.restore(saved);
+                    break;
+                }
             }
-            Keyword::Identity => {
+            Some(Token::Keyword(Keyword::Identity)) => {
                 let _ = parser.next();
                 if matches!(parser.peek(), Some(Token::LParen)) {
                     let _ = parser.next();
@@ -85,7 +96,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                 }
                 is_identity = true;
             }
-            Keyword::Primary => {
+            Some(Token::Keyword(Keyword::Primary)) => {
                 // If PRIMARY KEY [CLUSTERED|NONCLUSTERED] is followed by '(', it is a table-level
                 // constraint placed after a column definition without a separating comma.
                 let saved = parser.save();
@@ -105,8 +116,9 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                 }
                 is_clustered = col_clustered;
                 is_primary_key = true;
+                skip_optional_index_storage_clauses(parser)?;
             }
-            Keyword::Unique => {
+            Some(Token::Keyword(Keyword::Unique)) => {
                 let _ = parser.next();
                 if parser.at_keyword(Keyword::Clustered) {
                     let _ = parser.next();
@@ -116,18 +128,20 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     is_clustered = false;
                 }
                 is_unique = true;
+                skip_optional_index_storage_clauses(parser)?;
             }
-            Keyword::Default => {
+            Some(Token::Keyword(Keyword::Default)) => {
                 let _ = parser.next();
                 default_expr = Some(crate::parser::parse::expressions::parse_expr(parser)?);
             }
-            Keyword::Check => {
+            Some(Token::Keyword(Keyword::Check)) => {
                 let _ = parser.next();
+                skip_optional_not_for_replication(parser);
                 parser.expect_lparen()?;
                 check_expr = Some(crate::parser::parse::expressions::parse_expr(parser)?);
                 parser.expect_rparen()?;
             }
-            Keyword::Constraint => {
+            Some(Token::Keyword(Keyword::Constraint)) => {
                 let _ = parser.next();
                 let constraint_name = match parser.next() {
                     Some(Token::Identifier(id)) => id.clone(),
@@ -140,6 +154,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                         default_constraint_name = Some(constraint_name);
                     }
                     Some(Token::Keyword(Keyword::Check)) => {
+                        skip_optional_not_for_replication(parser);
                         parser.expect_lparen()?;
                         check_expr = Some(crate::parser::parse::expressions::parse_expr(parser)?);
                         parser.expect_rparen()?;
@@ -148,7 +163,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     _ => return parser.backtrack(Expected::Description("DEFAULT or CHECK")),
                 }
             }
-            Keyword::References => {
+            Some(Token::Keyword(Keyword::References)) => {
                 let _ = parser.next();
                 let ref_table = super::parse_multipart_name(parser)?;
                 let mut ref_columns = Vec::new();
@@ -171,7 +186,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     on_update: None,
                 });
             }
-            Keyword::As => {
+            Some(Token::Keyword(Keyword::As)) => {
                 let _ = parser.next();
                 computed_expr = Some(crate::parser::parse::expressions::parse_expr(parser)?);
                 if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("PERSISTED"))
@@ -179,7 +194,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     let _ = parser.next();
                 }
             }
-            Keyword::Index => {
+            Some(Token::Keyword(Keyword::Index)) => {
                 // Inline column-level index: [col] type INDEX ix_name [CLUSTERED | NONCLUSTERED]
                 let _ = parser.next();
                 match parser.next() {
@@ -191,7 +206,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     let _ = parser.next();
                 }
             }
-            Keyword::Collate => {
+            Some(Token::Keyword(Keyword::Collate)) => {
                 let _ = parser.next();
                 let collation_name = match parser.next() {
                     Some(Token::Identifier(id)) => id.clone(),
@@ -199,6 +214,51 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     _ => return parser.backtrack(Expected::Description("collation name")),
                 };
                 collation = Some(collation_name);
+            }
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("ROWGUIDCOL")
+                    || id.eq_ignore_ascii_case("SPARSE")
+                    || id.eq_ignore_ascii_case("FILESTREAM")
+                    || id.eq_ignore_ascii_case("HIDDEN") =>
+            {
+                let _ = parser.next();
+            }
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("MASKED") || id.eq_ignore_ascii_case("ENCRYPTED") =>
+            {
+                let _ = parser.next();
+                if parser.at_keyword(Keyword::With) {
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::LParen)) {
+                        skip_balanced_parens(parser)?;
+                    }
+                }
+            }
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GENERATED") => {
+                // GENERATED ALWAYS AS ROW START|END [HIDDEN]
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("ALWAYS"))
+                {
+                    let _ = parser.next();
+                }
+                if parser.at_keyword(Keyword::As) {
+                    let _ = parser.next();
+                }
+                if matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("ROW"))
+                    || parser.at_keyword(Keyword::Row)
+                {
+                    let _ = parser.next();
+                }
+                if parser.at_keyword(Keyword::Start)
+                    || parser.at_keyword(Keyword::End)
+                    || matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("START"))
+                {
+                    let _ = parser.next();
+                }
+                if matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("HIDDEN"))
+                {
+                    let _ = parser.next();
+                }
             }
             _ => break,
         }
@@ -237,8 +297,20 @@ pub fn parse_table_body(
         // Inline table index definition: INDEX name [UNIQUE] [CLUSTERED|NONCLUSTERED] (cols) [INCLUDE (...)] [WHERE ...] [WITH (...)]
         let is_inline_index = matches!(parser.peek(), Some(Token::Keyword(Keyword::Index)))
             || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INDEX"));
+        let is_period = matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("PERIOD"))
+            && matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::For)));
         if is_inline_index {
             skip_inline_table_index(parser)?;
+        } else if is_period {
+            // PERIOD FOR SYSTEM_TIME (start_col, end_col)
+            let _ = parser.next(); // PERIOD
+            let _ = parser.next(); // FOR
+            if matches!(parser.peek(), Some(Token::Identifier(_)) | Some(Token::Keyword(_))) {
+                let _ = parser.next(); // SYSTEM_TIME
+            }
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                skip_balanced_parens(parser)?;
+            }
         } else {
             let mut is_constraint = false;
             if let Some(Token::Keyword(kw)) = parser.peek() {
@@ -295,6 +367,49 @@ fn skip_balanced_parens(parser: &mut Parser) -> ParseResult<()> {
             Some(_) => {}
             None => return parser.backtrack(Expected::Description(")")),
         }
+    }
+    Ok(())
+}
+
+fn skip_optional_not_for_replication(parser: &mut Parser) {
+    if parser.at_keyword(Keyword::Not)
+        && matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::For)))
+        && matches!(parser.peek_at(2), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("REPLICATION"))
+    {
+        let _ = parser.next();
+        let _ = parser.next();
+        let _ = parser.next();
+    }
+}
+
+fn skip_optional_index_storage_clauses(parser: &mut Parser) -> ParseResult<()> {
+    loop {
+        if parser.at_keyword(Keyword::With) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                skip_balanced_parens(parser)?;
+                continue;
+            }
+            parser.restore(saved);
+        }
+        if parser.at_keyword(Keyword::On) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(
+                parser.peek(),
+                Some(Token::Keyword(Keyword::Delete | Keyword::Update))
+            ) {
+                parser.restore(saved);
+                break;
+            }
+            let _ = super::parse_multipart_name(parser)?;
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                skip_balanced_parens(parser)?;
+            }
+            continue;
+        }
+        break;
     }
     Ok(())
 }
@@ -382,6 +497,7 @@ pub fn parse_table_constraint(parser: &mut Parser) -> ParseResult<TableConstrain
             let columns =
                 crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
             parser.expect_rparen()?;
+            skip_optional_index_storage_clauses(parser)?;
             Ok(TableConstraint::PrimaryKey {
                 name,
                 columns,
@@ -401,6 +517,7 @@ pub fn parse_table_constraint(parser: &mut Parser) -> ParseResult<TableConstrain
             let columns =
                 crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
             parser.expect_rparen()?;
+            skip_optional_index_storage_clauses(parser)?;
             Ok(TableConstraint::Unique {
                 name,
                 columns,
@@ -451,6 +568,7 @@ pub fn parse_table_constraint(parser: &mut Parser) -> ParseResult<TableConstrain
                     break;
                 }
             }
+            skip_optional_not_for_replication(parser);
             Ok(TableConstraint::ForeignKey {
                 name,
                 columns,
@@ -461,6 +579,7 @@ pub fn parse_table_constraint(parser: &mut Parser) -> ParseResult<TableConstrain
             })
         }
         Keyword::Check => {
+            skip_optional_not_for_replication(parser);
             parser.expect_lparen()?;
             let expr = crate::parser::parse::expressions::parse_expr(parser)?;
             parser.expect_rparen()?;
@@ -516,10 +635,13 @@ pub fn parse_create_index(
         options.extend(parsed_opts.into_iter().flatten());
     }
 
-    // Optional ON <filegroup>
+    // Optional ON <filegroup> or ON <partition_scheme>(<column>)
     if parser.at_keyword(Keyword::On) {
         let _ = parser.next();
         let _ = super::parse_multipart_name(parser)?;
+        if matches!(parser.peek(), Some(Token::LParen)) {
+            skip_balanced_parens(parser)?;
+        }
     }
 
     Ok(CreateIndexStmt {
@@ -581,6 +703,19 @@ fn parse_index_option_opt(parser: &mut Parser) -> ParseResult<Option<IndexOption
 
 pub fn parse_create_type(parser: &mut Parser) -> ParseResult<Statement> {
     let name = super::parse_multipart_name(parser)?;
+    if parser.at_keyword(Keyword::From) {
+        let _ = parser.next();
+        let _ = crate::parser::parse::expressions::parse_data_type(parser)?;
+        if parser.at_keyword(Keyword::Not) {
+            let _ = parser.next();
+            parser.expect_keyword(Keyword::Null)?;
+        } else if parser.at_keyword(Keyword::Null) {
+            let _ = parser.next();
+        }
+        return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+            Vec::new(),
+        )));
+    }
     parser.expect_keyword(Keyword::As)?;
     parser.expect_keyword(Keyword::Table)?;
     parser.expect_lparen()?;
@@ -595,6 +730,13 @@ pub fn parse_create_schema(parser: &mut Parser) -> ParseResult<Statement> {
         Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
         _ => return parser.backtrack(Expected::Description("schema name")),
     };
+    if parser.at_keyword(Keyword::Authorization) {
+        let _ = parser.next();
+        match parser.next() {
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+            _ => return parser.backtrack(Expected::Description("authorization principal")),
+        }
+    }
     Ok(Statement::Ddl(DdlStatement::CreateSchema(name)))
 }
 
@@ -724,6 +866,7 @@ pub fn parse_alter_table_add_constraint(parser: &mut Parser) -> ParseResult<Tabl
         let columns =
             crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
         parser.expect_rparen()?;
+        skip_optional_index_storage_clauses(parser)?;
         TableConstraint::PrimaryKey {
             name: Some(constraint_name),
             columns,
@@ -743,6 +886,7 @@ pub fn parse_alter_table_add_constraint(parser: &mut Parser) -> ParseResult<Tabl
         let columns =
             crate::parser::parse::expressions::parse_comma_list(parser, parse_index_column)?;
         parser.expect_rparen()?;
+        skip_optional_index_storage_clauses(parser)?;
         TableConstraint::Unique {
             name: Some(constraint_name),
             columns,
@@ -788,6 +932,7 @@ pub fn parse_alter_table_add_constraint(parser: &mut Parser) -> ParseResult<Tabl
                 break;
             }
         }
+        skip_optional_not_for_replication(parser);
         TableConstraint::ForeignKey {
             name: Some(constraint_name),
             columns,
@@ -798,6 +943,7 @@ pub fn parse_alter_table_add_constraint(parser: &mut Parser) -> ParseResult<Tabl
         }
     } else if parser.at_keyword(Keyword::Check) {
         let _ = parser.next();
+        skip_optional_not_for_replication(parser);
         parser.expect_lparen()?;
         let expr = crate::parser::parse::expressions::parse_expr(parser)?;
         parser.expect_rparen()?;

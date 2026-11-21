@@ -8,10 +8,11 @@ pub fn parse_create_table(parser: &mut Parser) -> ParseResult<CreateStmt> {
     parser.expect_lparen()?;
     let (columns, constraints) = super::ddl::parse_table_body(parser)?;
     parser.expect_rparen()?;
-    // Optional storage clauses: ON [PRIMARY] / ON [scheme](col) / TEXTIMAGE_ON [PRIMARY]
+    // Optional storage / table options clauses in any order:
+    // ON [PRIMARY] / ON [scheme](col) / TEXTIMAGE_ON [PRIMARY] / FILESTREAM_ON [fg] / WITH (...)
     loop {
         if parser.at_keyword(Keyword::On)
-            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TEXTIMAGE_ON"))
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TEXTIMAGE_ON") || id.eq_ignore_ascii_case("FILESTREAM_ON"))
         {
             let _ = parser.next();
             let _ = super::parse_multipart_name(parser)?;
@@ -28,6 +29,24 @@ pub fn parse_create_table(parser: &mut Parser) -> ParseResult<CreateStmt> {
                 }
             }
             continue;
+        }
+        if parser.at_keyword(Keyword::With) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match parser.next() {
+                        Some(Token::LParen) => depth += 1,
+                        Some(Token::RParen) => depth -= 1,
+                        None => break,
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            parser.restore(saved);
         }
         break;
     }

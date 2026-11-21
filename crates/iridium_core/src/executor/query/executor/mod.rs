@@ -34,7 +34,7 @@ impl<'a> QueryExecutor<'a> {
         if let Some(fx) = for_xml {
             result = format_for_xml_result(&result, &query.projection.items, &fx);
         } else if let Some(fj) = for_json {
-            result = format_for_json_result(&result, &fj);
+            result = format_for_json_result(&result, &query.projection.items, &fj);
         }
 
         if into_table.is_some() {
@@ -299,8 +299,25 @@ fn insert_json_nested_path(
     }
 }
 
+fn expr_produces_raw_json(expr: &crate::ast::Expr) -> bool {
+    match expr {
+        crate::ast::Expr::Subquery(sub) => sub.for_json().is_some(),
+        crate::ast::Expr::FunctionCall { name, args, .. } => {
+            if name.eq_ignore_ascii_case("JSON_QUERY") {
+                true
+            } else if name.eq_ignore_ascii_case("ISNULL") || name.eq_ignore_ascii_case("COALESCE") {
+                args.iter().any(expr_produces_raw_json)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
 fn format_for_json_result(
     result: &QueryResult,
+    projection: &[crate::ast::SelectItem],
     for_json: &crate::ast::ForJsonClause,
 ) -> QueryResult {
     let json_col = "JSON_F52E2B61-18A1-11d1-B105-00805F49916B".to_string();
@@ -313,6 +330,14 @@ fn format_for_json_result(
             ..Default::default()
         };
     }
+
+    let raw_json_cols: Vec<bool> = (0..result.columns.len())
+        .map(|i| {
+            projection
+                .get(i)
+                .is_some_and(|item| expr_produces_raw_json(&item.expr))
+        })
+        .collect();
 
     let is_path_mode = for_json.mode.eq_ignore_ascii_case("PATH");
     let mut objects: Vec<serde_json::Value> = Vec::with_capacity(result.rows.len());
@@ -329,7 +354,17 @@ fn format_for_json_result(
                 .map(String::as_str)
                 .filter(|s| !s.is_empty())
                 .unwrap_or("col");
-            let jv = value_to_for_json(val);
+            let jv = if raw_json_cols.get(i).copied().unwrap_or(false) {
+                match val {
+                    crate::types::Value::VarChar(s) | crate::types::Value::NVarChar(s) => {
+                        serde_json::from_str::<serde_json::Value>(s)
+                            .unwrap_or_else(|_| value_to_for_json(val))
+                    }
+                    _ => value_to_for_json(val),
+                }
+            } else {
+                value_to_for_json(val)
+            };
             if is_path_mode && col_name.contains('.') {
                 let segments: Vec<&str> = col_name.split('.').collect();
                 insert_json_nested_path(&mut obj, &segments, jv);

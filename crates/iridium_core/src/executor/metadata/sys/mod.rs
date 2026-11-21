@@ -55,6 +55,8 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(tables::SysDataSpaces))
     } else if name.eq_ignore_ascii_case("extended_properties") {
         Some(Box::new(tables::SysExtendedProperties))
+    } else if name.eq_ignore_ascii_case("masked_columns") {
+        Some(Box::new(tables::SysMaskedColumns))
     } else if name.eq_ignore_ascii_case("index_columns") {
         Some(Box::new(tables::SysIndexColumns))
     } else if name.eq_ignore_ascii_case("foreign_key_columns") {
@@ -83,6 +85,8 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(partition::SysPartitionFunctions))
     } else if name.eq_ignore_ascii_case("partition_parameters") {
         Some(Box::new(partition::SysPartitionParameters))
+    } else if name.eq_ignore_ascii_case("partition_range_values") {
+        Some(Box::new(partition::SysPartitionRangeValues))
     } else if name.eq_ignore_ascii_case("partition_schemes") {
         Some(Box::new(partition::SysPartitionSchemes))
     } else if name.eq_ignore_ascii_case("partitions") {
@@ -187,6 +191,10 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(database_principals::SysDatabasePermissions))
     } else if name.eq_ignore_ascii_case("database_role_members") {
         Some(Box::new(database_principals::SysDatabaseRoleMembers))
+    } else if name.eq_ignore_ascii_case("security_policies") {
+        Some(Box::new(database_principals::SysSecurityPolicies))
+    } else if name.eq_ignore_ascii_case("security_predicates") {
+        Some(Box::new(database_principals::SysSecurityPredicates))
     } else if name.eq_ignore_ascii_case("change_tracking_tables") {
         Some(Box::new(change_tracking::SysChangeTrackingTables))
     } else if name.eq_ignore_ascii_case("fulltext_indexes") {

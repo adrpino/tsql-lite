@@ -45,6 +45,7 @@ impl VirtualTable for SysTables {
                 ("uses_ansi_null_defaults", DataType::Bit, false),
                 ("is_tracked_by_cdc", DataType::Bit, false),
                 ("is_merge_published", DataType::Bit, false),
+                ("large_value_types_out_of_row", DataType::Bit, false),
             ],
         )
     }
@@ -93,6 +94,7 @@ impl VirtualTable for SysTables {
                     Value::Bit(false),                // uses_ansi_null_defaults
                     Value::Bit(false),                // is_tracked_by_cdc
                     Value::Bit(false),                // is_merge_published
+                    Value::Bit(false),                // large_value_types_out_of_row
                 ],
                 deleted: false,
             })

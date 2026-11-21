@@ -7,6 +7,7 @@ use crate::types::{DataType, Value};
 
 pub(crate) struct SysPartitionFunctions;
 pub(crate) struct SysPartitionParameters;
+pub(crate) struct SysPartitionRangeValues;
 pub(crate) struct SysPartitionSchemes;
 pub(crate) struct SysDestinationDataSpaces;
 pub(crate) struct SysFilegroups;
@@ -244,5 +245,23 @@ impl VirtualTable for SysAllocationUnits {
         }
 
         rows
+    }
+}
+
+impl VirtualTable for SysPartitionRangeValues {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "partition_range_values",
+            vec![
+                ("function_id", DataType::Int, false),
+                ("boundary_id", DataType::Int, false),
+                ("parameter_id", DataType::Int, false),
+                ("value", DataType::SqlVariant, true),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        Vec::new()
     }
 }

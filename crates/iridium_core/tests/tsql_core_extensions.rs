@@ -1,4 +1,4 @@
-use iridium_core::{Engine, QueryResult};
+use iridium_core::{Database, Engine, QueryResult, SessionManager, StatementExecutor};
 
 fn exec(engine: &mut Engine, sql: &str) {
     let stmts = iridium_core::parse_batch(sql)
@@ -403,4 +403,306 @@ fn collate_case_sensitive_like_in_order_by_and_group_by() {
     assert_eq!(r_grp.rows[1][1].to_integer_i64(), Some(1));
     assert_eq!(r_grp.rows[2][0].to_string_value(), "abc");
     assert_eq!(r_grp.rows[2][1].to_integer_i64(), Some(2));
+}
+
+#[test]
+fn applock_acquire_and_release_return_status() {
+    let mut e = Engine::new();
+    let r = query(
+        &mut e,
+        "DECLARE @rc1 INT, @rc2 INT;
+         EXEC @rc1 = sys.sp_getapplock @Resource = N'deploy_mutex', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 5000;
+         EXEC @rc2 = sys.sp_releaseapplock @Resource = N'deploy_mutex', @LockOwner = 'Session';
+         SELECT @rc1 AS acq, @rc2 AS rel;",
+    );
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(0));
+    assert_eq!(r.rows[0][1].to_integer_i64(), Some(0));
+}
+
+#[test]
+fn create_table_storage_compression_options_and_temporal() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE [dbo].[Orders] (
+            [Id] INT IDENTITY(1,1) NOT FOR REPLICATION NOT NULL,
+            [RowGuid] UNIQUEIDENTIFIER ROWGUIDCOL NOT NULL,
+            [Code] NVARCHAR(50) SPARSE NULL,
+            [Notes] NVARCHAR(MAX) NULL,
+            CONSTRAINT [PK_Orders] PRIMARY KEY CLUSTERED ([Id] ASC)
+                WITH (PAD_INDEX = OFF, FILLFACTOR = 80, DATA_COMPRESSION = PAGE) ON [PRIMARY],
+            CONSTRAINT [UQ_Orders_Code] UNIQUE NONCLUSTERED ([Code] ASC)
+                WITH (FILLFACTOR = 90) ON [PRIMARY]
+        ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY] WITH (DATA_COMPRESSION = PAGE);",
+    );
+    exec(
+        &mut e,
+        "CREATE TABLE [dbo].[AuditLog] (
+            [Id] INT NOT NULL PRIMARY KEY CLUSTERED WITH (DATA_COMPRESSION = ROW) ON [PRIMARY],
+            [Payload] NVARCHAR(100) NULL,
+            [ValidFrom] DATETIME2 GENERATED ALWAYS AS ROW START HIDDEN NOT NULL,
+            [ValidTo] DATETIME2 GENERATED ALWAYS AS ROW END HIDDEN NOT NULL,
+            PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo])
+        ) WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[AuditLogHistory]));",
+    );
+    exec(
+        &mut e,
+        "CREATE NONCLUSTERED INDEX [IX_Orders_Code] ON [dbo].[Orders] ([Code] ASC)
+            WITH (FILLFACTOR = 85, DATA_COMPRESSION = PAGE) ON [ps_monthly]([Code]);",
+    );
+    exec(
+        &mut e,
+        "INSERT INTO [dbo].[Orders] ([RowGuid], [Code], [Notes]) VALUES ('00000000-0000-0000-0000-000000000001', N'ORD-1', N'ok');",
+    );
+    let r = query(&mut e, "SELECT [Code], [Notes] FROM [dbo].[Orders]");
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows[0][0].to_string_value(), "ORD-1");
+}
+
+#[test]
+fn extended_properties_and_tableoption_system_procedures() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE [dbo].[Items] ([Id] INT NOT NULL PRIMARY KEY);",
+    );
+    exec(
+        &mut e,
+        "EXEC sys.sp_addextendedproperty
+            @name = N'MS_Description',
+            @value = N'Item catalog',
+            @level0type = N'SCHEMA', @level0name = N'dbo',
+            @level1type = N'TABLE', @level1name = N'Items';
+         EXEC sys.sp_updateextendedproperty
+            @name = N'MS_Description',
+            @value = N'Updated item catalog',
+            @level0type = N'SCHEMA', @level0name = N'dbo',
+            @level1type = N'TABLE', @level1name = N'Items';
+         EXEC sys.sp_dropextendedproperty
+            @name = N'MS_Description',
+            @level0type = N'SCHEMA', @level0name = N'dbo',
+            @level1type = N'TABLE', @level1name = N'Items';
+         EXEC sys.sp_tableoption N'[dbo].[Items]', N'large value types out of row', N'1';",
+    );
+}
+
+#[test]
+fn admin_storage_security_ddl_statements() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE SCHEMA [reporting] AUTHORIZATION [dbo];
+         CREATE TYPE [dbo].[CodeAlias] FROM VARCHAR(32) NOT NULL;
+         CREATE TABLE [reporting].[Sales] ([Id] INT NOT NULL, [Code] VARCHAR(32) NULL);
+         CREATE PARTITION FUNCTION [pf_year] (INT) AS RANGE RIGHT FOR VALUES (2024, 2025, 2026);
+         CREATE PARTITION SCHEME [ps_year] AS PARTITION [pf_year] ALL TO ([PRIMARY]);
+         CREATE LOGIN [app_login] WITH PASSWORD = N'StrongP@ss1!';
+         CREATE USER [app_user] FOR LOGIN [app_login] WITH DEFAULT_SCHEMA = [dbo];
+         CREATE ROLE [app_reader] AUTHORIZATION [dbo];
+         ALTER ROLE [app_reader] ADD MEMBER [app_user];
+         ALTER ROLE [app_reader] DROP MEMBER [app_user];
+         CREATE FULLTEXT CATALOG [ft_main] AS DEFAULT;
+         CREATE STATISTICS [st_sales_code] ON [reporting].[Sales]([Code]) WITH FULLSCAN;
+         CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'MasterKey!123';
+         CREATE CERTIFICATE [cert_app] WITH SUBJECT = N'App Cert';
+         CREATE SYMMETRIC KEY [sym_app] WITH ALGORITHM = AES_256 ENCRYPTION BY CERTIFICATE [cert_app];
+         ALTER DATABASE [master] ADD FILEGROUP [FG_DATA];
+         ALTER DATABASE [master] ADD FILE (NAME = N'fg_data_1', FILENAME = N'/tmp/fg_data_1.ndf') TO FILEGROUP [FG_DATA];",
+    );
+}
+
+#[test]
+fn catalog_views_principals_security_policies_and_nested_for_json() {
+    let mut e = Engine::new();
+    // 1. sys.database_principals columns
+    let _ = query(
+        &mut e,
+        "SELECT dp.principal_id, dp.name, dp.type_desc, dp.sid, dp.authentication_type,
+                dp.owning_principal_id, dp.is_fixed_role, dp.default_schema_name
+         FROM sys.database_principals dp
+         WHERE dp.is_fixed_role = 0",
+    );
+    // 2. sys.server_principals columns (sid, default_language_name)
+    let _ = query(
+        &mut e,
+        "SELECT sp.principal_id, sp.name, sp.sid, sp.default_database_name, sp.default_language_name
+         FROM sys.server_principals sp",
+    );
+    // 3. sys.database_permissions.class_desc
+    let _ = query(
+        &mut e,
+        "SELECT p.class, p.class_desc, p.major_id, p.permission_name, p.state_desc
+         FROM sys.database_permissions p",
+    );
+    // 4. sys.security_policies & sys.security_predicates
+    let _ = query(
+        &mut e,
+        "SELECT s.name AS schema_name, sp.name AS policy_name, sp.is_enabled,
+                (SELECT pr.predicate_type_desc, pr.operation_desc, pr.predicate_definition
+                 FROM sys.security_predicates pr
+                 WHERE pr.object_id = sp.object_id
+                 FOR JSON PATH) AS predicates
+         FROM sys.security_policies sp
+         JOIN sys.schemas s ON sp.schema_id = s.schema_id
+         FOR JSON PATH",
+    );
+    // 5. sys.extended_properties (class_desc, value), sys.tables.large_value_types_out_of_row,
+    //    sys.masked_columns, and sys.partition_range_values
+    let _ = query(
+        &mut e,
+        "SELECT ep.class, ep.class_desc, ep.major_id, ep.minor_id, ep.name, ep.value
+         FROM sys.extended_properties ep",
+    );
+    let _ = query(
+        &mut e,
+        "SELECT t.name, t.large_value_types_out_of_row FROM sys.tables t",
+    );
+    let _ = query(
+        &mut e,
+        "SELECT mc.object_id, mc.column_id, mc.is_masked, mc.masking_function
+         FROM sys.masked_columns mc",
+    );
+    let _ = query(
+        &mut e,
+        "SELECT prv.function_id, prv.boundary_id, prv.parameter_id, prv.value
+         FROM sys.partition_range_values prv",
+    );
+    // 6. Nested FOR JSON PATH embeds raw JSON array, not double-escaped string
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.depts (id INT, name NVARCHAR(50));
+         CREATE TABLE dbo.emps (dept_id INT, emp_name NVARCHAR(50));
+         INSERT INTO dbo.depts VALUES (1, N'Eng');
+         INSERT INTO dbo.emps VALUES (1, N'Alice'), (1, N'Bob');",
+    );
+    let r = query(
+        &mut e,
+        "SELECT d.name,
+                (SELECT e.emp_name FROM dbo.emps e WHERE e.dept_id = d.id ORDER BY e.emp_name FOR JSON PATH) AS members
+         FROM dbo.depts d
+         ORDER BY d.id
+         FOR JSON PATH",
+    );
+    let json_text = r.rows[0][0].to_string_value();
+    let parsed: serde_json::Value = serde_json::from_str(&json_text).expect("valid JSON");
+    assert!(
+        parsed[0]["members"].is_array(),
+        "nested FOR JSON PATH must embed raw JSON array, got: {}",
+        json_text
+    );
+    assert_eq!(parsed[0]["members"][0]["emp_name"], "Alice");
+    assert_eq!(parsed[0]["members"][1]["emp_name"], "Bob");
+
+    // 7. Catalog emptiness probe with Bit = 0 and NOT EXISTS against sys.extended_properties
+    let probe = query(
+        &mut e,
+        "SELECT
+            (SELECT COUNT(1) FROM sys.objects o
+             WHERE o.is_ms_shipped = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM sys.extended_properties ep
+                   WHERE ep.major_id = o.object_id
+                     AND ep.minor_id = 0
+                     AND ep.name = N'microsoft_database_tools_support'
+               )) AS user_objects,
+            (SELECT COUNT(1) FROM sys.table_types WHERE is_user_defined = 1) AS user_table_types,
+            (SELECT COUNT(1) FROM sys.schemas WHERE schema_id > 4 AND schema_id < 16384) AS custom_schemas
+         FOR JSON PATH, WITHOUT_ARRAY_WRAPPER",
+    );
+    let probe_json: serde_json::Value =
+        serde_json::from_str(&probe.rows[0][0].to_string_value()).expect("valid probe JSON");
+    assert!(
+        probe_json["user_objects"].as_u64().unwrap_or(0) >= 2,
+        "expected >= 2 user objects (depts, emps), got: {}",
+        probe_json
+    );
+}
+
+#[test]
+fn not_operator_precedence_and_alter_table_multi_add_and_set() {
+    let mut e = Engine::new();
+    // SQL precedence: NOT binds tighter than AND / OR.
+    // NOT (1 = 2) AND (1 = 2) => TRUE AND FALSE => FALSE (0)
+    let r = query(
+        &mut e,
+        "SELECT CASE WHEN NOT 1 = 2 AND 1 = 2 THEN 1 ELSE 0 END AS val",
+    );
+    assert_eq!(r.rows[0][0].to_integer_i64(), Some(0));
+
+    // Chained NOT ... LIKE ... AND NOT ... LIKE ... must stay flat (constant depth).
+    exec(
+        &mut e,
+        "CREATE TABLE [dbo].[Users] (
+            [Id] INT NOT NULL PRIMARY KEY,
+            [Secret] NVARCHAR(50) COLLATE Latin1_General_BIN2
+                ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = [CEK_1], ALGORITHM = N'AEAD_AES_256_CBC_HMAC_SHA_256', ENCRYPTION_TYPE = DETERMINISTIC) NOT NULL,
+            [Code] NVARCHAR(50) NOT NULL
+        );
+        CREATE TABLE [dbo].[UsersAudit] ([Id] INT NOT NULL);
+        ALTER TABLE [dbo].[Users] ADD UNIQUE NONCLUSTERED ([Code]) ON [PRIMARY];
+        ALTER TABLE [dbo].[Users] ADD
+            CONSTRAINT [CHK_Users_1] CHECK ([Id] > 0),
+            CONSTRAINT [CHK_Users_2] CHECK (
+                NOT [Code] LIKE '%a%' AND NOT [Code] LIKE '%b%' AND NOT [Code] LIKE '%c%'
+                AND NOT [Code] LIKE '%d%' AND NOT [Code] LIKE '%e%' AND NOT [Code] LIKE '%f%'
+                AND NOT [Code] LIKE '%g%' AND NOT [Code] LIKE '%h%' AND NOT [Code] LIKE '%i%'
+                AND NOT [Code] LIKE '%j%' AND NOT [Code] LIKE '%k%' AND NOT [Code] LIKE '%l%'
+                AND NOT [Code] LIKE '%m%' AND NOT [Code] LIKE '%n%' AND NOT [Code] LIKE '%o%'
+                AND NOT [Code] LIKE '%p%' AND NOT [Code] LIKE '%q%' AND NOT [Code] LIKE '%r%'
+            );
+        ALTER TABLE [dbo].[Users] SET (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[UsersAudit]));",
+    );
+}
+
+#[test]
+fn conditional_commit_and_rollback_inside_if_persist_across_sessions() {
+    let db = Database::new();
+
+    // Session 1: BEGIN TRAN -> DDL + DML -> IF @@TRANCOUNT > 0 COMMIT TRANSACTION;
+    let s1 = db.create_session();
+    db.execute_session_batch_sql_multi(
+        s1,
+        "SET XACT_ABORT ON;
+         BEGIN TRANSACTION;
+         CREATE TABLE dbo.TxPersist (Id INT NOT NULL PRIMARY KEY);
+         INSERT INTO dbo.TxPersist VALUES (123);
+         IF @@TRANCOUNT > 0 COMMIT TRANSACTION;",
+    )
+    .expect("session 1 commit batch must succeed");
+
+    // Verify @@TRANCOUNT returned to 0 in session 1 before disconnect
+    let tc = db
+        .execute_session_batch_sql(s1, "SELECT @@TRANCOUNT AS tc")
+        .expect("trancount query")
+        .expect("result");
+    assert_eq!(tc.rows[0][0].to_integer_i64(), Some(0));
+
+    // Reset & close session 1 (simulates TDS client disconnect / pool checkin)
+    db.reset_session(s1).expect("reset session 1");
+    db.close_session(s1).expect("close session 1");
+
+    // Session 2 MUST observe committed table & row
+    let s2 = db.create_session();
+    let res = db
+        .execute_session_batch_sql(s2, "SELECT Id FROM dbo.TxPersist")
+        .expect("session 2 select must see committed table")
+        .expect("result");
+    assert_eq!(res.rows.len(), 1);
+    assert_eq!(res.rows[0][0].to_integer_i64(), Some(123));
+
+    // Session 2: BEGIN TRAN -> INSERT -> IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    db.execute_session_batch_sql_multi(
+        s2,
+        "BEGIN TRANSACTION;
+         INSERT INTO dbo.TxPersist VALUES (999);
+         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;",
+    )
+    .expect("session 2 rollback batch must succeed");
+
+    let res2 = db
+        .execute_session_batch_sql(s2, "SELECT COUNT(*) AS cnt, @@TRANCOUNT AS tc FROM dbo.TxPersist")
+        .expect("session 2 count after rollback")
+        .expect("result");
+    assert_eq!(res2.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(res2.rows[0][1].to_integer_i64(), Some(0));
 }

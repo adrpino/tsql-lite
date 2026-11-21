@@ -29,11 +29,15 @@ fn test_create_broker_unsupported() {
 }
 
 #[test]
-fn test_create_partition_function_unsupported() {
+fn test_create_partition_function_accepted() {
     let engine = Engine::new();
     let result =
         engine.exec("CREATE PARTITION FUNCTION pf(int) AS RANGE LEFT FOR VALUES (1, 100, 1000)");
-    assert!(result.is_err(), "CREATE PARTITION FUNCTION should fail");
+    assert!(
+        result.is_ok(),
+        "CREATE PARTITION FUNCTION should be accepted: {:?}",
+        result
+    );
 }
 
 #[test]

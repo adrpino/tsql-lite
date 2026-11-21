@@ -229,3 +229,80 @@ pub(crate) fn execute_sp_set_session_context(
 
     Ok(QueryResult::default())
 }
+
+pub(crate) fn execute_sp_getapplock(
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    exec: &mut ScriptExecutor<'_>,
+) -> Result<QueryResult, DbError> {
+    let mut resource: Option<String> = None;
+    let mut lock_mode: Option<String> = None;
+
+    for (idx, arg) in stmt.args.iter().enumerate() {
+        let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+        if let Some(ref name) = arg.name {
+            let norm = name.trim_start_matches('@');
+            if norm.eq_ignore_ascii_case("resource") {
+                resource = Some(val.to_string_value());
+            } else if norm.eq_ignore_ascii_case("lockmode") {
+                lock_mode = Some(val.to_string_value());
+            }
+        } else if idx == 0 && resource.is_none() {
+            resource = Some(val.to_string_value());
+        } else if idx == 1 && lock_mode.is_none() {
+            lock_mode = Some(val.to_string_value());
+        }
+    }
+
+    if resource.as_deref().is_none_or(|r| r.is_empty()) {
+        return Err(DbError::Execution(
+            "sp_getapplock: @Resource is required".into(),
+        ));
+    }
+    if let Some(ref mode) = lock_mode {
+        let valid = matches!(
+            mode.to_ascii_lowercase().as_str(),
+            "shared" | "update" | "intentshared" | "intentexclusive" | "exclusive"
+        );
+        if !valid {
+            return Err(DbError::Execution(format!(
+                "sp_getapplock: invalid @LockMode '{}'",
+                mode
+            )));
+        }
+    }
+
+    Ok(QueryResult {
+        return_status: Some(0),
+        is_procedure: true,
+        ..Default::default()
+    })
+}
+
+pub(crate) fn execute_sp_releaseapplock(
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    exec: &mut ScriptExecutor<'_>,
+) -> Result<QueryResult, DbError> {
+    let mut resource: Option<String> = None;
+    for (idx, arg) in stmt.args.iter().enumerate() {
+        let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+        if let Some(ref name) = arg.name {
+            if name.trim_start_matches('@').eq_ignore_ascii_case("resource") {
+                resource = Some(val.to_string_value());
+            }
+        } else if idx == 0 && resource.is_none() {
+            resource = Some(val.to_string_value());
+        }
+    }
+    if resource.as_deref().is_none_or(|r| r.is_empty()) {
+        return Err(DbError::Execution(
+            "sp_releaseapplock: @Resource is required".into(),
+        ));
+    }
+    Ok(QueryResult {
+        return_status: Some(0),
+        is_procedure: true,
+        ..Default::default()
+    })
+}

@@ -244,6 +244,30 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     return parse_create_sequence(parser);
                 }
+                if parser.at_keyword(Keyword::Partition)
+                    || parser.at_keyword(Keyword::Statistics)
+                    || parser.at_keyword(Keyword::User)
+                    || parser.at_keyword(Keyword::Column)
+                    || matches!(
+                        parser.peek(),
+                        Some(Token::Identifier(id))
+                            if id.eq_ignore_ascii_case("LOGIN")
+                                || id.eq_ignore_ascii_case("ROLE")
+                                || id.eq_ignore_ascii_case("FULLTEXT")
+                                || id.eq_ignore_ascii_case("MASTER")
+                                || id.eq_ignore_ascii_case("CERTIFICATE")
+                                || id.eq_ignore_ascii_case("SYMMETRIC")
+                                || id.eq_ignore_ascii_case("ASYMMETRIC")
+                                || id.eq_ignore_ascii_case("SECURITY")
+                                || id.eq_ignore_ascii_case("XML")
+                    )
+                {
+                    let _ = parser.next();
+                    statements::alter::skip_ddl_tail(parser);
+                    return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                        Vec::new(),
+                    )));
+                }
                 Ok(Statement::Ddl(DdlStatement::Create(Box::new(
                     parse_create(parser)?,
                 ))))

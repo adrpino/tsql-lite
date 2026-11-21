@@ -217,14 +217,14 @@ fn test_sp_add_job_unsupported() {
 }
 
 #[test]
-fn test_create_partition_function_unsupported() {
+fn test_create_partition_function_accepted() {
     let mut engine = Engine::new();
     assert!(
-        try_exec(
+        !try_exec(
             &mut engine,
             "CREATE PARTITION FUNCTION pf(int) AS RANGE LEFT FOR VALUES (1, 100, 1000)"
         ),
-        "CREATE PARTITION FUNCTION should fail"
+        "CREATE PARTITION FUNCTION should be accepted"
     );
 }
 
@@ -238,11 +238,11 @@ fn test_create_message_type_unsupported() {
 }
 
 #[test]
-fn test_create_certificate_unsupported() {
+fn test_create_certificate_accepted() {
     let mut engine = Engine::new();
     assert!(
-        try_exec(&mut engine, "CREATE CERTIFICATE my_cert FROM FILE = 'cert.cer'"),
-        "CREATE CERTIFICATE should fail"
+        !try_exec(&mut engine, "CREATE CERTIFICATE my_cert FROM FILE = 'cert.cer'"),
+        "CREATE CERTIFICATE should be accepted"
     );
 }
 

@@ -3,6 +3,60 @@ use crate::parser::error::{Expected, ParseResult};
 use crate::parser::state::Parser;
 use crate::parser::token::Keyword;
 
+/// Skips remaining tokens of an administrative/storage/security DDL statement up
+/// to the next statement boundary (`;`, `GO`, or top-level statement starter at
+/// parenthesis depth 0).
+pub(crate) fn skip_ddl_tail(parser: &mut Parser) {
+    let mut depth = 0usize;
+    while let Some(tok) = parser.peek() {
+        if depth == 0
+            && matches!(
+                tok,
+                Token::Semicolon
+                    | Token::Go
+                    | Token::Keyword(
+                        Keyword::Create
+                            | Keyword::Alter
+                            | Keyword::Drop
+                            | Keyword::Select
+                            | Keyword::Insert
+                            | Keyword::Update
+                            | Keyword::Delete
+                            | Keyword::Declare
+                            | Keyword::Set
+                            | Keyword::If
+                            | Keyword::Else
+                            | Keyword::End
+                            | Keyword::Begin
+                            | Keyword::Return
+                            | Keyword::Exec
+                            | Keyword::Execute
+                            | Keyword::Print
+                            | Keyword::While
+                            | Keyword::Merge
+                            | Keyword::Use
+                            | Keyword::Truncate
+                    )
+            )
+            || matches!(
+                tok,
+                Token::Identifier(id)
+                    if id.eq_ignore_ascii_case("GRANT")
+                        || id.eq_ignore_ascii_case("DENY")
+                        || id.eq_ignore_ascii_case("REVOKE")
+            )
+        {
+            break;
+        }
+        match parser.next() {
+            Some(Token::LParen) => depth += 1,
+            Some(Token::RParen) => depth = depth.saturating_sub(1),
+            None => break,
+            _ => {}
+        }
+    }
+}
+
 pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
     if parser.at_keyword(Keyword::Table) {
         let _ = parser.next();
@@ -41,19 +95,44 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         }
         if parser.at_keyword(Keyword::Add) {
             let _ = parser.next();
-            if parser.at_keyword(Keyword::Constraint) {
-                let _ = parser.next();
-                let constraint = super::ddl::parse_alter_table_add_constraint(parser)?;
+            let parse_add_item = |p: &mut Parser| -> ParseResult<AlterTableAction> {
+                if p.at_keyword(Keyword::Constraint) {
+                    let _ = p.next();
+                    let constraint = super::ddl::parse_alter_table_add_constraint(p)?;
+                    Ok(AlterTableAction::AddConstraint(constraint))
+                } else if p.at_keyword(Keyword::Primary)
+                    || p.at_keyword(Keyword::Unique)
+                    || p.at_keyword(Keyword::Foreign)
+                    || p.at_keyword(Keyword::Check)
+                    || p.at_keyword(Keyword::Default)
+                {
+                    let constraint = super::ddl::parse_table_constraint(p)?;
+                    Ok(AlterTableAction::AddConstraint(constraint))
+                } else {
+                    let col = super::ddl::parse_column_def(p)?;
+                    Ok(AlterTableAction::AddColumn(col))
+                }
+            };
+            let first = parse_add_item(parser)?;
+            if !matches!(parser.peek(), Some(Token::Comma)) {
                 Ok(Statement::Ddl(DdlStatement::AlterTable {
                     table,
-                    action: AlterTableAction::AddConstraint(constraint),
+                    action: first,
                 }))
             } else {
-                let col = super::ddl::parse_column_def(parser)?;
-                Ok(Statement::Ddl(DdlStatement::AlterTable {
-                    table,
-                    action: AlterTableAction::AddColumn(col),
-                }))
+                let mut stmts = vec![Statement::Ddl(DdlStatement::AlterTable {
+                    table: table.clone(),
+                    action: first,
+                })];
+                while matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                    let next_action = parse_add_item(parser)?;
+                    stmts.push(Statement::Ddl(DdlStatement::AlterTable {
+                        table: table.clone(),
+                        action: next_action,
+                    }));
+                }
+                Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
             }
         } else if parser.at_keyword(Keyword::Alter) {
             let _ = parser.next();
@@ -108,8 +187,25 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             } else {
                 parser.backtrack(Expected::Description("column or constraint"))
             }
+        } else if parser.at_keyword(Keyword::Set) {
+            // Standard SQL Server table option clauses:
+            // ALTER TABLE [t] SET (SYSTEM_VERSIONING = ON/OFF (...), LOCK_ESCALATION = ...)
+            let _ = parser.next();
+            parser.expect_lparen()?;
+            let mut depth = 1usize;
+            while depth > 0 {
+                match parser.next() {
+                    Some(Token::LParen) => depth += 1,
+                    Some(Token::RParen) => depth -= 1,
+                    Some(_) => {}
+                    None => return parser.backtrack(Expected::Description(")")),
+                }
+            }
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
         } else {
-            parser.backtrack(Expected::Description("add or drop"))
+            parser.backtrack(Expected::Description("add, alter, drop, or set"))
         }
     } else if parser.at_keyword(Keyword::Procedure) || parser.at_keyword(Keyword::Proc) {
         let _ = parser.next();
@@ -191,6 +287,69 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         } else {
             parser.backtrack(Expected::Description("SCHEME or FUNCTION"))
         }
+    } else if parser.at_keyword(Keyword::Database) {
+        let saved = parser.save();
+        let _ = parser.next();
+        // Database name (or CURRENT)
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+        ) {
+            let _ = parser.next();
+        }
+        // Support storage clauses: ADD FILEGROUP / ADD FILE / MODIFY FILE / REMOVE FILE
+        if parser.at_keyword(Keyword::Add)
+            || matches!(
+                parser.peek(),
+                Some(Token::Identifier(id))
+                    if id.eq_ignore_ascii_case("MODIFY") || id.eq_ignore_ascii_case("REMOVE")
+            )
+        {
+            let _ = parser.next();
+            skip_ddl_tail(parser);
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        } else {
+            parser.restore(saved);
+            parser.backtrack(Expected::Description("ALTER DATABASE ADD/MODIFY/REMOVE"))
+        }
+    } else if parser.at_keyword(Keyword::User)
+        || parser.at_keyword(Keyword::Schema)
+        || parser.at_keyword(Keyword::Index)
+        || matches!(
+            parser.peek(),
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("ROLE")
+                    || id.eq_ignore_ascii_case("LOGIN")
+                    || id.eq_ignore_ascii_case("FULLTEXT")
+                    || id.eq_ignore_ascii_case("SECURITY")
+                    || id.eq_ignore_ascii_case("CERTIFICATE")
+                    || id.eq_ignore_ascii_case("SYMMETRIC")
+                    || id.eq_ignore_ascii_case("ASYMMETRIC")
+                    || id.eq_ignore_ascii_case("MASTER")
+        )
+    {
+        let _ = parser.next();
+        // Consume target name and optional verb (`ADD`, `DROP`, `SET`, `WITH`, `REBUILD`, etc.)
+        // so subclauses like `ALTER ROLE [r] DROP MEMBER [u]` do not stop at `DROP`.
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+        ) {
+            let _ = super::parse_multipart_name(parser);
+        }
+        if parser.at_keyword(Keyword::Drop)
+            || parser.at_keyword(Keyword::Add)
+            || parser.at_keyword(Keyword::Set)
+            || parser.at_keyword(Keyword::With)
+        {
+            let _ = parser.next();
+        }
+        skip_ddl_tail(parser);
+        Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+            Vec::new(),
+        )))
     } else {
         parser.backtrack(Expected::Description("table, procedure, or partition"))
     }

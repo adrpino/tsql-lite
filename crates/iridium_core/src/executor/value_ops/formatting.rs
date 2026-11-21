@@ -201,6 +201,16 @@ fn parse_date_string(v: &str, dateformat: &str) -> Result<NaiveDate, ()> {
             };
             NaiveDate::parse_from_str(v, fmt)
         })
+        .or_else(|_| {
+            if v.len() == 4 && v.bytes().all(|b| b.is_ascii_digit()) {
+                v.parse::<i32>()
+                    .ok()
+                    .and_then(|y| NaiveDate::from_ymd_opt(y, 1, 1))
+                    .ok_or(())
+            } else {
+                Err(())
+            }
+        })
         .map_err(|_| ())
 }
 

@@ -1613,3 +1613,37 @@ fn wave11b_rowcount_insert_skips_identity_select_into_union_distinct_and_datetim
     let r4 = query(&mut e, "SELECT CAST(CAST('1900-01-02 12:00:00' AS DATETIME) AS FLOAT)");
     assert_eq!(r4.rows[0][0].to_f64(), Some(1.5));
 }
+
+#[test]
+fn trigger_exposes_empty_inserted_on_delete_year_only_date_and_paren_insert_select() {
+    let mut e = Engine::new();
+
+    // 1. Trigger on DELETE still exposes empty INSERTED pseudo-table + 4-digit year string '9999'
+    exec(&mut e, "CREATE TABLE dbo.tr_src (id INT, name VARCHAR(20))");
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.tr_audit (id INT, act CHAR(1), end_dt DATETIME)",
+    );
+    exec(
+        &mut e,
+        "CREATE TRIGGER dbo.trg_tr_src_audit ON dbo.tr_src AFTER UPDATE, DELETE AS
+         BEGIN
+             IF NOT EXISTS (SELECT 1 FROM INSERTED)
+                 INSERT INTO dbo.tr_audit (id, act, end_dt)
+                 SELECT id, 'D', CAST('9999' AS DATETIME) FROM DELETED;
+         END",
+    );
+    exec(&mut e, "INSERT INTO dbo.tr_src VALUES (1, 'one')");
+    exec(&mut e, "DELETE FROM dbo.tr_src WHERE id = 1");
+    let r1 = query(&mut e, "SELECT id, act, end_dt FROM dbo.tr_audit");
+    assert_eq!(r1.rows.len(), 1);
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][1].to_string_value().trim(), "D");
+    assert_eq!(r1.rows[0][2].to_string_value(), "9999-01-01 00:00:00");
+
+    // 2. Parenthesized INSERT INTO tbl (SELECT ...)
+    exec(&mut e, "CREATE TABLE #p_ins (v INT)");
+    exec(&mut e, "INSERT INTO #p_ins (SELECT 42)");
+    let r2 = query(&mut e, "SELECT v FROM #p_ins");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(42));
+}

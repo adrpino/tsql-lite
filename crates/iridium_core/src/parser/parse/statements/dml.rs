@@ -117,6 +117,22 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
         });
     }
 
+    // Support parenthesized SELECT source: INSERT [INTO] tbl (SELECT ...)
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        let select_stmt = crate::parser::parse::statements::query::parse_select(parser)?;
+        parser.expect_rparen()?;
+        crate::parser::parse::statements::query::skip_query_option_clause(parser)?;
+        return Ok(InsertStmt {
+            table,
+            columns,
+            source: InsertSource::Select(Box::new(select_stmt)),
+            output,
+            output_into,
+            output_into_columns,
+        });
+    }
+
     let k = match parser.next() {
         Some(Token::Keyword(k)) => *k,
         _ => return parser.backtrack(Expected::Description("VALUES, SELECT, or EXEC")),

@@ -251,8 +251,29 @@ pub(crate) fn eval_exists(
     clock: &dyn Clock,
 ) -> Result<Value, DbError> {
     let mut sub_ctx = ctx.with_outer_row(row.to_vec());
-    let query_result = execute_subquery_select(stmt, &mut sub_ctx, catalog, storage, clock)?;
-    let exists = !query_result.rows.is_empty();
+    let exists = if stmt.group_by.is_empty()
+        && stmt.having.is_none()
+        && stmt.set_op.is_none()
+        && stmt.for_xml.is_none()
+        && stmt.offset.is_none()
+        && stmt.fetch.is_none()
+        && stmt.top.is_none()
+    {
+        // Short-circuit on the first matching row without materializing the full subquery.
+        let qe = QueryExecutor {
+            catalog,
+            storage,
+            clock,
+        };
+        let query = RelationalQuery::from(stmt.clone());
+        let mut src = crate::executor::query::source::execute_source(&qe, &query, &mut sub_ctx)?;
+        src.iter
+            .next_row(&mut sub_ctx, catalog, storage, clock)?
+            .is_some()
+    } else {
+        let query_result = execute_subquery_select(stmt, &mut sub_ctx, catalog, storage, clock)?;
+        !query_result.rows.is_empty()
+    };
     Ok(Value::Bit(if negated { !exists } else { exists }))
 }
 

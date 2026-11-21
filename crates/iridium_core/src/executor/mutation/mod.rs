@@ -71,55 +71,54 @@ impl<'a> MutationExecutor<'a> {
 
                 let dbo_schema_id = self.catalog.get_schema_id("dbo").unwrap_or(1);
 
-                let mut ins_physical = None;
-                if !inserted_rows.is_empty() {
-                    let ins_name = format!("__inserted_{}", uuid::Uuid::new_v4().simple());
-                    let table_id = self.catalog.alloc_table_id();
-                    let ins_table = crate::catalog::TableDef {
-                        id: table_id,
-                        schema_id: dbo_schema_id,
-                        schema_name: "dbo".to_string(),
-                        name: ins_name.clone(),
-                        columns: table.columns.clone(),
-                        check_constraints: vec![],
-                        foreign_keys: vec![],
-                    };
-                    self.catalog.register_table(ins_table);
-                    self.storage.ensure_table(table_id)?;
-                    for row in inserted_rows {
-                        self.storage.insert_row(table_id, row.clone())?;
-                    }
-                    trigger_ctx
-                        .session
-                        .temp_map
-                        .insert("INSERTED".to_string(), ins_name.clone());
-                    ins_physical = Some((table_id, ins_name));
-                }
+                let prev_ins = trigger_ctx.session.temp_map.remove("INSERTED");
+                let prev_del = trigger_ctx.session.temp_map.remove("DELETED");
 
-                let mut del_physical = None;
-                if !deleted_rows.is_empty() {
-                    let del_name = format!("__deleted_{}", uuid::Uuid::new_v4().simple());
-                    let table_id = self.catalog.alloc_table_id();
-                    let del_table = crate::catalog::TableDef {
-                        id: table_id,
-                        schema_id: dbo_schema_id,
-                        schema_name: "dbo".to_string(),
-                        name: del_name.clone(),
-                        columns: table.columns.clone(),
-                        check_constraints: vec![],
-                        foreign_keys: vec![],
-                    };
-                    self.catalog.register_table(del_table);
-                    self.storage.ensure_table(table_id)?;
-                    for row in deleted_rows {
-                        self.storage.insert_row(table_id, row.clone())?;
-                    }
-                    trigger_ctx
-                        .session
-                        .temp_map
-                        .insert("DELETED".to_string(), del_name.clone());
-                    del_physical = Some((table_id, del_name));
+                // SQL Server always exposes both INSERTED and DELETED pseudo-tables in
+                // DML triggers (empty when the operation has no rows on that side).
+                let ins_name = format!("__inserted_{}", uuid::Uuid::new_v4().simple());
+                let ins_table_id = self.catalog.alloc_table_id();
+                let ins_table = crate::catalog::TableDef {
+                    id: ins_table_id,
+                    schema_id: dbo_schema_id,
+                    schema_name: "dbo".to_string(),
+                    name: ins_name.clone(),
+                    columns: table.columns.clone(),
+                    check_constraints: vec![],
+                    foreign_keys: vec![],
+                };
+                self.catalog.register_table(ins_table);
+                self.storage.ensure_table(ins_table_id)?;
+                for row in inserted_rows {
+                    self.storage.insert_row(ins_table_id, row.clone())?;
                 }
+                trigger_ctx
+                    .session
+                    .temp_map
+                    .insert("INSERTED".to_string(), ins_name.clone());
+                let ins_physical = Some((ins_table_id, ins_name));
+
+                let del_name = format!("__deleted_{}", uuid::Uuid::new_v4().simple());
+                let del_table_id = self.catalog.alloc_table_id();
+                let del_table = crate::catalog::TableDef {
+                    id: del_table_id,
+                    schema_id: dbo_schema_id,
+                    schema_name: "dbo".to_string(),
+                    name: del_name.clone(),
+                    columns: table.columns.clone(),
+                    check_constraints: vec![],
+                    foreign_keys: vec![],
+                };
+                self.catalog.register_table(del_table);
+                self.storage.ensure_table(del_table_id)?;
+                for row in deleted_rows {
+                    self.storage.insert_row(del_table_id, row.clone())?;
+                }
+                trigger_ctx
+                    .session
+                    .temp_map
+                    .insert("DELETED".to_string(), del_name.clone());
+                let del_physical = Some((del_table_id, del_name));
 
                 let mut script_executor = super::script::ScriptExecutor {
                     catalog: self.catalog,
@@ -138,7 +137,15 @@ impl<'a> MutationExecutor<'a> {
                 }
                 trigger_ctx.pop_module();
 
-                // Cleanup
+                // Cleanup and restore any outer trigger pseudo-tables
+                trigger_ctx.session.temp_map.remove("INSERTED");
+                trigger_ctx.session.temp_map.remove("DELETED");
+                if let Some(p) = prev_ins {
+                    trigger_ctx.session.temp_map.insert("INSERTED".to_string(), p);
+                }
+                if let Some(p) = prev_del {
+                    trigger_ctx.session.temp_map.insert("DELETED".to_string(), p);
+                }
                 if let Some((id, _name)) = ins_physical {
                     self.catalog.unregister_table_by_id(id);
                     let _ = self.storage.clear_table(id);

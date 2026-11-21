@@ -10,7 +10,7 @@ use super::evaluator::eval_expr;
 use super::model::ContextTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum JoinSide {
+pub(crate) enum JoinSide {
     Left,
     Right,
     Both,
@@ -26,7 +26,7 @@ fn combine_sides(s1: JoinSide, s2: JoinSide) -> JoinSide {
     }
 }
 
-fn get_expr_side(
+pub(crate) fn get_expr_side(
     expr: &Expr,
     left_shape: &[ContextTable],
     right_shape: &[ContextTable],

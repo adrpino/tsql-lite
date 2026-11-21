@@ -520,6 +520,13 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                 },
             }))
         }
+        Some(Token::Identifier(id))
+            if id.eq_ignore_ascii_case("GRANT")
+                || id.eq_ignore_ascii_case("REVOKE")
+                || id.eq_ignore_ascii_case("DENY") =>
+        {
+            parse_dcl_permission_stmt(parser)
+        }
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WAITFOR") => {
             let _ = parser.next();
             // WAITFOR DELAY <expr> | WAITFOR TIME <expr>
@@ -535,6 +542,109 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
         }
         _ => parser.backtrack(Expected::Description("statement keyword")),
     }
+}
+
+fn is_to_token(tok: Option<&Token>) -> bool {
+    matches!(tok, Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TO"))
+}
+
+fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
+    let _ = parser.next(); // GRANT | REVOKE | DENY
+    // Consume optional GRANT OPTION FOR (on REVOKE) and permission list until ON / TO / FROM
+    while !parser.is_empty()
+        && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
+        && !parser.at_keyword(Keyword::On)
+        && !is_to_token(parser.peek())
+        && !parser.at_keyword(Keyword::From)
+    {
+        if matches!(parser.peek(), Some(Token::LParen)) {
+            let _ = parser.next();
+            let mut depth = 1usize;
+            while depth > 0 {
+                match parser.next() {
+                    Some(Token::LParen) => depth += 1,
+                    Some(Token::RParen) => depth -= 1,
+                    Some(_) => {}
+                    None => return parser.backtrack(Expected::Description(")")),
+                }
+            }
+        } else {
+            let _ = parser.next();
+        }
+    }
+    // Optional ON [class::]object[(col, ...)]
+    if parser.at_keyword(Keyword::On) {
+        let _ = parser.next();
+        // Consume optional securable class prefix (e.g. OBJECT::, SCHEMA::, TYPE::)
+        if matches!(parser.peek(), Some(Token::Identifier(_)) | Some(Token::Keyword(_))) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Operator(op)) if op == "::") {
+                let _ = parser.next();
+            } else {
+                parser.restore(saved);
+            }
+        }
+        if !is_to_token(parser.peek()) && !parser.at_keyword(Keyword::From) {
+            let _ = multipart_name(parser)?;
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match parser.next() {
+                        Some(Token::LParen) => depth += 1,
+                        Some(Token::RParen) => depth -= 1,
+                        Some(_) => {}
+                        None => return parser.backtrack(Expected::Description(")")),
+                    }
+                }
+            }
+        }
+    }
+    // TO | FROM <principal>, ...
+    if is_to_token(parser.peek()) || parser.at_keyword(Keyword::From) {
+        let _ = parser.next();
+        loop {
+            match parser.next() {
+                Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+                _ => return parser.backtrack(Expected::Description("principal name")),
+            }
+            if matches!(parser.peek(), Some(Token::Comma)) {
+                let _ = parser.next();
+            } else {
+                break;
+            }
+        }
+    }
+    // Optional trailing WITH GRANT OPTION / CASCADE / AS <principal>
+    if parser.at_keyword(Keyword::With) {
+        let saved = parser.save();
+        let _ = parser.next();
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GRANT")
+        ) {
+            let _ = parser.next();
+            if matches!(
+                parser.peek(),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("OPTION")
+            ) {
+                let _ = parser.next();
+            }
+        } else {
+            parser.restore(saved);
+        }
+    }
+    if parser.at_keyword(Keyword::Cascade) {
+        let _ = parser.next();
+    }
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+        let _ = parser.next();
+    }
+    Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+        Vec::new(),
+    )))
 }
 
 fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {

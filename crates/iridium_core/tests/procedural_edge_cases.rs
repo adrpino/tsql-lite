@@ -2047,3 +2047,249 @@ fn grouped_window_with_sum_select_into_varchar_widen_composite_fk_null_datefromp
         "<Item Status=\"5\"><Msg>hello</Msg></Item>"
     );
 }
+
+#[test]
+fn tsql_statement_and_lexer_extensions() {
+    let mut e = Engine::new();
+    let exec_batch = |eng: &mut Engine, sql: &str| {
+        let stmts = iridium_core::parse_batch(sql).expect(sql);
+        eng.execute_batch(stmts).expect(sql);
+    };
+
+    // 1. ASCII control character (0x01) treated as whitespace by lexer
+    let r1 = query(&mut e, "SELECT (42\x01) AS answer");
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(42));
+
+    // 2. Compound assignment operators in SET @var += / -= / *= / /= / %=
+    let stmts2 = iridium_core::parse_batch(
+        "DECLARE @s NVARCHAR(50) = N'hello', @n INT = 10;
+         SET @s += N' world'; SET @n += 5; SET @n -= 3; SET @n *= 2; SET @n /= 4;
+         SELECT @s, @n;",
+    )
+    .expect("parse compound set");
+    let r2 = e.execute_batch(stmts2).expect("exec compound set").unwrap();
+    assert_eq!(r2.rows[0][0].to_string_value(), "hello world");
+    assert_eq!(r2.rows[0][1].to_integer_i64(), Some(6));
+
+    // 3. Cursor variable assignment (SET @c = CURSOR FAST_FORWARD FOR SELECT ...) + OPEN/FETCH/CLOSE/DEALLOCATE @c
+    exec_batch(
+        &mut e,
+        "CREATE TABLE #cur_src (v INT); INSERT INTO #cur_src VALUES (10), (20), (30);",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_cursor_var AS
+         BEGIN
+             DECLARE @cur CURSOR;
+             DECLARE @val INT, @sum INT = 0;
+             SET @cur = CURSOR FAST_FORWARD FOR SELECT v FROM #cur_src ORDER BY v;
+             OPEN @cur;
+             FETCH NEXT FROM @cur INTO @val;
+             WHILE @@FETCH_STATUS = 0
+             BEGIN
+                 SET @sum += @val;
+                 FETCH NEXT FROM @cur INTO @val;
+             END
+             CLOSE @cur;
+             DEALLOCATE @cur;
+             SELECT @sum AS total;
+         END",
+    );
+    let r3 = query(&mut e, "EXEC dbo.p_cursor_var");
+    assert_eq!(r3.rows[0][0].to_integer_i64(), Some(60));
+
+    // 4. Multi-table DROP TABLE a, b, c
+    exec_batch(
+        &mut e,
+        "CREATE TABLE #d1 (id INT); CREATE TABLE #d2 (id INT); CREATE TABLE #d3 (id INT);",
+    );
+    exec(&mut e, "DROP TABLE #d1, #d2, #d3;");
+    assert!(e.query("SELECT * FROM #d1").is_err());
+    assert!(e.query("SELECT * FROM #d2").is_err());
+    assert!(e.query("SELECT * FROM #d3").is_err());
+
+    // 5. GRANT / REVOKE / DENY statements in a batch
+    exec_batch(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_grant_test AS BEGIN SELECT 1 AS ok; END;
+         GRANT EXECUTE ON dbo.p_grant_test TO role_a, role_b;
+         REVOKE EXECUTE ON dbo.p_grant_test FROM role_b;
+         DENY SELECT ON OBJECT::dbo.p_grant_test TO role_c;",
+    );
+    let r5 = query(&mut e, "EXEC dbo.p_grant_test");
+    assert_eq!(r5.rows[0][0].to_integer_i64(), Some(1));
+
+    // 6. Procedure body starting directly with BEGIN TRAN ... COMMIT (no outer BEGIN ... END)
+    exec(&mut e, "CREATE TABLE dbo.t_bt (id INT);");
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_begin_tran @id INT AS
+         BEGIN TRAN;
+             INSERT INTO dbo.t_bt VALUES (@id);
+         COMMIT;",
+    );
+    exec_batch(&mut e, "EXEC dbo.p_begin_tran 7;");
+    let r6 = query(&mut e, "SELECT id FROM dbo.t_bt");
+    assert_eq!(r6.rows[0][0].to_integer_i64(), Some(7));
+
+    // 7. EXEC ... WITH RECOMPILE / sp_executesql ... WITH RECOMPILE
+    exec_batch(
+        &mut e,
+        "DECLARE @dyn NVARCHAR(100) = N'SELECT 99 AS n'; EXEC sp_executesql @dyn WITH RECOMPILE;",
+    );
+
+    // 8. INSERT INTO tbl EXEC(@sql)
+    exec(&mut e, "CREATE TABLE #ins_dyn (v INT);");
+    exec_batch(
+        &mut e,
+        "DECLARE @q NVARCHAR(100) = N'SELECT 11 UNION ALL SELECT 22'; INSERT INTO #ins_dyn EXEC(@q);",
+    );
+    let r8 = query(&mut e, "SELECT SUM(v) FROM #ins_dyn");
+    assert_eq!(r8.rows[0][0].to_integer_i64(), Some(33));
+
+    // 9. ALTER PARTITION SCHEME / ALTER PARTITION FUNCTION
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_part_maint AS
+         BEGIN
+             DECLARE @dt DATETIME = '2026-01-01';
+             ALTER PARTITION SCHEME [ps_ts] NEXT USED [PRIMARY];
+             ALTER PARTITION FUNCTION [pf_ts] () SPLIT RANGE (@dt);
+             ALTER PARTITION FUNCTION [pf_ts] () MERGE RANGE (@dt);
+         END",
+    );
+    exec_batch(&mut e, "EXEC dbo.p_part_maint;");
+
+    // 10. Inline column-level INDEX in CREATE TABLE
+    exec(
+        &mut e,
+        "CREATE TABLE #inline_ix (
+             id INT IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+             code VARCHAR(50) INDEX IX_inline_code NONCLUSTERED,
+             label VARCHAR(50) INDEX IX_inline_label
+         );",
+    );
+    exec(&mut e, "INSERT INTO #inline_ix (code, label) VALUES ('A1', 'first');");
+    let r10 = query(&mut e, "SELECT code, label FROM #inline_ix");
+    assert_eq!(r10.rows[0][0].to_string_value(), "A1");
+}
+
+#[test]
+fn tsql_query_grammar_extensions() {
+    let mut e = Engine::new();
+    let exec_batch = |eng: &mut Engine, sql: &str| {
+        let stmts = iridium_core::parse_batch(sql).expect(sql);
+        eng.execute_batch(stmts).expect(sql);
+    };
+
+    // 1. Leading dot & empty-schema 3-part table references (.[dbo].[tbl] and db..tbl)
+    exec(&mut e, "CREATE TABLE dbo.t_dot (id INT, val VARCHAR(20));");
+    exec(&mut e, "INSERT INTO dbo.t_dot VALUES (1, 'ok');");
+    let r1 = query(&mut e, "SELECT val FROM .[dbo].[t_dot]");
+    assert_eq!(r1.rows[0][0].to_string_value(), "ok");
+    let parsed_empty_schema = iridium_core::parse_batch("SELECT * FROM otherdb..t_dot;");
+    assert!(parsed_empty_schema.is_ok(), "db..tbl should parse");
+
+    // 2. Parenthesized set-operation operands in derived tables and CTEs + double-wrapped derived tables
+    let r2a = query(
+        &mut e,
+        "SELECT SUM(v) FROM ((SELECT 10 AS v) UNION (SELECT 20 AS v)) u",
+    );
+    assert_eq!(r2a.rows[0][0].to_integer_i64(), Some(30));
+
+    let r2b = query(
+        &mut e,
+        "WITH c AS ((SELECT 1 AS k UNION ALL SELECT 2 AS k) INTERSECT (SELECT 2 AS k UNION ALL SELECT 3 AS k))
+         SELECT k FROM c",
+    );
+    assert_eq!(r2b.rows[0][0].to_integer_i64(), Some(2));
+
+    let r2c = query(&mut e, "SELECT x FROM ((SELECT 7 AS x)) AS wrapped");
+    assert_eq!(r2c.rows[0][0].to_integer_i64(), Some(7));
+
+    // 3. ANSI nested JOIN without parentheses: FROM A JOIN B JOIN C ON B.k = C.k ON A.k = B.k
+    exec_batch(
+        &mut e,
+        "CREATE TABLE #ja (id INT, b_id INT);
+         CREATE TABLE #jb (id INT, c_id INT);
+         CREATE TABLE #jc (id INT, label VARCHAR(10));
+         INSERT INTO #ja VALUES (1, 10);
+         INSERT INTO #jb VALUES (10, 100);
+         INSERT INTO #jc VALUES (100, 'hit');",
+    );
+    let r3 = query(
+        &mut e,
+        "SELECT c.label
+         FROM #ja a
+         JOIN #jb b
+         JOIN #jc c
+           ON c.id = b.c_id
+           ON a.b_id = b.id",
+    );
+    assert_eq!(r3.rows[0][0].to_string_value(), "hit");
+
+    // 4. Table-valued method / function with column alias list: CROSS APPLY col.nodes('/M') AS Split(a)
+    let p4 = iridium_core::parse_batch(
+        "SELECT Split.a.value('.', 'VARCHAR(50)') AS token
+         FROM (SELECT CAST('<M>x</M>' AS XML) AS doc) AS A
+         CROSS APPLY doc.nodes('/M') AS Split(a);",
+    );
+    assert!(p4.is_ok(), "CROSS APPLY col.nodes('/M') AS Split(a) should parse: {:?}", p4.err());
+
+    // 5. OPENJSON(...) WITH ([value] NVARCHAR(50) '$.Name', Amt INT '$.Amt') alias (parse + execute)
+    let r5 = query(
+        &mut e,
+        "SELECT j.[value], j.Amt
+         FROM OPENJSON('[{\"Name\":\"alpha\",\"Amt\":42}]')
+         WITH (
+             [value] NVARCHAR(50) '$.Name',
+             Amt     INT          '$.Amt'
+         ) j",
+    );
+    assert_eq!(r5.rows.len(), 1);
+    assert_eq!(r5.rows[0][0].to_string_value(), "alpha");
+    assert_eq!(r5.rows[0][1].to_integer_i64(), Some(42));
+
+    // 6. GROUP BY GROUPING SETS ((a, b), ())
+    let p6 = iridium_core::parse_batch(
+        "SELECT a, b, SUM(v) FROM dbo.sales GROUP BY GROUPING SETS ((a, b), (a), ());",
+    );
+    assert!(p6.is_ok(), "GROUP BY GROUPING SETS should parse: {:?}", p6.err());
+
+    // 7. Qualified column references inside PIVOT
+    exec_batch(
+        &mut e,
+        "CREATE TABLE #piv_src (grp INT, slot INT, val VARCHAR(10));
+         INSERT INTO #piv_src VALUES (1, 1, 'A'), (1, 2, 'B');",
+    );
+    let r7 = query(
+        &mut e,
+        "SELECT grp, [1] AS v1, [2] AS v2
+         FROM (SELECT grp, slot, val FROM #piv_src) AS Src
+         PIVOT (MIN(Src.val) FOR Src.slot IN ([1], [2])) AS Pvt",
+    );
+    assert_eq!(r7.rows[0][1].to_string_value(), "A");
+    assert_eq!(r7.rows[0][2].to_string_value(), "B");
+
+    // 8. MERGE INSERT and UPDATE evaluate computed columns on target table
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.t_merge_comp (
+             k INT NOT NULL,
+             tag UNIQUEIDENTIFIER NULL,
+             tag_pk AS ISNULL(tag, '00000000-0000-0000-0000-000000000000') PERSISTED NOT NULL,
+             hits INT NOT NULL
+         );",
+    );
+    let merge_sql = "MERGE dbo.t_merge_comp AS target
+         USING (SELECT 10 AS k, CAST('11111111-0000-0000-0000-000000000000' AS UNIQUEIDENTIFIER) AS tag) AS src
+         ON target.k = src.k
+            AND target.tag_pk = ISNULL(src.tag, '00000000-0000-0000-0000-000000000000')
+         WHEN MATCHED THEN UPDATE SET target.hits = target.hits + 1
+         WHEN NOT MATCHED THEN INSERT (k, tag, hits) VALUES (src.k, src.tag, 1);";
+    exec(&mut e, merge_sql);
+    exec(&mut e, merge_sql);
+    let r8 = query(&mut e, "SELECT COUNT(*), MAX(hits) FROM dbo.t_merge_comp");
+    assert_eq!(r8.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r8.rows[0][1].to_integer_i64(), Some(2));
+}

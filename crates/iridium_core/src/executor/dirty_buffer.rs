@@ -131,7 +131,7 @@ fn merge_catalog<C: Catalog + Clone>(target: &mut C, source: &C) {
             .find_table(table.schema_or_dbo(), &table.name)
             .is_none()
         {
-            target.register_table(table.clone());
+            target.register_table(table.as_ref().clone());
         }
     }
     // Could also merge routines, triggers, etc. if needed

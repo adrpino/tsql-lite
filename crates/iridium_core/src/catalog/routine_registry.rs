@@ -3,7 +3,7 @@ use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
 impl RoutineRegistry for CatalogImpl {
-    fn get_routines(&self) -> &[RoutineDef] {
+    fn get_routines(&self) -> &[Arc<RoutineDef>] {
         &self.routines
     }
 
@@ -29,7 +29,7 @@ impl RoutineRegistry for CatalogImpl {
             ),
             idx,
         );
-        Arc::make_mut(&mut self.routines).push(routine);
+        Arc::make_mut(&mut self.routines).push(Arc::new(routine));
         Ok(())
     }
 
@@ -39,7 +39,7 @@ impl RoutineRegistry for CatalogImpl {
             normalize_identifier(&routine.name),
         );
         if let Some(&idx) = self.routine_map.get(&key) {
-            Arc::make_mut(&mut self.routines)[idx] = routine;
+            Arc::make_mut(&mut self.routines)[idx] = Arc::new(routine);
             Ok(())
         } else {
             self.create_routine(routine)

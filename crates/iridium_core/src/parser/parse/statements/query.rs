@@ -3,14 +3,75 @@ use crate::parser::error::{Expected, ParseResult};
 use crate::parser::state::Parser;
 use crate::parser::token::Keyword;
 
+fn wrap_parenthesized_set_op(inner: SelectStmt) -> SelectStmt {
+    if inner.set_op.is_none() {
+        return inner;
+    }
+    SelectStmt {
+        distinct: false,
+        top: None,
+        projection: vec![SelectItem {
+            expr: Expr::Wildcard,
+            alias: None,
+        }],
+        into_table: None,
+        from: Some(TableRef {
+            factor: TableFactor::Derived(Box::new(inner)),
+            alias: Some("__paren_sub".to_string()),
+            pivot: None,
+            unpivot: None,
+            hints: Vec::new(),
+        }),
+        joins: Vec::new(),
+        applies: Vec::new(),
+        selection: None,
+        group_by: Vec::new(),
+        having: None,
+        order_by: Vec::new(),
+        offset: None,
+        fetch: None,
+        set_op: None,
+        for_xml: None,
+    }
+}
+
 pub fn parse_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        let mut current = parse_select(parser)?;
+        parser.expect_rparen()?;
+        if matches!(
+            parser.peek(),
+            Some(Token::Keyword(
+                Keyword::Union | Keyword::Intersect | Keyword::Except
+            ))
+        ) {
+            current = wrap_parenthesized_set_op(current);
+            parse_set_op_tail(parser, &mut current)?;
+        }
+        if let Some(for_xml) = parse_for_xml_clause(parser)? {
+            current.for_xml = Some(Box::new(for_xml));
+        }
+        skip_query_option_clause(parser)?;
+        return Ok(current);
+    }
     parser.expect_keyword(Keyword::Select)?;
     parse_select_body(parser)
 }
 
 pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
     let mut current = parse_single_select_body(parser)?;
+    parse_set_op_tail(parser, &mut current)?;
 
+    if let Some(for_xml) = parse_for_xml_clause(parser)? {
+        current.for_xml = Some(Box::new(for_xml));
+    }
+
+    skip_query_option_clause(parser)?;
+    Ok(current)
+}
+
+fn parse_set_op_tail(parser: &mut Parser, current: &mut SelectStmt) -> ParseResult<()> {
     while let Some(Token::Keyword(k)) = parser.peek() {
         let kind = match *k {
             Keyword::Union => {
@@ -35,19 +96,13 @@ pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
 
         let right = parse_single_select(parser)?;
 
-        let mut target = &mut current;
+        let mut target = &mut *current;
         while let Some(ref mut op) = target.set_op {
             target = &mut op.right;
         }
         target.set_op = Some(Box::new(SetOp { kind, right }));
     }
-
-    if let Some(for_xml) = parse_for_xml_clause(parser)? {
-        current.for_xml = Some(Box::new(for_xml));
-    }
-
-    skip_query_option_clause(parser)?;
-    Ok(current)
+    Ok(())
 }
 
 fn parse_for_xml_clause(parser: &mut Parser) -> ParseResult<Option<ForXmlClause>> {
@@ -165,6 +220,12 @@ pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
 }
 
 fn parse_single_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        let stmt = parse_select(parser)?;
+        parser.expect_rparen()?;
+        return Ok(wrap_parenthesized_set_op(stmt));
+    }
     parser.expect_keyword(Keyword::Select)?;
     parse_single_select_body(parser)
 }
@@ -231,10 +292,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         if matches!(parser.peek(), Some(Token::Keyword(Keyword::By))) {
             let _ = parser.next();
         }
-        group_by = crate::parser::parse::expressions::parse_comma_list(
-            parser,
-            crate::parser::parse::expressions::parse_expr,
-        )?;
+        group_by = parse_group_by_items(parser)?;
     }
 
     let mut having = None;
@@ -316,6 +374,93 @@ fn parse_projection(parser: &mut Parser) -> ParseResult<Vec<SelectItem>> {
     Ok(items)
 }
 
+fn starts_with_select_inside_parens(parser: &Parser) -> bool {
+    let mut offset = 0usize;
+    while matches!(parser.peek_at(offset), Some(Token::LParen)) {
+        offset += 1;
+    }
+    matches!(parser.peek_at(offset), Some(Token::Keyword(Keyword::Select)))
+}
+
+fn parse_group_by_items(parser: &mut Parser) -> ParseResult<Vec<Expr>> {
+    let mut exprs = Vec::new();
+    loop {
+        let is_grouping_sets = matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GROUPING")
+        ) && matches!(
+            parser.peek_at(1),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SETS")
+        );
+        let is_rollup_or_cube = matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLLUP") || id.eq_ignore_ascii_case("CUBE")
+        ) && matches!(parser.peek_at(1), Some(Token::LParen));
+
+        if is_grouping_sets {
+            let _ = parser.next(); // GROUPING
+            let _ = parser.next(); // SETS
+            parser.expect_lparen()?;
+            loop {
+                if matches!(parser.peek(), Some(Token::RParen)) {
+                    break;
+                }
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    if !matches!(parser.peek(), Some(Token::RParen)) {
+                        let set_exprs = crate::parser::parse::expressions::parse_comma_list(
+                            parser,
+                            crate::parser::parse::expressions::parse_expr,
+                        )?;
+                        for e in set_exprs {
+                            if !exprs.contains(&e) {
+                                exprs.push(e);
+                            }
+                        }
+                    }
+                    parser.expect_rparen()?;
+                } else {
+                    let e = crate::parser::parse::expressions::parse_expr(parser)?;
+                    if !exprs.contains(&e) {
+                        exprs.push(e);
+                    }
+                }
+                if matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                } else {
+                    break;
+                }
+            }
+            parser.expect_rparen()?;
+        } else if is_rollup_or_cube {
+            let _ = parser.next(); // ROLLUP | CUBE
+            parser.expect_lparen()?;
+            if !matches!(parser.peek(), Some(Token::RParen)) {
+                let set_exprs = crate::parser::parse::expressions::parse_comma_list(
+                    parser,
+                    crate::parser::parse::expressions::parse_expr,
+                )?;
+                for e in set_exprs {
+                    if !exprs.contains(&e) {
+                        exprs.push(e);
+                    }
+                }
+            }
+            parser.expect_rparen()?;
+        } else {
+            let e = crate::parser::parse::expressions::parse_expr(parser)?;
+            exprs.push(e);
+        }
+
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+        } else {
+            break;
+        }
+    }
+    Ok(exprs)
+}
+
 pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
     let (factor, alias, hints) = match parser.peek() {
         Some(Token::LParen) => {
@@ -350,7 +495,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     Some(alias),
                     Vec::new(),
                 )
-            } else if parser.at_keyword(Keyword::Select) {
+            } else if starts_with_select_inside_parens(parser) {
                 let mut subquery = Box::new(parse_select(parser)?);
                 parser.expect_rparen()?;
                 let alias = parse_required_alias(parser)?;
@@ -394,7 +539,10 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                 )
             }
         }
-        Some(Token::Identifier(_)) | Some(Token::Keyword(_)) | Some(Token::Variable(_)) => {
+        Some(Token::Identifier(_))
+        | Some(Token::Keyword(_))
+        | Some(Token::Variable(_))
+        | Some(Token::Dot) => {
             let name = parse_multipart_name(parser)?;
             if matches!(parser.peek(), Some(Token::LParen)) {
                 let _ = parser.next();
@@ -407,11 +555,68 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     )?
                 };
                 parser.expect_rparen()?;
+                // Optional OPENJSON(...) WITH (col type ['$.path'] [AS JSON], ...) schema
+                let mut with_schema = Vec::new();
+                if parser.at_keyword(Keyword::With)
+                    && matches!(parser.peek_at(1), Some(Token::LParen))
+                {
+                    let _ = parser.next(); // WITH
+                    let _ = parser.next(); // (
+                    with_schema =
+                        crate::parser::parse::expressions::parse_comma_list(parser, |p| {
+                            let col_name = match p.next() {
+                                Some(Token::Identifier(id)) => id.clone(),
+                                Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
+                                _ => return p.backtrack(Expected::Description("column name")),
+                            };
+                            let data_type =
+                                crate::parser::parse::expressions::parse_data_type(p)?;
+                            let path = match p.peek() {
+                                Some(Token::String(s)) | Some(Token::NString(s)) => {
+                                    let s = s.clone();
+                                    let _ = p.next();
+                                    Some(s)
+                                }
+                                _ => None,
+                            };
+                            let mut as_json = false;
+                            if p.at_keyword(Keyword::As)
+                                && matches!(
+                                    p.peek_at(1),
+                                    Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("JSON")
+                                )
+                            {
+                                let _ = p.next();
+                                let _ = p.next();
+                                as_json = true;
+                            }
+                            Ok(OpenJsonColumn {
+                                name: col_name,
+                                data_type,
+                                path,
+                                as_json,
+                            })
+                        })?;
+                    parser.expect_rparen()?;
+                }
                 let alias = parse_optional_alias(parser);
+                // Optional table-valued function/method column alias list: AS Split(a, b)
+                if alias.is_some() && matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    let _ = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
+                        match p.next() {
+                            Some(Token::Identifier(id)) => Ok(id.clone()),
+                            Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
+                            _ => p.backtrack(Expected::Description("column name")),
+                        }
+                    })?;
+                    parser.expect_rparen()?;
+                }
                 let factor = TableFactor::TableValuedFunction {
                     name,
                     args,
                     alias: alias.clone(),
+                    with_schema,
                 };
                 return Ok(TableRef {
                     factor,
@@ -471,18 +676,14 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     _ => return parser.backtrack(Expected::Description("identifier")),
                 };
                 parser.expect_lparen()?;
-                let aggregate_col = match parser.next() {
-                    Some(Token::Identifier(id)) => id.clone(),
-                    Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
-                    _ => return parser.backtrack(Expected::Description("identifier")),
-                };
+                let aggregate_col = parse_multipart_name(parser)?
+                    .pop()
+                    .ok_or_else(|| parser.error(Expected::Description("identifier")))?;
                 parser.expect_rparen()?;
                 parser.expect_keyword(Keyword::For)?;
-                let pivot_col = match parser.next() {
-                    Some(Token::Identifier(id)) => id.clone(),
-                    Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
-                    _ => return parser.backtrack(Expected::Description("identifier")),
-                };
+                let pivot_col = parse_multipart_name(parser)?
+                    .pop()
+                    .ok_or_else(|| parser.error(Expected::Description("identifier")))?;
                 parser.expect_keyword(Keyword::In)?;
                 parser.expect_lparen()?;
                 let pivot_values =
@@ -508,17 +709,13 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
             Some(Token::Keyword(Keyword::Unpivot)) => {
                 let _ = parser.next();
                 parser.expect_lparen()?;
-                let value_col = match parser.next() {
-                    Some(Token::Identifier(id)) => id.clone(),
-                    Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
-                    _ => return parser.backtrack(Expected::Description("identifier")),
-                };
+                let value_col = parse_multipart_name(parser)?
+                    .pop()
+                    .ok_or_else(|| parser.error(Expected::Description("identifier")))?;
                 parser.expect_keyword(Keyword::For)?;
-                let pivot_col = match parser.next() {
-                    Some(Token::Identifier(id)) => id.clone(),
-                    Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
-                    _ => return parser.backtrack(Expected::Description("identifier")),
-                };
+                let pivot_col = parse_multipart_name(parser)?
+                    .pop()
+                    .ok_or_else(|| parser.error(Expected::Description("identifier")))?;
                 parser.expect_keyword(Keyword::In)?;
                 parser.expect_lparen()?;
                 let column_list =
@@ -586,8 +783,28 @@ pub fn parse_join_clause(parser: &mut Parser) -> ParseResult<Option<JoinClause>>
         _ => return Ok(None),
     };
 
-    let table = parse_table_ref(parser)?;
+    let mut table = parse_table_ref(parser)?;
     let on = if join_type != JoinType::Cross {
+        // ANSI nested join without parentheses: FROM A JOIN B JOIN C ON B.k = C.k ON A.k = B.k
+        let mut nested_joins = Vec::new();
+        while !parser.at_keyword(Keyword::On) {
+            match parse_join_clause(parser)? {
+                Some(inner) => nested_joins.push(inner),
+                None => break,
+            }
+        }
+        if !nested_joins.is_empty() {
+            table = TableRef {
+                factor: TableFactor::JoinedGroup {
+                    base: Box::new(table),
+                    joins: nested_joins,
+                },
+                alias: None,
+                pivot: None,
+                unpivot: None,
+                hints: Vec::new(),
+            };
+        }
         parser.expect_keyword(Keyword::On)?;
         Some(crate::parser::parse::expressions::parse_expr(parser)?)
     } else {
@@ -711,6 +928,10 @@ pub fn parse_order_by_expr(parser: &mut Parser) -> ParseResult<OrderByExpr> {
 
 pub fn parse_multipart_name(parser: &mut Parser) -> ParseResult<Vec<String>> {
     let mut parts = Vec::new();
+    // Optional leading dot (e.g. `.[dbo].[tbl]` meaning current database)
+    if matches!(parser.peek(), Some(Token::Dot)) {
+        let _ = parser.next();
+    }
     if let Some(tok) = parser.next() {
         match tok {
             Token::Identifier(id) | Token::Variable(id) => parts.push(id.clone()),
@@ -722,6 +943,11 @@ pub fn parse_multipart_name(parser: &mut Parser) -> ParseResult<Vec<String>> {
     }
     while matches!(parser.peek(), Some(Token::Dot)) {
         let _ = parser.next();
+        // Support omitted schema in 3-part names (e.g. `db..tbl`)
+        if matches!(parser.peek(), Some(Token::Dot)) {
+            parts.push(String::new());
+            continue;
+        }
         if let Some(tok) = parser.next() {
             match tok {
                 Token::Identifier(id) | Token::Variable(id) => parts.push(id.clone()),
@@ -736,6 +962,7 @@ pub fn parse_multipart_name(parser: &mut Parser) -> ParseResult<Vec<String>> {
 }
 
 pub fn parse_object_name(mut parts: Vec<String>) -> ObjectName {
+    let non_empty = |s: String| if s.is_empty() { None } else { Some(s) };
     match parts.len() {
         0 => ObjectName {
             database: None,
@@ -749,7 +976,7 @@ pub fn parse_object_name(mut parts: Vec<String>) -> ObjectName {
         },
         2 => {
             let name = parts.pop().unwrap_or_default();
-            let schema = Some(parts.pop().unwrap_or_default());
+            let schema = non_empty(parts.pop().unwrap_or_default());
             ObjectName {
                 database: None,
                 schema,
@@ -758,8 +985,8 @@ pub fn parse_object_name(mut parts: Vec<String>) -> ObjectName {
         }
         _ => {
             let name = parts.pop().unwrap_or_default();
-            let schema = Some(parts.pop().unwrap_or_default());
-            let database = Some(parts.pop().unwrap_or_default());
+            let schema = non_empty(parts.pop().unwrap_or_default());
+            let database = non_empty(parts.pop().unwrap_or_default());
             ObjectName {
                 database,
                 schema,

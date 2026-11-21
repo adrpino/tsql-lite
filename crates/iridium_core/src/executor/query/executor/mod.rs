@@ -91,7 +91,7 @@ impl<'a> QueryExecutor<'a> {
                     .map(|jr| jr.get(pos).and_then(|c| c.storage_index))
                     .collect();
                 base_targets.push(crate::executor::cte::CteBaseTarget {
-                    table_def: ct.table.clone(),
+                    table_def: ct.table.as_ref().clone(),
                     row_indices,
                 });
             }

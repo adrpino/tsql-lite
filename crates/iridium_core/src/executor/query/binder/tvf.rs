@@ -163,7 +163,7 @@ pub(super) fn bind_builtin_tvf(
     };
 
     Ok(Some(BoundTable {
-        table: table_def,
+        table: std::sync::Arc::new(table_def),
         alias: tref.alias.clone().unwrap_or_else(|| "STRING_SPLIT".into()),
         virtual_rows: Some(rows),
     }))
@@ -403,6 +403,106 @@ pub(super) fn bind_inline_tvf(
     )))
 }
 
+fn split_openjson_call_and_with(name: &str) -> Result<(String, Option<String>), DbError> {
+    let start = name
+        .find('(')
+        .ok_or_else(|| DbError::Parse("OPENJSON requires (json_expr[, path])".into()))?;
+    let bytes = name.as_bytes();
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut i = start;
+    let mut close_idx = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if b == b'\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_str = false;
+            }
+        } else {
+            match b {
+                b'\'' => in_str = true,
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    let close_idx = close_idx
+        .ok_or_else(|| DbError::Parse("OPENJSON requires (json_expr[, path])".into()))?;
+    let inner = name[start + 1..close_idx].to_string();
+    let tail = name[close_idx + 1..].trim();
+    if tail.is_empty() {
+        return Ok((inner, None));
+    }
+    let upper_tail = tail.to_ascii_uppercase();
+    if upper_tail.starts_with("WITH") {
+        let after_with = tail[4..].trim();
+        if let Some(schema_inner) = after_with.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            return Ok((inner, Some(schema_inner.to_string())));
+        }
+    }
+    Err(DbError::Parse(format!("Invalid OPENJSON clause: {tail}")))
+}
+
+fn parse_openjson_with_schema(
+    schema_sql: &str,
+) -> Result<Vec<(String, crate::types::DataType, String, bool)>, DbError> {
+    let mut input = schema_sql;
+    let tokens = crate::parser::lexer::lex(&mut input, true)
+        .map_err(|_| DbError::Parse("Failed to lex OPENJSON WITH schema".into()))?;
+    let mut parser = crate::parser::state::Parser::new(tokens);
+    let mut cols = Vec::new();
+    while !parser.is_empty() {
+        let col_name = match parser.next() {
+            Some(crate::parser::ast::Token::Identifier(id)) => id.clone(),
+            Some(crate::parser::ast::Token::Keyword(kw)) => kw.as_ref().to_string(),
+            _ => return Err(DbError::Parse("Expected column name in OPENJSON WITH".into())),
+        };
+        let ast_dt = crate::parser::parse::expressions::parse_data_type(&mut parser)
+            .map_err(|e| DbError::Parse(format!("{e}")))?;
+        let dt_spec = crate::parser::lower::common::lower_data_type(ast_dt)?;
+        let data_type = crate::executor::type_mapping::data_type_spec_to_runtime(&dt_spec);
+        let path = match parser.peek() {
+            Some(crate::parser::ast::Token::String(s))
+            | Some(crate::parser::ast::Token::NString(s)) => {
+                let s = s.clone();
+                let _ = parser.next();
+                s
+            }
+            _ => format!("$.{col_name}"),
+        };
+        let mut as_json = false;
+        if parser.at_keyword(crate::parser::token::Keyword::As)
+            && matches!(
+                parser.peek_at(1),
+                Some(crate::parser::ast::Token::Identifier(id)) if id.eq_ignore_ascii_case("JSON")
+            )
+        {
+            let _ = parser.next();
+            let _ = parser.next();
+            as_json = true;
+        }
+        cols.push((col_name, data_type, path, as_json));
+        if matches!(parser.peek(), Some(crate::parser::ast::Token::Comma)) {
+            let _ = parser.next();
+        } else {
+            break;
+        }
+    }
+    Ok(cols)
+}
+
 fn bind_openjson(
     catalog: &dyn Catalog,
     storage: &dyn Storage,
@@ -411,13 +511,7 @@ fn bind_openjson(
     ctx: &mut ExecutionContext,
     name: &str,
 ) -> Result<Option<BoundTable>, DbError> {
-    let inner = name
-        .find('(')
-        .and_then(|start| {
-            let s = &name[start + 1..];
-            s.strip_suffix(')').map(|s| s.to_string())
-        })
-        .ok_or_else(|| DbError::Parse("OPENJSON requires (json_expr[, path])".into()))?;
+    let (inner, with_schema_sql) = split_openjson_call_and_with(name)?;
 
     let parts = crate::parser::utils::split_csv_top_level(&inner);
     if parts.is_empty() || parts.len() > 2 {
@@ -455,6 +549,83 @@ fn bind_openjson(
     } else {
         parsed
     };
+
+    if let Some(schema_sql) = with_schema_sql {
+        let schema_cols = parse_openjson_with_schema(&schema_sql)?;
+        let items: Vec<&serde_json::Value> = match &target {
+            serde_json::Value::Array(arr) => arr.iter().collect(),
+            serde_json::Value::Object(_) => vec![&target],
+            _ => Vec::new(),
+        };
+        let mut rows = Vec::with_capacity(items.len());
+        for item in items {
+            let mut vals = Vec::with_capacity(schema_cols.len());
+            for (_col_name, data_type, path, as_json) in &schema_cols {
+                let extracted = navigate_json_path(item, path).ok();
+                let raw_val = match extracted {
+                    None | Some(serde_json::Value::Null) => Value::Null,
+                    Some(v) if *as_json => Value::NVarChar(v.to_string()),
+                    Some(serde_json::Value::String(s)) => Value::NVarChar(s),
+                    Some(serde_json::Value::Bool(b)) => Value::Bit(b),
+                    Some(serde_json::Value::Number(n)) => {
+                        if let Some(i) = n.as_i64() {
+                            Value::BigInt(i)
+                        } else if let Some(f) = n.as_f64() {
+                            Value::Float(f.to_bits())
+                        } else {
+                            Value::NVarChar(n.to_string())
+                        }
+                    }
+                    Some(other) => Value::NVarChar(other.to_string()),
+                };
+                let coerced = if matches!(raw_val, Value::Null) {
+                    Value::Null
+                } else {
+                    crate::executor::value_ops::coercion::coerce_value_to_type(raw_val, data_type)?
+                };
+                vals.push(coerced);
+            }
+            rows.push(StoredRow {
+                values: vals,
+                deleted: false,
+            });
+        }
+        let columns: Vec<ColumnDef> = schema_cols
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (col_name, data_type, _, _))| ColumnDef {
+                id: (idx + 1) as u32,
+                name: col_name,
+                data_type,
+                nullable: true,
+                primary_key: false,
+                unique: false,
+                identity: None,
+                default: None,
+                default_constraint_name: None,
+                check: None,
+                check_constraint_name: None,
+                computed_expr: None,
+                collation: None,
+                is_clustered: false,
+                ansi_padding_on: true,
+            })
+            .collect();
+        let table_def = TableDef {
+            id: 0,
+            schema_id: 1,
+            schema_name: "dbo".to_string(),
+            name: "OPENJSON".to_string(),
+            columns,
+            check_constraints: vec![],
+            foreign_keys: vec![],
+        };
+        return Ok(Some(BoundTable {
+            table: std::sync::Arc::new(table_def),
+            alias: tref.alias.clone().unwrap_or_else(|| "OPENJSON".into()),
+            virtual_rows: Some(rows),
+        }));
+    }
 
     let rows = openjson_to_rows(&target);
 
@@ -523,7 +694,7 @@ fn bind_openjson(
     };
 
     Ok(Some(BoundTable {
-        table: table_def,
+        table: std::sync::Arc::new(table_def),
         alias: tref.alias.clone().unwrap_or_else(|| "OPENJSON".into()),
         virtual_rows: Some(rows),
     }))
@@ -778,7 +949,7 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
     };
 
     Ok(Some(BoundTable {
-        table: table_def,
+        table: std::sync::Arc::new(table_def),
         alias: tref.alias.clone().unwrap_or_else(|| "fn_my_permissions".into()),
         virtual_rows: Some(rows),
     }))

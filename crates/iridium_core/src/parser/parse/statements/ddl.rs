@@ -179,6 +179,18 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     let _ = parser.next();
                 }
             }
+            Keyword::Index => {
+                // Inline column-level index: [col] type INDEX ix_name [CLUSTERED | NONCLUSTERED]
+                let _ = parser.next();
+                match parser.next() {
+                    Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+                    _ => return parser.backtrack(Expected::Description("index name")),
+                }
+                if parser.at_keyword(Keyword::Clustered) || parser.at_keyword(Keyword::Nonclustered)
+                {
+                    let _ = parser.next();
+                }
+            }
             Keyword::Collate => {
                 let _ = parser.next();
                 let collation_name = match parser.next() {

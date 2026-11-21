@@ -159,30 +159,37 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             crate::parser::parse::statements::query::parse_select_body(parser)?,
         )),
         Keyword::Exec | Keyword::Execute => {
-            let mut return_variable = None;
-            if let Some(Token::Variable(v)) = parser.peek() {
-                if matches!(parser.peek_at(1), Some(Token::Operator(op)) if *op == "=") {
-                    return_variable = Some(v.clone());
-                    let _ = parser.next();
-                    let _ = parser.next();
-                }
-            }
-            let procedure = super::parse_multipart_name(parser)?;
-            let args = if !parser.is_empty()
-                && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
-                && !is_statement_starter(parser.peek())
-            {
-                crate::parser::parse::expressions::parse_comma_list(
-                    parser,
-                    super::other::parse_exec_arg,
-                )?
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
+                parser.expect_rparen()?;
+                InsertSource::ExecDynamic(sql_expr)
             } else {
-                Vec::new()
-            };
-            InsertSource::Exec {
-                return_variable,
-                procedure,
-                args,
+                let mut return_variable = None;
+                if let Some(Token::Variable(v)) = parser.peek() {
+                    if matches!(parser.peek_at(1), Some(Token::Operator(op)) if *op == "=") {
+                        return_variable = Some(v.clone());
+                        let _ = parser.next();
+                        let _ = parser.next();
+                    }
+                }
+                let procedure = super::parse_multipart_name(parser)?;
+                let args = if !parser.is_empty()
+                    && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
+                    && !is_statement_starter(parser.peek())
+                {
+                    crate::parser::parse::expressions::parse_comma_list(
+                        parser,
+                        super::other::parse_exec_arg,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                InsertSource::Exec {
+                    return_variable,
+                    procedure,
+                    args,
+                }
             }
         }
         _ => return parser.backtrack(Expected::Description("VALUES, SELECT, or EXEC")),

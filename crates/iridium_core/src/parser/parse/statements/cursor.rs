@@ -4,26 +4,29 @@ use crate::parser::state::Parser;
 use crate::parser::token::Keyword;
 
 pub fn parse_open_cursor(parser: &mut Parser) -> ParseResult<Statement> {
-    if let Some(Token::Identifier(id)) = parser.next() {
-        Ok(Statement::Cursor(CursorStatement::Open(id.clone())))
-    } else {
-        parser.backtrack(Expected::Description("cursor name"))
+    match parser.next() {
+        Some(Token::Identifier(id)) | Some(Token::Variable(id)) => {
+            Ok(Statement::Cursor(CursorStatement::Open(id.clone())))
+        }
+        _ => parser.backtrack(Expected::Description("cursor name")),
     }
 }
 
 pub fn parse_close_cursor(parser: &mut Parser) -> ParseResult<Statement> {
-    if let Some(Token::Identifier(id)) = parser.next() {
-        Ok(Statement::Cursor(CursorStatement::Close(id.clone())))
-    } else {
-        parser.backtrack(Expected::Description("cursor name"))
+    match parser.next() {
+        Some(Token::Identifier(id)) | Some(Token::Variable(id)) => {
+            Ok(Statement::Cursor(CursorStatement::Close(id.clone())))
+        }
+        _ => parser.backtrack(Expected::Description("cursor name")),
     }
 }
 
 pub fn parse_deallocate_cursor(parser: &mut Parser) -> ParseResult<Statement> {
-    if let Some(Token::Identifier(id)) = parser.next() {
-        Ok(Statement::Cursor(CursorStatement::Deallocate(id.clone())))
-    } else {
-        parser.backtrack(Expected::Description("cursor name"))
+    match parser.next() {
+        Some(Token::Identifier(id)) | Some(Token::Variable(id)) => {
+            Ok(Statement::Cursor(CursorStatement::Deallocate(id.clone())))
+        }
+        _ => parser.backtrack(Expected::Description("cursor name")),
     }
 }
 
@@ -65,10 +68,9 @@ pub fn parse_fetch_cursor(parser: &mut Parser) -> ParseResult<Statement> {
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::From))) {
         let _ = parser.next();
     }
-    let name = if let Some(Token::Identifier(id)) = parser.next() {
-        id.clone()
-    } else {
-        return parser.backtrack(Expected::Description("cursor name"));
+    let name = match parser.next() {
+        Some(Token::Identifier(id)) | Some(Token::Variable(id)) => id.clone(),
+        _ => return parser.backtrack(Expected::Description("cursor name")),
     };
     let mut into_vars = None;
     if matches!(parser.peek(), Some(Token::Keyword(Keyword::Into))) {

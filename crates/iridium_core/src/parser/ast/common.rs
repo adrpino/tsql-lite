@@ -52,6 +52,14 @@ pub enum DataType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OpenJsonColumn {
+    pub name: String,
+    pub data_type: DataType,
+    pub path: Option<String>,
+    pub as_json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TableFactor {
     Named(ObjectName),
     Derived(Box<crate::parser::ast::statements::query::SelectStmt>),
@@ -67,6 +75,7 @@ pub enum TableFactor {
         name: Vec<String>,
         args: Vec<crate::parser::ast::expressions::Expr>,
         alias: Option<String>,
+        with_schema: Vec<OpenJsonColumn>,
     },
 }
 

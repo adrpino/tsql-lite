@@ -19,8 +19,27 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
     if parser.at_keyword(Keyword::Table) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
-        let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropTable { name, if_exists }))
+        let first = super::parse_multipart_name(parser)?;
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let mut stmts = vec![Statement::Ddl(DdlStatement::DropTable {
+                name: first,
+                if_exists,
+            })];
+            while matches!(parser.peek(), Some(Token::Comma)) {
+                let _ = parser.next();
+                let next_name = super::parse_multipart_name(parser)?;
+                stmts.push(Statement::Ddl(DdlStatement::DropTable {
+                    name: next_name,
+                    if_exists,
+                }));
+            }
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
+        } else {
+            Ok(Statement::Ddl(DdlStatement::DropTable {
+                name: first,
+                if_exists,
+            }))
+        }
     } else if parser.at_keyword(Keyword::View) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);

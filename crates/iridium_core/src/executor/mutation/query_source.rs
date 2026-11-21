@@ -122,7 +122,7 @@ pub(crate) fn attach_base_rows_from_cte(
             continue;
         }
         jr.push(crate::executor::model::ContextTable {
-            table: base_target.table_def.clone(),
+            table: std::sync::Arc::new(base_target.table_def.clone()),
             alias: target_alias.to_string(),
             row: Some(stored),
             storage_index: Some(base_idx),

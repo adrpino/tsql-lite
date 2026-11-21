@@ -277,6 +277,7 @@ pub enum InsertSource {
         procedure: Vec<String>,
         args: Vec<ExecArg>,
     },
+    ExecDynamic(Expr),
     DefaultValues,
 }
 

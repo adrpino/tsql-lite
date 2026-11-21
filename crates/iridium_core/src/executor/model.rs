@@ -1,6 +1,7 @@
 ﻿use crate::catalog::TableDef;
 use crate::storage::StoredRow;
 use crate::types::Value;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Group {
@@ -10,14 +11,14 @@ pub struct Group {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundTable {
-    pub(crate) table: TableDef,
+    pub(crate) table: Arc<TableDef>,
     pub(crate) alias: String,
     pub(crate) virtual_rows: Option<Vec<StoredRow>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ContextTable {
-    pub table: TableDef,
+    pub table: Arc<TableDef>,
     pub alias: String,
     pub row: Option<StoredRow>,
     pub storage_index: Option<usize>,
@@ -27,7 +28,7 @@ pub struct ContextTable {
 impl ContextTable {
     pub fn null_row(&self) -> Self {
         Self {
-            table: self.table.clone(),
+            table: Arc::clone(&self.table),
             alias: self.alias.clone(),
             row: None,
             storage_index: None,
@@ -40,7 +41,7 @@ pub type JoinedRow = Vec<ContextTable>;
 
 pub(crate) fn single_row_context(table: &TableDef, row: StoredRow) -> JoinedRow {
     vec![ContextTable {
-        table: table.clone(),
+        table: Arc::new(table.clone()),
         alias: table.name.clone(),
         row: Some(row),
         storage_index: None,

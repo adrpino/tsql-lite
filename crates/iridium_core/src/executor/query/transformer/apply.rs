@@ -14,7 +14,7 @@ pub(crate) fn execute_apply(
     executor: &QueryExecutor<'_>,
 ) -> Result<Vec<JoinedRow>, DbError> {
     let mut result_rows = Vec::new();
-    let mut cached_table: Option<TableDef> = None;
+    let mut cached_table: Option<std::sync::Arc<TableDef>> = None;
 
     for left_row in &rows {
         ctx.push_apply_row(left_row.clone());
@@ -27,12 +27,14 @@ pub(crate) fn execute_apply(
                 let vtable = if !sub_result.columns.is_empty()
                     && !sub_result.columns.iter().any(|c| c == "*")
                 {
-                    build_virtual_table(&apply.alias, &sub_result)
+                    std::sync::Arc::new(build_virtual_table(&apply.alias, &sub_result))
                 } else if let Some(ref known) = cached_table {
-                    known.clone()
+                    std::sync::Arc::clone(known)
                 } else {
-                    resolve_empty_apply_table(apply, executor, ctx)
-                        .unwrap_or_else(|| build_virtual_table(&apply.alias, &sub_result))
+                    std::sync::Arc::new(
+                        resolve_empty_apply_table(apply, executor, ctx)
+                            .unwrap_or_else(|| build_virtual_table(&apply.alias, &sub_result)),
+                    )
                 };
                 combined.push(
                     ContextTable {
@@ -47,14 +49,14 @@ pub(crate) fn execute_apply(
                 result_rows.push(combined);
             }
         } else {
-            let apply_table = build_virtual_table(&apply.alias, &sub_result);
+            let apply_table = std::sync::Arc::new(build_virtual_table(&apply.alias, &sub_result));
             if cached_table.is_none() {
-                cached_table = Some(apply_table.clone());
+                cached_table = Some(std::sync::Arc::clone(&apply_table));
             }
             for (idx, sub_row_values) in sub_result.rows.iter().enumerate() {
                 let mut combined = left_row.clone();
                 combined.push(ContextTable {
-                    table: apply_table.clone(),
+                    table: std::sync::Arc::clone(&apply_table),
                     alias: apply.alias.clone(),
                     row: Some(StoredRow {
                         values: sub_row_values.clone(),

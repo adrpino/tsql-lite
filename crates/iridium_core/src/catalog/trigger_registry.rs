@@ -3,7 +3,7 @@ use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
 impl TriggerRegistry for CatalogImpl {
-    fn get_triggers(&self) -> &[TriggerDef] {
+    fn get_triggers(&self) -> &[Arc<TriggerDef>] {
         &self.triggers
     }
 
@@ -14,6 +14,7 @@ impl TriggerRegistry for CatalogImpl {
                 t.table_schema.eq_ignore_ascii_case(schema)
                     && t.table_name.eq_ignore_ascii_case(name)
             })
+            .map(|t| t.as_ref())
             .collect()
     }
 
@@ -32,7 +33,7 @@ impl TriggerRegistry for CatalogImpl {
             ),
             idx,
         );
-        Arc::make_mut(&mut self.triggers).push(trigger);
+        Arc::make_mut(&mut self.triggers).push(Arc::new(trigger));
         Ok(())
     }
 
@@ -68,19 +69,20 @@ impl TriggerRegistry for CatalogImpl {
         enabled: bool,
     ) -> Result<(), DbError> {
         let triggers = Arc::make_mut(&mut self.triggers);
-        for t in triggers.iter_mut() {
-            let table_match = t.table_schema.eq_ignore_ascii_case(table_schema)
-                && t.table_name.eq_ignore_ascii_case(table_name);
+        for t_arc in triggers.iter_mut() {
+            let table_match = t_arc.table_schema.eq_ignore_ascii_case(table_schema)
+                && t_arc.table_name.eq_ignore_ascii_case(table_name);
             if !table_match {
                 continue;
             }
-            if let Some(tn) = trigger_name {
-                let sch_ok = trigger_schema.is_none_or(|s| t.schema.eq_ignore_ascii_case(s));
-                if sch_ok && t.name.eq_ignore_ascii_case(tn) {
-                    t.enabled = enabled;
-                }
+            let should_update = if let Some(tn) = trigger_name {
+                let sch_ok = trigger_schema.is_none_or(|s| t_arc.schema.eq_ignore_ascii_case(s));
+                sch_ok && t_arc.name.eq_ignore_ascii_case(tn)
             } else {
-                t.enabled = enabled;
+                true
+            };
+            if should_update && t_arc.enabled != enabled {
+                Arc::make_mut(t_arc).enabled = enabled;
             }
         }
         Ok(())

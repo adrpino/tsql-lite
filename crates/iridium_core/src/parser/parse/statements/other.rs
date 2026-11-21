@@ -86,16 +86,86 @@ pub fn parse_declare(parser: &mut Parser) -> ParseResult<Vec<DeclareVar>> {
     Ok(vars)
 }
 
+fn consume_set_compound_op(parser: &mut Parser) -> Option<BinaryOp> {
+    if !matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "=") {
+        return None;
+    }
+    let op = match parser.peek() {
+        Some(Token::Operator(s)) if s == "+" => Some(BinaryOp::Add),
+        Some(Token::Operator(s)) if s == "-" => Some(BinaryOp::Subtract),
+        Some(Token::Star) => Some(BinaryOp::Multiply),
+        Some(Token::Operator(s)) if s == "/" => Some(BinaryOp::Divide),
+        Some(Token::Operator(s)) if s == "%" => Some(BinaryOp::Modulo),
+        Some(Token::Operator(s)) if s == "&" => Some(BinaryOp::BitwiseAnd),
+        Some(Token::Operator(s)) if s == "|" => Some(BinaryOp::BitwiseOr),
+        Some(Token::Operator(s)) if s == "^" => Some(BinaryOp::BitwiseXor),
+        _ => None,
+    }?;
+    let _ = parser.next();
+    let _ = parser.next();
+    Some(op)
+}
+
 pub fn parse_set(parser: &mut Parser) -> ParseResult<Statement> {
     match parser.next() {
         Some(Token::Variable(variable)) => {
             let variable = variable.clone();
+            if let Some(bin_op) = consume_set_compound_op(parser) {
+                let rhs = crate::parser::parse::expressions::parse_expr(parser)?;
+                return Ok(Statement::Procedural(ProceduralStatement::Set {
+                    variable: variable.clone(),
+                    expr: Expr::Binary {
+                        left: Box::new(Expr::Variable(variable)),
+                        op: bin_op,
+                        right: Box::new(rhs),
+                    },
+                }));
+            }
             if let Some(Token::Operator(op)) = parser.next() {
                 if *op != "=" {
                     return parser.backtrack(Expected::Description("="));
                 }
             } else {
                 return parser.backtrack(Expected::Description("="));
+            }
+            // Cursor variable assignment: SET @cur = CURSOR [options...] FOR <select>
+            if parser.at_keyword(Keyword::Cursor) {
+                let _ = parser.next();
+                while !parser.at_keyword(Keyword::For) && !parser.is_empty() {
+                    let word = match parser.peek() {
+                        Some(Token::Identifier(id)) => Some(id.to_ascii_uppercase()),
+                        Some(Token::Keyword(k)) => Some(k.as_sql().to_ascii_uppercase()),
+                        _ => None,
+                    };
+                    if matches!(
+                        word.as_deref(),
+                        Some(
+                            "LOCAL"
+                                | "GLOBAL"
+                                | "FORWARD_ONLY"
+                                | "SCROLL"
+                                | "STATIC"
+                                | "KEYSET"
+                                | "DYNAMIC"
+                                | "FAST_FORWARD"
+                                | "READ_ONLY"
+                                | "SCROLL_LOCKS"
+                                | "OPTIMISTIC"
+                                | "TYPE_WARNING"
+                                | "INSENSITIVE"
+                        )
+                    ) {
+                        let _ = parser.next();
+                    } else {
+                        break;
+                    }
+                }
+                parser.expect_keyword(Keyword::For)?;
+                let query = super::query::parse_select(parser)?;
+                return Ok(Statement::Procedural(ProceduralStatement::DeclareCursor {
+                    name: variable,
+                    query,
+                }));
             }
             let expr = crate::parser::parse::expressions::parse_expr(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::Set {
@@ -111,12 +181,81 @@ pub fn parse_set(parser: &mut Parser) -> ParseResult<Statement> {
     }
 }
 
+fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
+    if !parser.at_keyword(Keyword::With) {
+        return Ok(());
+    }
+    let is_recompile = matches!(
+        parser.peek_at(1),
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RECOMPILE")
+    ) || matches!(
+        parser.peek_at(1),
+        Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("RECOMPILE")
+    );
+    let is_result_sets = matches!(
+        parser.peek_at(1),
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RESULT")
+    );
+    if !is_recompile && !is_result_sets {
+        return Ok(());
+    }
+    let _ = parser.next(); // WITH
+    loop {
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RECOMPILE")
+        ) || matches!(
+            parser.peek(),
+            Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("RECOMPILE")
+        ) {
+            let _ = parser.next();
+        } else if matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RESULT")
+        ) {
+            let _ = parser.next(); // RESULT
+            if matches!(
+                parser.peek(),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SETS")
+            ) {
+                let _ = parser.next(); // SETS
+            }
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match parser.next() {
+                        Some(Token::LParen) => depth += 1,
+                        Some(Token::RParen) => depth -= 1,
+                        Some(_) => {}
+                        None => return parser.backtrack(Expected::Description(")")),
+                    }
+                }
+            } else if matches!(
+                parser.peek(),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NONE") || id.eq_ignore_ascii_case("UNDEFINED")
+            ) {
+                let _ = parser.next();
+            }
+        } else {
+            break;
+        }
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+        } else {
+            break;
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
     match parser.peek() {
         Some(Token::LParen) => {
             let _ = parser.next();
             let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
             parser.expect_rparen()?;
+            skip_exec_with_options(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::ExecDynamic {
                 sql_expr,
             }))
@@ -157,6 +296,7 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     args.push(parse_exec_arg(parser)?);
                 }
+                skip_exec_with_options(parser)?;
                 return Ok(Statement::Procedural(ProceduralStatement::SpExecuteSql {
                     sql_expr,
                     params_def,
@@ -171,6 +311,7 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
             {
                 args = crate::parser::parse::expressions::parse_comma_list(parser, parse_exec_arg)?;
             }
+            skip_exec_with_options(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::ExecProcedure {
                 return_variable,
                 name,

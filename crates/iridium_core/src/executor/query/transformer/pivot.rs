@@ -110,6 +110,7 @@ pub(crate) fn execute_pivot(
         check_constraints: vec![],
         foreign_keys: vec![],
     };
+    let pivot_table_def = std::sync::Arc::new(pivot_table_def);
 
     for (key, group_rows) in groups {
         let mut row_values = key;

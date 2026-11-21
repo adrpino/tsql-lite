@@ -86,7 +86,7 @@ pub(super) fn bind_plain_table(
 
             return Ok(BoundTable {
                 alias,
-                table: table_def,
+                table: std::sync::Arc::new(table_def),
                 virtual_rows: Some(virtual_rows),
             });
         }
@@ -125,7 +125,7 @@ pub(super) fn bind_plain_table(
     if let Some(cte) = resolve_cte_table(&ctx.row.ctes, schema, name) {
         return Ok(BoundTable {
             alias: tref.alias.clone().unwrap_or_else(|| name.to_string()),
-            table: cte.table_def.clone(),
+            table: std::sync::Arc::new(cte.table_def.clone()),
             virtual_rows: None,
         });
     }
@@ -133,18 +133,18 @@ pub(super) fn bind_plain_table(
     if let Some((table, rows)) = resolve_virtual_table(schema, name, catalog, ctx) {
         return Ok(BoundTable {
             alias: tref.alias.clone().unwrap_or_else(|| name.to_string()),
-            table,
+            table: std::sync::Arc::new(table),
             virtual_rows: Some(rows),
         });
     }
 
     let table = catalog
-        .find_table(schema, name)
+        .find_table_arc(schema, name)
         .ok_or_else(|| DbError::table_not_found(schema, name))?;
 
     Ok(BoundTable {
         alias: tref.alias.clone().unwrap_or_else(|| table.name.clone()),
-        table: table.clone(),
+        table,
         virtual_rows: None,
     })
 }

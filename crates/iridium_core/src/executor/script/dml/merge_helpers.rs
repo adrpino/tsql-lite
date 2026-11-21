@@ -170,7 +170,7 @@ pub(crate) fn merge_target_context(
     storage_index: Option<usize>,
 ) -> JoinedRow {
     vec![ContextTable {
-        table: table.clone(),
+        table: std::sync::Arc::new(table.clone()),
         alias,
         row: Some(row),
         storage_index,
@@ -185,12 +185,48 @@ pub(crate) fn merge_source_context(
     storage_index: Option<usize>,
 ) -> JoinedRow {
     vec![ContextTable {
-        table: table.clone(),
+        table: std::sync::Arc::new(table.clone()),
         alias,
         row: Some(row),
         storage_index,
         source_aliases: Vec::new(),
     }]
+}
+
+fn evaluate_computed_columns(
+    target_table: &TableDef,
+    values: &mut [Value],
+    ctx: &mut ExecutionContext<'_>,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<(), DbError> {
+    if !target_table
+        .columns
+        .iter()
+        .any(|c| c.computed_expr.is_some())
+    {
+        return Ok(());
+    }
+    let table_arc = std::sync::Arc::new(target_table.clone());
+    for (idx, col) in target_table.columns.iter().enumerate() {
+        if let Some(ref computed) = col.computed_expr {
+            let joined = vec![ContextTable {
+                table: std::sync::Arc::clone(&table_arc),
+                alias: target_table.name.clone(),
+                row: Some(StoredRow {
+                    values: values.to_vec(),
+                    deleted: false,
+                }),
+                storage_index: None,
+                source_aliases: Vec::new(),
+            }];
+            values[idx] = crate::executor::evaluator::eval_expr(
+                computed, &joined, ctx, catalog, storage, clock,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -240,6 +276,14 @@ pub(crate) fn merge_apply_update_action(
             .ok_or_else(|| DbError::Semantic(format!("column '{}' not found", assign.column)))?;
         temp_row.values[col_idx] = val;
     }
+    evaluate_computed_columns(
+        target_table,
+        &mut temp_row.values,
+        ctx,
+        catalog,
+        storage,
+        clock,
+    )?;
     crate::executor::mutation::validation::enforce_foreign_keys_on_delete(
         target_table,
         catalog,
@@ -350,6 +394,14 @@ pub(crate) fn merge_apply_insert_action(
             }
         }
     }
+    evaluate_computed_columns(
+        target_table,
+        &mut final_values,
+        ctx,
+        catalog,
+        storage,
+        clock,
+    )?;
     temp_row.values = final_values.clone();
     crate::executor::mutation::validation::enforce_foreign_keys_on_insert(
         target_table,

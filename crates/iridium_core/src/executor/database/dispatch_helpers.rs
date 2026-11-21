@@ -213,7 +213,9 @@ where
             .find_table(table_def.schema_or_dbo(), &table_def.name)
             .is_none()
         {
-            workspace.catalog.register_table(table_def.clone());
+            workspace
+                .catalog
+                .register_table(table_def.as_ref().clone());
         }
     }
     Ok(())

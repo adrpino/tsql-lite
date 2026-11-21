@@ -244,8 +244,11 @@ pub trait SchemaRegistry {
 }
 
 pub trait TableRegistry {
-    fn get_tables(&self) -> &[TableDef];
+    fn get_tables(&self) -> &[Arc<TableDef>];
     fn find_table(&self, schema: &str, name: &str) -> Option<&TableDef>;
+    fn find_table_arc(&self, schema: &str, name: &str) -> Option<Arc<TableDef>> {
+        self.find_table(schema, name).cloned().map(Arc::new)
+    }
     fn find_table_mut(&mut self, schema: &str, name: &str) -> Option<&mut TableDef>;
     fn register_table(&mut self, table: TableDef);
     fn unregister_table_by_id(&mut self, id: u32);
@@ -287,7 +290,7 @@ pub trait IndexRegistry {
 }
 
 pub trait RoutineRegistry {
-    fn get_routines(&self) -> &[RoutineDef];
+    fn get_routines(&self) -> &[Arc<RoutineDef>];
     fn find_routine(&self, schema: &str, name: &str) -> Option<&RoutineDef>;
     fn create_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
     fn replace_routine(&mut self, routine: RoutineDef) -> Result<(), DbError>;
@@ -307,14 +310,14 @@ pub trait TypeRegistry {
 }
 
 pub trait ViewRegistry {
-    fn get_views(&self) -> &[ViewDef];
+    fn get_views(&self) -> &[Arc<ViewDef>];
     fn find_view(&self, schema: &str, name: &str) -> Option<&ViewDef>;
     fn create_view(&mut self, view: ViewDef) -> Result<(), DbError>;
     fn drop_view(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
 }
 
 pub trait TriggerRegistry {
-    fn get_triggers(&self) -> &[TriggerDef];
+    fn get_triggers(&self) -> &[Arc<TriggerDef>];
     fn find_triggers_for_table(&self, schema: &str, name: &str) -> Vec<&TriggerDef>;
     fn create_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError>;
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
@@ -398,22 +401,49 @@ mod arc_serde {
     }
 }
 
+mod arc_vec_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+
+    pub fn serialize<S, T>(val: &Arc<Vec<Arc<T>>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Serialize,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(val.len()))?;
+        for item in val.iter() {
+            seq.serialize_element(item.as_ref())?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<Vec<Arc<T>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        let v: Vec<T> = Vec::deserialize(deserializer)?;
+        Ok(Arc::new(v.into_iter().map(Arc::new).collect()))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogImpl {
     #[serde(with = "arc_serde")]
     schemas: Arc<Vec<SchemaDef>>,
-    #[serde(with = "arc_serde")]
-    tables: Arc<Vec<TableDef>>,
+    #[serde(with = "arc_vec_serde")]
+    tables: Arc<Vec<Arc<TableDef>>>,
     #[serde(with = "arc_serde")]
     indexes: Arc<Vec<IndexDef>>,
-    #[serde(with = "arc_serde")]
-    routines: Arc<Vec<RoutineDef>>,
+    #[serde(with = "arc_vec_serde")]
+    routines: Arc<Vec<Arc<RoutineDef>>>,
     #[serde(with = "arc_serde")]
     table_types: Arc<Vec<TableTypeDef>>,
-    #[serde(with = "arc_serde")]
-    views: Arc<Vec<ViewDef>>,
-    #[serde(with = "arc_serde")]
-    triggers: Arc<Vec<TriggerDef>>,
+    #[serde(with = "arc_vec_serde")]
+    views: Arc<Vec<Arc<ViewDef>>>,
+    #[serde(with = "arc_vec_serde")]
+    triggers: Arc<Vec<Arc<TriggerDef>>>,
     #[serde(with = "arc_serde")]
     synonyms: Arc<Vec<SynonymDef>>,
     #[serde(with = "arc_serde")]

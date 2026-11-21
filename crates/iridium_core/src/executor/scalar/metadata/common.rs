@@ -68,6 +68,7 @@ pub(super) fn table_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Optio
         .get_tables()
         .iter()
         .find(|t| t.id as i32 == object_id)
+        .map(|t| t.as_ref())
 }
 
 pub(super) fn routine_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Option<&RoutineDef> {
@@ -75,6 +76,7 @@ pub(super) fn routine_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Opt
         .get_routines()
         .iter()
         .find(|r| r.object_id == object_id)
+        .map(|r| r.as_ref())
 }
 
 pub(super) fn view_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Option<&ViewDef> {
@@ -82,6 +84,7 @@ pub(super) fn view_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Option
         .get_views()
         .iter()
         .find(|v| v.object_id == object_id)
+        .map(|v| v.as_ref())
 }
 
 pub(super) fn trigger_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Option<&TriggerDef> {
@@ -89,6 +92,7 @@ pub(super) fn trigger_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Opt
         .get_triggers()
         .iter()
         .find(|t| t.object_id == object_id)
+        .map(|t| t.as_ref())
 }
 
 pub(super) fn object_schema_name_from_id(catalog: &dyn Catalog, object_id: i32) -> Option<String> {

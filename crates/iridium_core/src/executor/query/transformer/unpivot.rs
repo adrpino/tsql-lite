@@ -90,7 +90,7 @@ pub(crate) fn execute_unpivot(
         ansi_padding_on: true,
     });
 
-    let unpivot_table_def = TableDef {
+    let unpivot_table_def = std::sync::Arc::new(TableDef {
         id: 0,
         schema_id: 1,
         schema_name: "dbo".to_string(),
@@ -98,7 +98,7 @@ pub(crate) fn execute_unpivot(
         columns: output_columns,
         check_constraints: vec![],
         foreign_keys: vec![],
-    };
+    });
 
     for row in rows {
         for col_to_unpivot in &spec.column_list {

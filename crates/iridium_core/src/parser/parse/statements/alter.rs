@@ -121,7 +121,77 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             *or_alter = true;
         }
         Ok(Statement::Ddl(DdlStatement::Create(Box::new(stmt))))
+    } else if parser.at_keyword(Keyword::Partition) {
+        let _ = parser.next();
+        let is_scheme = matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCHEME")
+        );
+        let is_function = parser.at_keyword(Keyword::Function);
+        if is_scheme {
+            let _ = parser.next();
+            let _ = super::parse_multipart_name(parser)?;
+            if parser.at_keyword(Keyword::Next) {
+                let _ = parser.next();
+                if matches!(
+                    parser.peek(),
+                    Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("USED")
+                ) {
+                    let _ = parser.next();
+                }
+                if matches!(
+                    parser.peek(),
+                    Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+                ) && !matches!(
+                    parser.peek(),
+                    Some(Token::Keyword(
+                        Keyword::Alter
+                            | Keyword::Create
+                            | Keyword::Drop
+                            | Keyword::Select
+                            | Keyword::Insert
+                            | Keyword::Update
+                            | Keyword::Delete
+                            | Keyword::End
+                            | Keyword::Set
+                            | Keyword::Declare
+                    ))
+                ) {
+                    let _ = parser.next();
+                }
+            }
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        } else if is_function {
+            let _ = parser.next();
+            let _ = super::parse_multipart_name(parser)?;
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                parser.expect_rparen()?;
+            }
+            // SPLIT RANGE (expr) | MERGE RANGE (expr)
+            if parser.at_keyword(Keyword::Merge)
+                || matches!(
+                    parser.peek(),
+                    Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SPLIT")
+                )
+            {
+                let _ = parser.next();
+                if parser.at_keyword(Keyword::Range) {
+                    let _ = parser.next();
+                }
+                parser.expect_lparen()?;
+                let _ = crate::parser::parse::expressions::parse_expr(parser)?;
+                parser.expect_rparen()?;
+            }
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        } else {
+            parser.backtrack(Expected::Description("SCHEME or FUNCTION"))
+        }
     } else {
-        parser.backtrack(Expected::Description("table or procedure"))
+        parser.backtrack(Expected::Description("table, procedure, or partition"))
     }
 }

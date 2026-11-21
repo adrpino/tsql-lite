@@ -406,7 +406,7 @@ fn apply_from_alias(
             });
         }
     }
-    let alias_table = TableDef {
+    let alias_table = std::sync::Arc::new(TableDef {
         id: 0,
         schema_id: 1,
         schema_name: "dbo".to_string(),
@@ -414,7 +414,7 @@ fn apply_from_alias(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
-    };
+    });
 
     let source_rows =
         source.materialize(ctx, executor.catalog, executor.storage, executor.clock)?;

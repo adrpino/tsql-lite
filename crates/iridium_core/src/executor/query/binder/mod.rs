@@ -110,7 +110,7 @@ pub(super) fn query_result_to_bound_table(
         .collect::<Vec<_>>();
     BoundTable {
         alias,
-        table: table_def,
+        table: std::sync::Arc::new(table_def),
         virtual_rows: Some(rows),
     }
 }

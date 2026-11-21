@@ -66,7 +66,7 @@ impl<'a> ScriptExecutor<'a> {
             self.schema(ctx).drop_table(DropTableStmt {
                 name: ObjectName {
                     database: None,
-                    schema: Some(table.schema_name),
+                    schema: Some(table.schema_name.clone()),
                     name: physical,
                 },
                 if_exists: false,

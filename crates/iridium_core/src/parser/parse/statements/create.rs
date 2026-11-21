@@ -145,7 +145,14 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
     }
     parse_procedure_with_options(parser)?;
     parser.expect_keyword(Keyword::As)?;
-    let body = if parser.at_keyword(Keyword::Begin) {
+    let is_begin_block = parser.at_keyword(Keyword::Begin)
+        && !matches!(
+            parser.peek_at(1),
+            Some(Token::Keyword(
+                Keyword::Transaction | Keyword::Tran | Keyword::Try | Keyword::Distributed
+            ))
+        );
+    let body = if is_begin_block {
         let _ = parser.next();
         match super::other::parse_begin_end(parser)? {
             Statement::Procedural(ProceduralStatement::BeginEnd(stmts)) => stmts,

@@ -270,6 +270,38 @@ fn lower_table_ref_to_from_node(
     }
 }
 
+fn format_tvf_name(
+    func_name: &str,
+    args: Vec<ast::Expr>,
+    with_schema: Vec<ast::OpenJsonColumn>,
+) -> Result<String, DbError> {
+    let arg_strs: Vec<String> = args
+        .into_iter()
+        .map(|a| {
+            lower_expr(a).map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut full_name = format!("{}({})", func_name, arg_strs.join(", "));
+    if !with_schema.is_empty() {
+        let mut cols = Vec::with_capacity(with_schema.len());
+        for c in with_schema {
+            let dt = crate::executor::tooling::formatting::format_data_type_spec(
+                &crate::parser::lower::lower_data_type(c.data_type)?,
+            );
+            let mut s = format!("[{}] {}", c.name.replace(']', "]]"), dt);
+            if let Some(path) = c.path {
+                s.push_str(&format!(" '{}'", path.replace('\'', "''")));
+            }
+            if c.as_json {
+                s.push_str(" AS JSON");
+            }
+            cols.push(s);
+        }
+        full_name.push_str(&format!(" WITH ({})", cols.join(", ")));
+    }
+    Ok(full_name)
+}
+
 fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::TableRef, DbError> {
     let alias = tr.alias;
     let hints = tr.hints;
@@ -314,19 +346,13 @@ fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::Table
             name,
             args,
             alias: tvf_alias,
+            with_schema,
         } => {
             let func_name = match name.last() {
                 Some(last) => last.to_string(),
                 None => return Err(DbError::Parse("table-valued function name is empty".into())),
             };
-            let arg_strs: Vec<String> = args
-                .into_iter()
-                .map(|a| {
-                    lower_expr(a)
-                        .map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let full_name = format!("{}({})", func_name, arg_strs.join(", "));
+            let full_name = format_tvf_name(&func_name, args, with_schema)?;
             return Ok(executor_ast::common::TableRef {
                 factor: executor_ast::common::TableFactor::Named(
                     executor_ast::common::ObjectName {
@@ -503,19 +529,13 @@ pub fn lower_table_ref_recursive(
             name,
             args,
             alias: tvf_alias,
+            with_schema,
         } => {
             let func_name = match name.last() {
                 Some(last) => last.to_string(),
                 None => return Err(DbError::Parse("table-valued function name is empty".into())),
             };
-            let arg_strs: Vec<String> = args
-                .into_iter()
-                .map(|a| {
-                    lower_expr(a)
-                        .map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let full_name = format!("{}({})", func_name, arg_strs.join(", "));
+            let full_name = format_tvf_name(&func_name, args, with_schema)?;
             Ok((
                 executor_ast::common::TableRef {
                     factor: executor_ast::common::TableFactor::Named(
@@ -583,6 +603,17 @@ pub fn lower_insert(
                     ),
                 ),
             )),
+            ast::InsertSource::ExecDynamic(sql_expr) => {
+                executor_ast::statements::dml::InsertSource::Exec(Box::new(
+                    executor_ast::Statement::Procedural(
+                        executor_ast::statements::ProceduralStatement::ExecDynamic(
+                            executor_ast::statements::procedural::ExecStmt {
+                                sql_expr: lower_expr(sql_expr)?,
+                            },
+                        ),
+                    ),
+                ))
+            }
             ast::InsertSource::DefaultValues => {
                 executor_ast::statements::dml::InsertSource::DefaultValues
             }

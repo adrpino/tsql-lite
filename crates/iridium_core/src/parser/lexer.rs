@@ -80,7 +80,16 @@ pub fn lex(input: &mut &str, quoted_identifier: bool) -> ModalResult<Vec<Token>>
 
 fn parse_whitespace<'a>(input: &mut &'a str) -> ModalResult<&'a str> {
     take_while(1.., |c: char| {
-        c.is_whitespace() || matches!(c, '\u{FEFF}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}')
+        c.is_whitespace()
+            || matches!(
+                c,
+                '\u{0001}'..='\u{001F}'
+                    | '\u{FEFF}'
+                    | '\u{200B}'
+                    | '\u{200C}'
+                    | '\u{200D}'
+                    | '\u{2060}'
+            )
     })
     .parse_next(input)
 }
@@ -257,7 +266,7 @@ fn parse_operator_token(input: &mut &str) -> ModalResult<Token> {
     alt((
         "~".map(|_| Token::Tilde),
         alt((
-            alt(("<=", ">=", "<>", "!=")),
+            alt(("<=", ">=", "<>", "!=", "::")),
             alt(("=", "<", ">", "+", "-", "*")),
             alt(("/", "%", "&", "|", "^")),
         ))

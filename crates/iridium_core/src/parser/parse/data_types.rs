@@ -441,7 +441,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
             Keyword::Text => Ok(DataType::Text),
             Keyword::NText => Ok(DataType::NText),
             Keyword::Image => Ok(DataType::Image),
-            Keyword::SqlVariant => Ok(DataType::SqlVariant),
+            Keyword::SqlVariant | Keyword::Cursor => Ok(DataType::SqlVariant),
             _ => Ok(DataType::Custom(kw.as_ref().to_string())),
         },
         _ => parser.backtrack(Expected::Description("data type")),

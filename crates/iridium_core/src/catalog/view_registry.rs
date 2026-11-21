@@ -3,7 +3,7 @@ use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
 impl ViewRegistry for CatalogImpl {
-    fn get_views(&self) -> &[ViewDef] {
+    fn get_views(&self) -> &[Arc<ViewDef>] {
         &self.views
     }
 
@@ -26,7 +26,7 @@ impl ViewRegistry for CatalogImpl {
             ),
             idx,
         );
-        Arc::make_mut(&mut self.views).push(view);
+        Arc::make_mut(&mut self.views).push(Arc::new(view));
         Ok(())
     }
 

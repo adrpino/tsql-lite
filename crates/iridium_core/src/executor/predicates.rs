@@ -163,49 +163,128 @@ pub(crate) fn eval_like(
     Ok(Value::Bit(if negated { !matched } else { matched }))
 }
 
+#[derive(Debug, Clone)]
+enum LikeToken {
+    AnySeq,
+    AnyChar,
+    Literal(char),
+    CharClass {
+        negated: bool,
+        singles: Vec<char>,
+        ranges: Vec<(char, char)>,
+    },
+}
+
+fn like_token_matches_char(tok: &LikeToken, ch: char) -> bool {
+    match tok {
+        LikeToken::AnyChar => true,
+        LikeToken::Literal(c) => *c == ch,
+        LikeToken::CharClass {
+            negated,
+            singles,
+            ranges,
+        } => {
+            let hit = singles.contains(&ch)
+                || ranges.iter().any(|&(lo, hi)| ch >= lo && ch <= hi);
+            if *negated {
+                !hit
+            } else {
+                hit
+            }
+        }
+        LikeToken::AnySeq => false,
+    }
+}
+
 fn like_match(s: &str, pattern: &str, escape: Option<&str>) -> bool {
     let s: Vec<char> = s.to_ascii_uppercase().chars().collect();
     let p_raw: Vec<char> = pattern.to_ascii_uppercase().chars().collect();
     let esc_char = escape.and_then(|e| e.chars().next().map(|c| c.to_ascii_uppercase()));
 
-    let mut p = Vec::new();
-    let mut escaped = Vec::new();
+    let mut tokens: Vec<LikeToken> = Vec::with_capacity(p_raw.len());
     let mut i = 0;
     while i < p_raw.len() {
         if let Some(ec) = esc_char {
             if p_raw[i] == ec && i + 1 < p_raw.len() {
-                p.push(p_raw[i + 1]);
-                escaped.push(true);
+                tokens.push(LikeToken::Literal(p_raw[i + 1]));
                 i += 2;
                 continue;
             }
         }
-        p.push(p_raw[i]);
-        escaped.push(false);
-        i += 1;
+        match p_raw[i] {
+            '%' => {
+                tokens.push(LikeToken::AnySeq);
+                i += 1;
+            }
+            '_' => {
+                tokens.push(LikeToken::AnyChar);
+                i += 1;
+            }
+            '[' => {
+                // T-SQL LIKE character class: `[abc]`, `[a-z]`, `[^abc]`, `[%]`, `[_]`, `[[]`
+                let mut j = i + 1;
+                let mut negated = false;
+                if j < p_raw.len() && p_raw[j] == '^' {
+                    negated = true;
+                    j += 1;
+                }
+                let mut singles = Vec::new();
+                let mut ranges = Vec::new();
+                let mut closed = false;
+                while j < p_raw.len() {
+                    if p_raw[j] == ']' {
+                        closed = true;
+                        j += 1;
+                        break;
+                    }
+                    if j + 2 < p_raw.len() && p_raw[j + 1] == '-' && p_raw[j + 2] != ']' {
+                        ranges.push((p_raw[j], p_raw[j + 2]));
+                        j += 3;
+                    } else {
+                        singles.push(p_raw[j]);
+                        j += 1;
+                    }
+                }
+                if closed {
+                    tokens.push(LikeToken::CharClass {
+                        negated,
+                        singles,
+                        ranges,
+                    });
+                    i = j;
+                } else {
+                    tokens.push(LikeToken::Literal('['));
+                    i += 1;
+                }
+            }
+            c => {
+                tokens.push(LikeToken::Literal(c));
+                i += 1;
+            }
+        }
     }
 
     let sn = s.len();
-    let pn = p.len();
+    let pn = tokens.len();
 
     let mut dp = vec![false; pn + 1];
     dp[0] = true;
     for j in 0..pn {
-        if p[j] == '%' && !escaped[j] {
+        if matches!(tokens[j], LikeToken::AnySeq) {
             dp[j + 1] = dp[j];
         } else {
             break;
         }
     }
 
-    for i_s in 0..sn {
+    for &ch in &s {
         let mut prev = dp[0];
         dp[0] = false;
         for j in 0..pn {
             let tmp = dp[j + 1];
-            dp[j + 1] = if p[j] == '%' && !escaped[j] {
+            dp[j + 1] = if matches!(tokens[j], LikeToken::AnySeq) {
                 tmp || dp[j]
-            } else if (p[j] == '_' && !escaped[j]) || (p[j] == s[i_s]) {
+            } else if like_token_matches_char(&tokens[j], ch) {
                 prev
             } else {
                 false

@@ -91,7 +91,12 @@ pub(crate) fn eval_nullif(
     }
     let left = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
     let right = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
-    if left == right {
+    if left.is_null() {
+        return Ok(Value::Null);
+    }
+    if !right.is_null()
+        && crate::executor::value_ops::compare_values(&left, &right) == std::cmp::Ordering::Equal
+    {
         Ok(Value::Null)
     } else {
         Ok(left)

@@ -20,8 +20,13 @@ pub(crate) fn eval_concat(
     let mut result = String::new();
     for arg in args {
         let val = eval_expr(arg, row, ctx, catalog, storage, clock)?;
-        if !val.is_null() {
-            result.push_str(&val.to_string_value());
+        match val {
+            Value::Null => {}
+            Value::Money(raw) => result.push_str(&crate::types::format_money_varchar(raw)),
+            Value::SmallMoney(raw) => {
+                result.push_str(&crate::types::format_money_varchar(raw as i128))
+            }
+            other => result.push_str(&other.to_string_value()),
         }
     }
     Ok(Value::NVarChar(result))
@@ -48,8 +53,11 @@ pub(crate) fn eval_concat_ws(
     let mut parts = Vec::new();
     for arg in &args[1..] {
         let val = eval_expr(arg, row, ctx, catalog, storage, clock)?;
-        if !val.is_null() {
-            parts.push(val.to_string_value());
+        match val {
+            Value::Null => {}
+            Value::Money(raw) => parts.push(crate::types::format_money_varchar(raw)),
+            Value::SmallMoney(raw) => parts.push(crate::types::format_money_varchar(raw as i128)),
+            other => parts.push(other.to_string_value()),
         }
     }
     Ok(Value::NVarChar(parts.join(&sep)))
@@ -85,10 +93,20 @@ pub(crate) fn eval_format(
             let chrono_fmt = translate_dotnet_datetime_format(&fmt);
             Ok(Value::NVarChar(dt.format(&chrono_fmt).to_string()))
         }
-        Value::Int(v) => Ok(Value::NVarChar(format_integer(v, &fmt))),
+        Value::TinyInt(v) => Ok(Value::NVarChar(format_integer(v as i64, &fmt))),
+        Value::SmallInt(v) => Ok(Value::NVarChar(format_integer(v as i64, &fmt))),
+        Value::Int(v) => Ok(Value::NVarChar(format_integer(v as i64, &fmt))),
         Value::BigInt(v) => Ok(Value::NVarChar(format_integer(v, &fmt))),
         Value::Decimal(raw, scale) => {
             let f = raw as f64 / 10f64.powi(scale as i32);
+            Ok(Value::NVarChar(format_float_value(f, &fmt)))
+        }
+        Value::Money(raw) => {
+            let f = raw as f64 / 10000.0;
+            Ok(Value::NVarChar(format_float_value(f, &fmt)))
+        }
+        Value::SmallMoney(raw) => {
+            let f = raw as f64 / 10000.0;
             Ok(Value::NVarChar(format_float_value(f, &fmt)))
         }
         Value::Float(bits) => {
@@ -364,15 +382,14 @@ pub(crate) fn eval_stuff(
     let repl = replacement.to_string_value();
 
     let chars: Vec<char> = s.chars().collect();
-    let start_idx = if start_i <= 0 {
-        0
-    } else {
-        (start_i - 1) as usize
-    };
-    let delete_count = if length_i < 0 { 0 } else { length_i as usize };
+    if start_i <= 0 || (start_i as usize) > chars.len() || length_i < 0 {
+        return Ok(Value::Null);
+    }
+    let start_idx = (start_i - 1) as usize;
+    let delete_count = length_i as usize;
     let end_idx = (start_idx + delete_count).min(chars.len());
 
-    let mut result: String = chars[..start_idx.min(chars.len())].iter().collect();
+    let mut result: String = chars[..start_idx].iter().collect();
     result.push_str(&repl);
     result.extend(chars[end_idx..].iter());
 
@@ -559,12 +576,28 @@ pub(crate) fn eval_string_escape(
     }
 }
 
-fn format_integer<T: std::fmt::Display>(v: T, fmt: &str) -> String {
-    match fmt {
-        "N" | "n" => format_number_with_commas(&format!("{}", v)),
-        "C" | "c" => format!("${}", v),
-        "P" | "p" => format!("{}%", v),
-        _ => format!("{}", v),
+fn format_integer(v: i64, fmt: &str) -> String {
+    if fmt.starts_with('D') || fmt.starts_with('d') {
+        let width: usize = fmt[1..].parse().unwrap_or(1);
+        if v < 0 {
+            format!("-{:0>width$}", v.unsigned_abs(), width = width)
+        } else {
+            format!("{:0>width$}", v, width = width)
+        }
+    } else if fmt == "N" || fmt == "n" {
+        format_number_with_commas(&format!("{}", v))
+    } else if fmt == "C" || fmt == "c" {
+        format!("${}", v)
+    } else if fmt == "P" || fmt == "p" {
+        format!("{}%", v)
+    } else if fmt.contains('0')
+        || fmt.contains('#')
+        || fmt.contains('.')
+        || fmt.starts_with(['F', 'f', 'N', 'n', 'C', 'c', 'P', 'p', 'G', 'g'])
+    {
+        format_float_value(v as f64, fmt)
+    } else {
+        format!("{}", v)
     }
 }
 
@@ -576,13 +609,24 @@ fn format_float_value(f: f64, fmt: &str) -> String {
             2
         };
         format_number_with_commas(&format!("{:.*}", decimals, f))
+    } else if fmt.starts_with('F') || fmt.starts_with('f') {
+        let decimals: usize = if fmt.len() > 1 {
+            fmt[1..].parse().unwrap_or(2)
+        } else {
+            2
+        };
+        format!("{:.*}", decimals, f)
     } else if fmt.starts_with('C') || fmt.starts_with('c') {
         let decimals: usize = if fmt.len() > 1 {
             fmt[1..].parse().unwrap_or(2)
         } else {
             2
         };
-        format!("${:.*}", decimals, f)
+        if f < 0.0 {
+            format!("-${:.*}", decimals, f.abs())
+        } else {
+            format!("${:.*}", decimals, f)
+        }
     } else if fmt.starts_with('P') || fmt.starts_with('p') {
         let decimals: usize = if fmt.len() > 1 {
             fmt[1..].parse().unwrap_or(2)
@@ -590,8 +634,58 @@ fn format_float_value(f: f64, fmt: &str) -> String {
             2
         };
         format!("{:.*}%", decimals, f * 100.0)
+    } else if fmt.starts_with('G') || fmt.starts_with('g') {
+        format!("{}", f)
+    } else if fmt.contains('0') || fmt.contains('#') {
+        format_custom_numeric(f, fmt)
     } else {
         format!("{}", f)
+    }
+}
+
+fn format_custom_numeric(f: f64, fmt: &str) -> String {
+    let section = fmt.split(';').next().unwrap_or(fmt);
+    let mut parts = section.splitn(2, '.');
+    let int_spec = parts.next().unwrap_or("0");
+    let frac_spec = parts.next().unwrap_or("");
+
+    let use_commas = int_spec.contains(',');
+    let min_int_digits = int_spec.chars().filter(|&c| c == '0').count();
+    let min_frac_digits = frac_spec.chars().filter(|&c| c == '0').count();
+    let max_frac_digits = frac_spec
+        .chars()
+        .filter(|&c| c == '0' || c == '#')
+        .count();
+
+    let negative = f < 0.0;
+    let rounded = format!("{:.*}", max_frac_digits, f.abs());
+    let mut r_parts = rounded.splitn(2, '.');
+    let mut int_str = r_parts.next().unwrap_or("0").to_string();
+    let mut frac_str = r_parts.next().unwrap_or("").to_string();
+
+    while frac_str.len() > min_frac_digits && frac_str.ends_with('0') {
+        frac_str.pop();
+    }
+    if int_str == "0" && min_int_digits == 0 && !frac_str.is_empty() {
+        int_str.clear();
+    } else if int_str.len() < min_int_digits {
+        int_str = format!("{:0>width$}", int_str, width = min_int_digits);
+    }
+
+    let formatted_int = if use_commas && !int_str.is_empty() {
+        format_number_with_commas(&int_str)
+    } else {
+        int_str
+    };
+    let sign = if negative && (formatted_int != "0" || !frac_str.is_empty()) {
+        "-"
+    } else {
+        ""
+    };
+    if frac_str.is_empty() {
+        format!("{}{}", sign, formatted_int)
+    } else {
+        format!("{}{}.{}", sign, formatted_int, frac_str)
     }
 }
 

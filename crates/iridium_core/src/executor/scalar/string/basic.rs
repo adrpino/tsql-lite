@@ -24,11 +24,11 @@ pub(crate) fn eval_len(
     match val {
         Value::Null => Ok(Value::Null),
         Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
-            Ok(Value::Int(s.trim_end().len() as i32))
+            Ok(Value::Int(s.trim_end().chars().count() as i32))
         }
         _ => {
             let s = val.to_string_value();
-            Ok(Value::Int(s.trim_end().len() as i32))
+            Ok(Value::Int(s.trim_end().chars().count() as i32))
         }
     }
 }

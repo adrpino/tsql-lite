@@ -16,7 +16,7 @@ pub(crate) fn enforce_string_length(
     if let Some(max) = max_len {
         let actual_len = match value {
             Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
-                Some(s.len())
+                Some(s.chars().count())
             }
             Value::Binary(v) | Value::VarBinary(v) => Some(v.len()),
             _ => None,

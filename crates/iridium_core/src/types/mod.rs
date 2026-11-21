@@ -470,6 +470,18 @@ pub fn format_money(raw: i128) -> String {
     format!("{}${}.{}", if negative { "-" } else { "" }, whole, frac_str)
 }
 
+/// Formats MONEY/SMALLMONEY for `CAST(... AS VARCHAR/NVARCHAR)` (SQL Server default style 0:
+/// two decimal places, rounded half-away-from-zero, no currency symbol).
+pub fn format_money_varchar(raw: i128) -> String {
+    let negative = raw < 0;
+    let abs = raw.unsigned_abs();
+    // raw is scaled by 10_000; round to cents (100)
+    let cents = (abs + 50) / 100;
+    let whole = cents / 100;
+    let frac = cents % 100;
+    format!("{}{}.{:02}", if negative && cents > 0 { "-" } else { "" }, whole, frac)
+}
+
 pub fn format_binary(data: &[u8]) -> String {
     let mut s = String::with_capacity(2 + data.len() * 2);
     s.push_str("0x");

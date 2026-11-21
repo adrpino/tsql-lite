@@ -284,10 +284,10 @@ pub(crate) fn coerce_money(raw: i128, ty: &DataType) -> Result<Value, DbError> {
             Ok(Value::Decimal(converted, *scale))
         }
         DataType::Char { .. } | DataType::VarChar { .. } => {
-            Ok(Value::VarChar(crate::types::format_money(raw)))
+            Ok(Value::VarChar(crate::types::format_money_varchar(raw)))
         }
         DataType::NChar { .. } | DataType::NVarChar { .. } => {
-            Ok(Value::NVarChar(crate::types::format_money(raw)))
+            Ok(Value::NVarChar(crate::types::format_money_varchar(raw)))
         }
         DataType::Binary { .. } => Ok(Value::Binary(raw.to_le_bytes().to_vec())),
         DataType::VarBinary { .. } => Ok(Value::VarBinary(raw.to_le_bytes().to_vec())),

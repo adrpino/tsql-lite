@@ -291,11 +291,14 @@ impl<'a> ScriptExecutor<'a> {
                         let val =
                             eval_expr(&arg.expr, &[], ctx, self.catalog, self.storage, self.clock)?;
                         let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
-                        let coerced = coerce_value_to_type_with_dateformat(
-                            val,
+                        let coerced = truncate_param_string(
+                            coerce_value_to_type_with_dateformat(
+                                val,
+                                &ty,
+                                &ctx.options.dateformat,
+                            )?,
                             &ty,
-                            &ctx.options.dateformat,
-                        )?;
+                        );
                         let output_caller = if param.is_output && arg.is_output {
                             if let crate::ast::Expr::Identifier(ref caller) = arg.expr {
                                 Some(caller.clone())
@@ -496,5 +499,30 @@ impl<'a> ScriptExecutor<'a> {
             "3641190370" => Ok((None, -1)),
             _ => Ok((None, -1)),
         }
+    }
+}
+
+fn truncate_param_string(val: Value, ty: &crate::types::DataType) -> Value {
+    let max_len = match ty {
+        crate::types::DataType::VarChar { max_len }
+        | crate::types::DataType::NVarChar { max_len }
+            if *max_len < u16::MAX =>
+        {
+            Some(*max_len as usize)
+        }
+        crate::types::DataType::Char { len } | crate::types::DataType::NChar { len } => {
+            Some(*len as usize)
+        }
+        _ => None,
+    };
+    let Some(limit) = max_len else {
+        return val;
+    };
+    match val {
+        Value::VarChar(s) => Value::VarChar(s.chars().take(limit).collect()),
+        Value::NVarChar(s) => Value::NVarChar(s.chars().take(limit).collect()),
+        Value::Char(s) => Value::Char(s.chars().take(limit).collect()),
+        Value::NChar(s) => Value::NChar(s.chars().take(limit).collect()),
+        other => other,
     }
 }

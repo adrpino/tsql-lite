@@ -1790,3 +1790,70 @@ fn bare_throw_nullable_param_insert_exec_rc_alter_proc_toggle_trigger_default_pk
         "<Root><Keep>y</Keep><New>z</New></Root>"
     );
 }
+
+#[test]
+fn nullif_sql_eq_stuff_bounds_money_varchar_custom_format_nvarchar_chars_param_trunc_and_like_classes() {
+    let mut e = Engine::new();
+
+    // 1. NULLIF uses SQL equality (NVARCHAR vs VARCHAR, trailing spaces)
+    let r1 = query(
+        &mut e,
+        "SELECT COALESCE(NULLIF(N'', ''), 'fallback'), COALESCE(NULLIF(N'   ', ''), 'fallback2')",
+    );
+    assert_eq!(r1.rows[0][0].to_string_value(), "fallback");
+    assert_eq!(r1.rows[0][1].to_string_value(), "fallback2");
+
+    // 2. STUFF returns NULL when start <= 0 or start > len(str)
+    let r2 = query(&mut e, "SELECT STUFF('', 1, 2, ''), STUFF('ab', 5, 1, 'x'), STUFF('abcd', 1, 2, '')");
+    assert!(r2.rows[0][0].is_null());
+    assert!(r2.rows[0][1].is_null());
+    assert_eq!(r2.rows[0][2].to_string_value(), "cd");
+
+    // 3. MONEY -> VARCHAR formats 2dp without '$', and CONCAT formats MONEY the same way
+    let r3 = query(
+        &mut e,
+        "SELECT CAST(CAST(-25.50 AS MONEY) AS VARCHAR(20)), CONCAT('amt=', CAST(-25.50 AS MONEY))",
+    );
+    assert_eq!(r3.rows[0][0].to_string_value(), "-25.50");
+    assert_eq!(r3.rows[0][1].to_string_value(), "amt=-25.50");
+
+    // 4. FORMAT with .NET custom numeric patterns (0.0000, #,0.00####, 0.00)
+    let r4 = query(
+        &mut e,
+        "SELECT FORMAT(CAST(1000 AS DECIMAL(18,4)), '0.0000', 'en-US'),
+                FORMAT(CAST(2.5 AS DECIMAL(18,6)), '0.0000'),
+                FORMAT(CAST(1234.5 AS DECIMAL(18,4)), '#,0.00####'),
+                FORMAT(980, '0.00')",
+    );
+    assert_eq!(r4.rows[0][0].to_string_value(), "1000.0000");
+    assert_eq!(r4.rows[0][1].to_string_value(), "2.5000");
+    assert_eq!(r4.rows[0][2].to_string_value(), "1,234.50");
+    assert_eq!(r4.rows[0][3].to_string_value(), "980.00");
+
+    // 5. NVARCHAR(N) enforces Unicode character count, not UTF-8 byte length
+    exec(&mut e, "CREATE TABLE #u (s NVARCHAR(5))");
+    exec(&mut e, "INSERT INTO #u VALUES (REPLICATE(N'É', 5))");
+    let r5 = query(&mut e, "SELECT LEN(s) FROM #u");
+    assert_eq!(r5.rows[0][0].to_integer_i64(), Some(5));
+
+    // 6. Procedure VARCHAR(N) parameter truncates longer inputs
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.p_len (@code VARCHAR(5)) AS BEGIN SELECT @code AS c; END",
+    );
+    let r6 = query(&mut e, "EXEC dbo.p_len 'ABCDEFGH'");
+    assert_eq!(r6.rows[0][0].to_string_value(), "ABCDE");
+
+    // 7. T-SQL LIKE bracket character classes ([%], [_], [[], [a-z], [^0-9])
+    let r7 = query(
+        &mut e,
+        "SELECT CASE WHEN 'INV_50% [X]' LIKE '%[_]50[%] [[]X]%' THEN 1 ELSE 0 END,
+                CASE WHEN 'INVX50A [X]' LIKE '%[_]50[%] [[]X]%' THEN 1 ELSE 0 END,
+                CASE WHEN 'B' LIKE '[A-C]' THEN 1 ELSE 0 END,
+                CASE WHEN 'D' LIKE '[^A-C]' THEN 1 ELSE 0 END",
+    );
+    assert_eq!(r7.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r7.rows[0][1].to_integer_i64(), Some(0));
+    assert_eq!(r7.rows[0][2].to_integer_i64(), Some(1));
+    assert_eq!(r7.rows[0][3].to_integer_i64(), Some(1));
+}

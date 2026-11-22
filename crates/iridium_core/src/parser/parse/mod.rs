@@ -103,15 +103,17 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             Keyword::Select => {
                 let s = parse_select(parser)?;
                 if let Some(assigns) = try_select_assign(&s) {
-                    Ok(Statement::Dml(DmlStatement::SelectAssign {
-                        assignments: assigns,
-                        from: s.from,
-                        joins: s.joins,
-                        applies: s.applies,
-                        selection: s.selection,
-                        order_by: s.order_by,
-                        top: s.top,
-                    }))
+                    Ok(Statement::Dml(DmlStatement::SelectAssign(Box::new(
+                        SelectAssignStmt {
+                            assignments: assigns,
+                            from: s.from,
+                            joins: s.joins,
+                            applies: s.applies,
+                            selection: s.selection,
+                            order_by: s.order_by,
+                            top: s.top,
+                        },
+                    ))))
                 } else {
                     Ok(Statement::Dml(DmlStatement::Select(Box::new(s))))
                 }
@@ -200,28 +202,28 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                         is_clustered = false;
                     }
                     parser.expect_keyword(Keyword::Index)?;
-                    return Ok(Statement::Ddl(DdlStatement::CreateIndex(Box::new(
-                        parse_create_index(parser, true, is_clustered)?,
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CreateIndex(
+                        Box::new(parse_create_index(parser, true, is_clustered)?),
                     ))));
                 }
                 if parser.at_keyword(Keyword::Clustered) {
                     let _ = parser.next();
                     parser.expect_keyword(Keyword::Index)?;
-                    return Ok(Statement::Ddl(DdlStatement::CreateIndex(Box::new(
-                        parse_create_index(parser, false, true)?,
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CreateIndex(
+                        Box::new(parse_create_index(parser, false, true)?),
                     ))));
                 }
                 if parser.at_keyword(Keyword::Nonclustered) {
                     let _ = parser.next();
                     parser.expect_keyword(Keyword::Index)?;
-                    return Ok(Statement::Ddl(DdlStatement::CreateIndex(Box::new(
-                        parse_create_index(parser, false, false)?,
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CreateIndex(
+                        Box::new(parse_create_index(parser, false, false)?),
                     ))));
                 }
                 if parser.at_keyword(Keyword::Index) {
                     let _ = parser.next();
-                    return Ok(Statement::Ddl(DdlStatement::CreateIndex(Box::new(
-                        parse_create_index(parser, false, false)?,
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CreateIndex(
+                        Box::new(parse_create_index(parser, false, false)?),
                     ))));
                 }
                 if parser.at_keyword(Keyword::Type) {
@@ -237,10 +239,10 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                     let name = multipart_name(parser)?;
                     parser.expect_keyword(Keyword::For)?;
                     let base_object = multipart_name(parser)?;
-                    return Ok(Statement::Ddl(DdlStatement::CreateSynonym {
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CreateSynonym {
                         name,
                         base_object,
-                    }));
+                    })));
                 }
                 if parser.at_keyword(Keyword::Sequence) {
                     let _ = parser.next();
@@ -270,21 +272,21 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                         Vec::new(),
                     )));
                 }
-                Ok(Statement::Ddl(DdlStatement::Create(Box::new(
+                Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
                     parse_create(parser)?,
-                ))))
+                )))))
             }
             Keyword::Drop => {
                 let _ = parser.next();
                 if parser.at_keyword(Keyword::Synonym) {
                     let _ = parser.next();
                     let name = multipart_name(parser)?;
-                    return Ok(Statement::Ddl(DdlStatement::DropSynonym(name)));
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::DropSynonym(name))));
                 }
                 if parser.at_keyword(Keyword::Sequence) {
                     let _ = parser.next();
                     let name = multipart_name(parser)?;
-                    return Ok(Statement::Ddl(DdlStatement::DropSequence(name)));
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::DropSequence(name))));
                 }
                 parse_drop(parser)
             }
@@ -292,7 +294,7 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parser.next();
                 parser.expect_keyword(Keyword::Table)?;
                 let table = multipart_name(parser)?;
-                Ok(Statement::Ddl(DdlStatement::TruncateTable(table)))
+                Ok(Statement::Ddl(Box::new(DdlStatement::TruncateTable(table))))
             }
             Keyword::Alter => {
                 let _ = parser.next();
@@ -560,13 +562,13 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             };
             parser.expect_keyword(Keyword::On)?;
             let table = multipart_name(parser)?;
-            Ok(Statement::Ddl(DdlStatement::AlterTable {
+            Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                 table,
                 action: AlterTableAction::ToggleTrigger {
                     trigger_name,
                     enable,
                 },
-            }))
+            })))
         }
         Some(Token::Identifier(id))
             if id.eq_ignore_ascii_case("GRANT")
@@ -795,7 +797,7 @@ fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
             let query = parse_select(parser)?;
             return Ok(Statement::Procedural(ProceduralStatement::DeclareCursor {
                 name: cursor_name,
-                query,
+                query: Box::new(query),
             }));
         }
     }

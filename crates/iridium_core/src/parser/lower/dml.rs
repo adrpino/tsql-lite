@@ -56,15 +56,16 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
         ast::DmlStatement::InsertBulk(s) => Ok(executor_ast::Statement::Dml(
             executor_ast::statements::DmlStatement::InsertBulk(Box::new(lower_insert_bulk(*s)?)),
         )),
-        ast::DmlStatement::SelectAssign {
-            assignments,
-            from,
-            joins: ast_joins,
-            applies,
-            selection,
-            order_by,
-            top,
-        } => {
+        ast::DmlStatement::SelectAssign(sa) => {
+            let ast::SelectAssignStmt {
+                assignments,
+                from,
+                joins: ast_joins,
+                applies,
+                selection,
+                order_by,
+                top,
+            } = *sa;
             let mut joins = Vec::new();
             let from_tr = if let Some(from_ref) = from {
                 let (tr, mut j) = lower_table_ref_recursive(from_ref)?;

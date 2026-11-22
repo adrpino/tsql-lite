@@ -310,6 +310,115 @@ fn ast_and_catalog_enums_stay_compact() {
         "RoutineDef grew to {} B",
         size_of::<RoutineDef>()
     );
+    assert!(
+        size_of::<iridium_core::parser::ast::Expr>() <= 64,
+        "parser::ast::Expr grew to {} B",
+        size_of::<iridium_core::parser::ast::Expr>()
+    );
+    assert!(
+        size_of::<iridium_core::parser::ast::Statement>() <= 216,
+        "parser::ast::Statement grew to {} B",
+        size_of::<iridium_core::parser::ast::Statement>()
+    );
+}
+
+#[test]
+fn in_memory_storage_cow_delta_shares_base_and_merges_cleanly() {
+    use iridium_core::storage::{CheckpointableStorage, InMemoryStorage, Storage, StoredRow};
+    use std::collections::HashSet;
+
+    let mut base = InMemoryStorage::default();
+    for tid in 1..=200u32 {
+        base.ensure_table(tid).unwrap();
+    }
+    base.insert_row(
+        1,
+        StoredRow {
+            values: vec![Value::Int(10)],
+            deleted: false,
+        },
+    )
+    .unwrap();
+
+    // Forking shares base pointer, and mutating a fork keeps base pointer shared (delta-only!).
+    let mut fork_a = base.clone();
+    let mut fork_b = base.clone();
+    assert!(fork_a.shares_base_with(&base));
+    assert!(fork_b.shares_base_with(&base));
+
+    fork_a.ensure_table(999).unwrap();
+    fork_a
+        .insert_row(
+            999,
+            StoredRow {
+                values: vec![Value::Int(42)],
+                deleted: false,
+            },
+        )
+        .unwrap();
+    fork_a
+        .insert_row(
+            1,
+            StoredRow {
+                values: vec![Value::Int(20)],
+                deleted: false,
+            },
+        )
+        .unwrap();
+    fork_a.remove_table(2).unwrap();
+
+    // Pointer to the 200-table base map was NEVER cloned!
+    assert!(fork_a.shares_base_with(&base));
+    assert_eq!(base.get_rows(1).unwrap().len(), 1);
+    assert_eq!(fork_a.get_rows(1).unwrap().len(), 2);
+    assert!(fork_a.get_rows(2).is_err());
+    assert_eq!(fork_a.get_rows(999).unwrap().len(), 1);
+
+    // Independent fork_b touches table 3; concurrent merge_workspace preserves both A and B.
+    fork_b
+        .insert_row(
+            3,
+            StoredRow {
+                values: vec![Value::Int(30)],
+                deleted: false,
+            },
+        )
+        .unwrap();
+    assert!(fork_b.shares_base_with(&base));
+
+    let mut merged = base.clone();
+    merged.merge_workspace(fork_a.clone(), &base);
+    merged.merge_workspace(fork_b.clone(), &base);
+    assert_eq!(merged.get_rows(1).unwrap().len(), 2);
+    assert!(merged.get_rows(2).is_err());
+    assert_eq!(merged.get_rows(3).unwrap().len(), 1);
+    assert_eq!(merged.get_rows(999).unwrap().len(), 1);
+
+    // Snapshot & restore with preserved table ID.
+    let snap = fork_a.take_fast_snapshot().unwrap();
+    fork_a.clear_table(1).unwrap();
+    fork_a
+        .insert_row(
+            999,
+            StoredRow {
+                values: vec![Value::Int(99)],
+                deleted: false,
+            },
+        )
+        .unwrap();
+    let preserve: HashSet<u32> = [999].into_iter().collect();
+    assert!(fork_a.restore_fast_snapshot(&snap, &preserve).unwrap());
+    assert_eq!(fork_a.get_rows(1).unwrap().len(), 2);
+    assert_eq!(fork_a.get_rows(999).unwrap().len(), 2);
+
+    // Checkpoint & serde round-trip preserve all materialized delta tables.
+    let cp = merged.get_checkpoint_data();
+    let mut restored = InMemoryStorage::default();
+    restored.restore_from_checkpoint(cp).unwrap();
+    assert_eq!(restored.get_rows(1).unwrap().len(), 2);
+    assert!(restored.get_rows(2).is_err());
+    assert_eq!(restored.get_rows(3).unwrap().len(), 1);
+    assert_eq!(restored.get_rows(999).unwrap().len(), 1);
 }
 
 #[test]

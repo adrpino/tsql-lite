@@ -149,15 +149,13 @@ pub fn lower_expr(parser_expr: ast::Expr) -> Result<executor_ast::expressions::E
             args,
             within_group,
         } => {
-            let lowered_wg = if within_group.is_empty() {
-                None
-            } else {
-                Some(Box::new(
-                    within_group
-                        .into_iter()
+            let lowered_wg = match within_group {
+                Some(wg) if !wg.is_empty() => Some(Box::new(
+                    wg.into_iter()
                         .map(lower_order_by_expr)
                         .collect::<Result<Vec<_>, _>>()?,
-                ))
+                )),
+                _ => None,
             };
             Ok(executor_ast::expressions::Expr::FunctionCall {
                 name,
@@ -168,30 +166,33 @@ pub fn lower_expr(parser_expr: ast::Expr) -> Result<executor_ast::expressions::E
                 within_group: lowered_wg,
             })
         }
-        ast::Expr::WindowFunction {
-            name,
-            args,
-            partition_by,
-            order_by,
-            frame,
-        } => Ok(executor_ast::expressions::Expr::WindowFunction(Box::new(
-            executor_ast::expressions::WindowFunctionExpr {
-                func: lower_window_func(name.as_str()),
-                args: args
-                    .into_iter()
-                    .map(lower_expr)
-                    .collect::<Result<Vec<_>, _>>()?,
-                partition_by: partition_by
-                    .into_iter()
-                    .map(lower_expr)
-                    .collect::<Result<Vec<_>, _>>()?,
-                order_by: order_by
-                    .into_iter()
-                    .map(lower_order_by_expr)
-                    .collect::<Result<Vec<_>, _>>()?,
-                frame: frame.map(lower_window_frame),
-            },
-        ))),
+        ast::Expr::WindowFunction(wf) => {
+            let ast::WindowFunctionExpr {
+                name,
+                args,
+                partition_by,
+                order_by,
+                frame,
+            } = *wf;
+            Ok(executor_ast::expressions::Expr::WindowFunction(Box::new(
+                executor_ast::expressions::WindowFunctionExpr {
+                    func: lower_window_func(name.as_str()),
+                    args: args
+                        .into_iter()
+                        .map(lower_expr)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    partition_by: partition_by
+                        .into_iter()
+                        .map(lower_expr)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    order_by: order_by
+                        .into_iter()
+                        .map(lower_order_by_expr)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    frame: frame.map(lower_window_frame),
+                },
+            )))
+        }
         ast::Expr::NextValueFor { sequence_name } => {
             Ok(executor_ast::expressions::Expr::NextValueFor {
                 sequence_name: Box::new(lower_object_name(sequence_name)),

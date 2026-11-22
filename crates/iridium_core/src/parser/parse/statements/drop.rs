@@ -21,39 +21,42 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
         let if_exists = consume_if_exists(parser);
         let first = super::parse_multipart_name(parser)?;
         if matches!(parser.peek(), Some(Token::Comma)) {
-            let mut stmts = vec![Statement::Ddl(DdlStatement::DropTable {
+            let mut stmts = vec![Statement::Ddl(Box::new(DdlStatement::DropTable {
                 name: first,
                 if_exists,
-            })];
+            }))];
             while matches!(parser.peek(), Some(Token::Comma)) {
                 let _ = parser.next();
                 let next_name = super::parse_multipart_name(parser)?;
-                stmts.push(Statement::Ddl(DdlStatement::DropTable {
+                stmts.push(Statement::Ddl(Box::new(DdlStatement::DropTable {
                     name: next_name,
                     if_exists,
-                }));
+                })));
             }
             Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
         } else {
-            Ok(Statement::Ddl(DdlStatement::DropTable {
+            Ok(Statement::Ddl(Box::new(DdlStatement::DropTable {
                 name: first,
                 if_exists,
-            }))
+            })))
         }
     } else if parser.at_keyword(Keyword::View) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropView { name, if_exists }))
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropView {
+            name,
+            if_exists,
+        })))
     } else if matches!(parser.peek(), Some(Token::Keyword(kw)) if matches!(kw, Keyword::Procedure | Keyword::Proc))
     {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropProcedure {
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropProcedure {
             name,
             if_exists,
-        }))
+        })))
     } else if parser.at_keyword(Keyword::Index) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
@@ -84,16 +87,19 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
                 }
             }
         }
-        Ok(Statement::Ddl(DdlStatement::DropIndex {
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropIndex {
             name,
             table,
             if_exists,
-        }))
+        })))
     } else if parser.at_keyword(Keyword::Type) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropType { name, if_exists }))
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropType {
+            name,
+            if_exists,
+        })))
     } else if parser.at_keyword(Keyword::Schema) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
@@ -102,23 +108,26 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
             Some(Token::Keyword(k)) => k.as_ref().to_string(),
             _ => return parser.backtrack(Expected::Description("identifier or keyword")),
         };
-        Ok(Statement::Ddl(DdlStatement::DropSchema { name, if_exists }))
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropSchema {
+            name,
+            if_exists,
+        })))
     } else if parser.at_keyword(Keyword::Function) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropFunction {
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropFunction {
             name,
             if_exists,
-        }))
+        })))
     } else if parser.at_keyword(Keyword::Trigger) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
-        Ok(Statement::Ddl(DdlStatement::DropTrigger {
+        Ok(Statement::Ddl(Box::new(DdlStatement::DropTrigger {
             name,
             if_exists,
-        }))
+        })))
     } else {
         parser.backtrack(Expected::Description("drop target"))
     }

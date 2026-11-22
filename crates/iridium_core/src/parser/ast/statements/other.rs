@@ -4,11 +4,10 @@ use super::super::expressions::Expr;
 use super::query::{JoinClause, SelectStmt};
 use serde::{Deserialize, Serialize};
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Statement {
     Dml(DmlStatement),
-    Ddl(DdlStatement),
+    Ddl(Box<DdlStatement>),
     Procedural(ProceduralStatement),
     Transaction(TransactionStatement),
     Cursor(CursorStatement),
@@ -19,7 +18,6 @@ pub enum Statement {
     },
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DmlStatement {
     Select(Box<SelectStmt>),
@@ -29,15 +27,18 @@ pub enum DmlStatement {
     Merge(Box<MergeStmt>),
     BulkInsert(Box<BulkInsertStmt>),
     InsertBulk(Box<InsertBulkStmt>),
-    SelectAssign {
-        assignments: Vec<SelectAssignTarget>,
-        from: Option<TableRef>,
-        joins: Vec<JoinClause>,
-        applies: Vec<super::query::ApplyClause>,
-        selection: Option<Expr>,
-        order_by: Vec<super::query::OrderByExpr>,
-        top: Option<super::query::TopSpec>,
-    },
+    SelectAssign(Box<SelectAssignStmt>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SelectAssignStmt {
+    pub assignments: Vec<SelectAssignTarget>,
+    pub from: Option<TableRef>,
+    pub joins: Vec<JoinClause>,
+    pub applies: Vec<super::query::ApplyClause>,
+    pub selection: Option<Expr>,
+    pub order_by: Vec<super::query::OrderByExpr>,
+    pub top: Option<super::query::TopSpec>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -134,7 +135,7 @@ pub enum ProceduralStatement {
     },
     DeclareCursor {
         name: String,
-        query: SelectStmt,
+        query: Box<SelectStmt>,
     },
     Set {
         variable: String,

@@ -31,7 +31,7 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                 left = Expr::FunctionCall {
                     name: "__AT_TIME_ZONE".to_string(),
                     args: vec![left, tz_expr],
-                    within_group: vec![],
+                    within_group: None,
                 };
                 continue;
             }
@@ -54,7 +54,7 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                     left = Expr::FunctionCall {
                         name: "__COLLATE".to_string(),
                         args: vec![left, Expr::String(collation_name)],
-                        within_group: vec![],
+                        within_group: None,
                     };
                     continue;
                 }

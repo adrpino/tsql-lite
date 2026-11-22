@@ -47,7 +47,7 @@ pub enum Expr {
     FunctionCall {
         name: String,
         args: Vec<Expr>,
-        within_group: Vec<OrderByExpr>,
+        within_group: Option<Box<Vec<OrderByExpr>>>,
     },
     Binary {
         left: Box<Expr>,
@@ -110,16 +110,19 @@ pub enum Expr {
         expr: Box<Expr>,
         style: Option<i32>,
     },
-    WindowFunction {
-        name: String,
-        args: Vec<Expr>,
-        partition_by: Vec<Expr>,
-        order_by: Vec<OrderByExpr>,
-        frame: Option<WindowFrame>,
-    },
+    WindowFunction(Box<WindowFunctionExpr>),
     NextValueFor {
         sequence_name: Vec<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WindowFunctionExpr {
+    pub name: String,
+    pub args: Vec<Expr>,
+    pub partition_by: Vec<Expr>,
+    pub order_by: Vec<OrderByExpr>,
+    pub frame: Option<WindowFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

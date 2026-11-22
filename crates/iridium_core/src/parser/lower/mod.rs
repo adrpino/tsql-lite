@@ -21,7 +21,7 @@ pub fn lower_batch(
 pub fn lower_statement(parser_stmt: ast::Statement) -> Result<executor_ast::Statement, DbError> {
     match parser_stmt {
         ast::Statement::Dml(dml) => lower_dml(dml),
-        ast::Statement::Ddl(ddl) => lower_ddl(ddl),
+        ast::Statement::Ddl(ddl) => lower_ddl(*ddl),
         ast::Statement::Procedural(proc) => lower_procedural(proc),
         ast::Statement::Transaction(txn) => lower_transaction(txn),
         ast::Statement::Cursor(cursor) => lower_cursor(cursor),

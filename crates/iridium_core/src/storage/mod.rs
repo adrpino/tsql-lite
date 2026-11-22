@@ -29,8 +29,8 @@ pub enum StorageCheckpointData {
 
 #[derive(Debug, Clone)]
 pub enum StorageSnapshot {
-    /// O(1) copy-on-write snapshot for `InMemoryStorage`: a single `Arc::clone` of `tables`.
-    InMemory(Arc<HashMap<u32, Arc<Vec<StoredRow>>>>),
+    /// O(1) copy-on-write snapshot for `InMemoryStorage` (`Arc::clone` of `base` + small `delta`).
+    InMemory(InMemoryStorage),
     /// Fallback per-table row snapshot for non-in-memory storage backends.
     Tables(HashMap<u32, Vec<StoredRow>>),
 }
@@ -93,48 +93,111 @@ pub trait CheckpointableStorage: Storage {
     fn clone_checkpointable(&self) -> Box<dyn CheckpointableStorage>;
 }
 
-mod cow_tables_serde {
-    use super::StoredRow;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::collections::HashMap;
-    use std::sync::Arc;
+/// Copy-on-write in-memory table storage backed by a shared immutable `base` map
+/// plus a small per-fork `delta` overlay (`None` = deleted table, `Some(rows)` = added/modified).
+///
+/// - Before any clone (`Arc::strong_count(&self.base) == 1 && self.delta.is_empty()`),
+///   mutations update `base` directly in place with zero overlay overhead.
+/// - After `clone()` / `fork_isolated()`, mutations record only touched table IDs in
+///   `delta` in O(1), avoiding cloning the full `base` HashMap on every fork or transaction.
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryStorage {
+    base: Arc<HashMap<u32, Arc<Vec<StoredRow>>>>,
+    delta: HashMap<u32, Option<Arc<Vec<StoredRow>>>>,
+}
 
-    pub fn serialize<S>(
-        val: &Arc<HashMap<u32, Arc<Vec<StoredRow>>>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let plain: HashMap<u32, &[StoredRow]> =
-            val.iter().map(|(&k, v)| (k, v.as_slice())).collect();
-        plain.serialize(serializer)
+impl InMemoryStorage {
+    #[inline]
+    fn is_unshared(&self) -> bool {
+        self.delta.is_empty() && Arc::strong_count(&self.base) == 1
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Arc<HashMap<u32, Arc<Vec<StoredRow>>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let plain: HashMap<u32, Vec<StoredRow>> = HashMap::deserialize(deserializer)?;
-        Ok(Arc::new(
-            plain.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(),
-        ))
+    #[inline]
+    fn get_table(&self, table_id: u32) -> Option<&Arc<Vec<StoredRow>>> {
+        if !self.delta.is_empty() {
+            if let Some(entry) = self.delta.get(&table_id) {
+                return entry.as_ref();
+            }
+        }
+        self.base.get(&table_id)
+    }
+
+    fn get_table_mut_arc(&mut self, table_id: u32) -> Option<&mut Arc<Vec<StoredRow>>> {
+        if self.is_unshared() {
+            return Arc::make_mut(&mut self.base).get_mut(&table_id);
+        }
+        use std::collections::hash_map::Entry;
+        match self.delta.entry(table_id) {
+            Entry::Occupied(entry) => entry.into_mut().as_mut(),
+            Entry::Vacant(entry) => {
+                let base_arc = self.base.get(&table_id)?;
+                entry.insert(Some(Arc::clone(base_arc))).as_mut()
+            }
+        }
+    }
+
+    fn materialized_tables(&self) -> HashMap<u32, &[StoredRow]> {
+        let mut out: HashMap<u32, &[StoredRow]> =
+            HashMap::with_capacity(self.base.len() + self.delta.len());
+        for (&k, v) in self.base.iter() {
+            out.insert(k, v.as_slice());
+        }
+        for (&k, v) in &self.delta {
+            match v {
+                Some(rows) => {
+                    out.insert(k, rows.as_slice());
+                }
+                None => {
+                    out.remove(&k);
+                }
+            }
+        }
+        out
+    }
+
+    /// Returns `true` if `self` and `other` share the exact same underlying `base` map pointer.
+    #[doc(hidden)]
+    pub fn shares_base_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.base, &other.base)
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct InMemoryStorage {
-    #[serde(with = "cow_tables_serde")]
-    pub tables: Arc<HashMap<u32, Arc<Vec<StoredRow>>>>,
+impl Serialize for InMemoryStorage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            tables: HashMap<u32, &'a [StoredRow]>,
+        }
+        Wire {
+            tables: self.materialized_tables(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for InMemoryStorage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            tables: HashMap<u32, Vec<StoredRow>>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            base: Arc::new(
+                wire.tables
+                    .into_iter()
+                    .map(|(k, v)| (k, Arc::new(v)))
+                    .collect(),
+            ),
+            delta: HashMap::new(),
+        })
+    }
 }
 
 impl Storage for InMemoryStorage {
     fn scan_rows<'a>(&'a self, table_id: u32) -> Result<StorageRowStream<'a>, DbError> {
         let rows = self
-            .tables
-            .get(&table_id)
+            .get_table(table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found in storage", table_id)))?;
 
         Ok(Box::new(rows.iter().cloned().map(Ok)))
@@ -142,23 +205,22 @@ impl Storage for InMemoryStorage {
 
     fn get_row(&self, table_id: u32, index: usize) -> Result<Option<StoredRow>, DbError> {
         let rows = self
-            .tables
-            .get(&table_id)
+            .get_table(table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found", table_id)))?;
         Ok(rows.get(index).cloned())
     }
 
     fn insert_row(&mut self, table_id: u32, row: StoredRow) -> Result<(), DbError> {
-        let rows = Arc::make_mut(&mut self.tables)
-            .get_mut(&table_id)
+        let rows = self
+            .get_table_mut_arc(table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found in storage", table_id)))?;
         Arc::make_mut(rows).push(row);
         Ok(())
     }
 
     fn update_row(&mut self, table_id: u32, index: usize, row: StoredRow) -> Result<(), DbError> {
-        let rows = Arc::make_mut(&mut self.tables)
-            .get_mut(&table_id)
+        let rows = self
+            .get_table_mut_arc(table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found", table_id)))?;
         if index >= rows.len() {
             return Err(DbError::Storage(format!(
@@ -171,8 +233,8 @@ impl Storage for InMemoryStorage {
     }
 
     fn delete_row(&mut self, table_id: u32, index: usize) -> Result<(), DbError> {
-        let rows = Arc::make_mut(&mut self.tables)
-            .get_mut(&table_id)
+        let rows = self
+            .get_table_mut_arc(table_id)
             .ok_or_else(|| DbError::Storage(format!("table {} not found", table_id)))?;
         if index >= rows.len() {
             return Err(DbError::Storage(format!(
@@ -185,42 +247,59 @@ impl Storage for InMemoryStorage {
     }
 
     fn replace_table(&mut self, table_id: u32, rows: Vec<StoredRow>) -> Result<(), DbError> {
-        if let std::collections::hash_map::Entry::Occupied(mut e) =
-            Arc::make_mut(&mut self.tables).entry(table_id)
-        {
-            e.insert(Arc::new(rows));
-            Ok(())
-        } else {
-            Err(DbError::Storage(format!(
+        if self.get_table(table_id).is_none() {
+            return Err(DbError::Storage(format!(
                 "table {} not found in storage",
                 table_id
-            )))
+            )));
         }
+        if self.is_unshared() {
+            Arc::make_mut(&mut self.base).insert(table_id, Arc::new(rows));
+        } else {
+            self.delta.insert(table_id, Some(Arc::new(rows)));
+        }
+        Ok(())
     }
 
     fn clear_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        if let Some(rows) = Arc::make_mut(&mut self.tables).get_mut(&table_id) {
-            if !rows.is_empty() {
+        let Some(existing) = self.get_table(table_id) else {
+            return Err(DbError::Storage(format!("table {} not found", table_id)));
+        };
+        if existing.is_empty() {
+            return Ok(());
+        }
+        if self.is_unshared() {
+            if let Some(rows) = Arc::make_mut(&mut self.base).get_mut(&table_id) {
                 Arc::make_mut(rows).clear();
             }
-            Ok(())
         } else {
-            Err(DbError::Storage(format!("table {} not found", table_id)))
+            self.delta.insert(table_id, Some(Arc::new(Vec::new())));
         }
+        Ok(())
     }
 
     fn ensure_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        if !self.tables.contains_key(&table_id) {
-            Arc::make_mut(&mut self.tables)
-                .entry(table_id)
-                .or_insert_with(|| Arc::new(Vec::new()));
+        if self.get_table(table_id).is_some() {
+            return Ok(());
+        }
+        if self.is_unshared() {
+            Arc::make_mut(&mut self.base).insert(table_id, Arc::new(Vec::new()));
+        } else {
+            self.delta.insert(table_id, Some(Arc::new(Vec::new())));
         }
         Ok(())
     }
 
     fn remove_table(&mut self, table_id: u32) -> Result<(), DbError> {
-        if self.tables.contains_key(&table_id) {
-            Arc::make_mut(&mut self.tables).remove(&table_id);
+        if self.get_table(table_id).is_none() {
+            return Ok(());
+        }
+        if self.is_unshared() {
+            Arc::make_mut(&mut self.base).remove(&table_id);
+        } else if self.base.contains_key(&table_id) {
+            self.delta.insert(table_id, None);
+        } else {
+            self.delta.remove(&table_id);
         }
         Ok(())
     }
@@ -230,7 +309,7 @@ impl Storage for InMemoryStorage {
     }
 
     fn take_fast_snapshot(&self) -> Option<StorageSnapshot> {
-        Some(StorageSnapshot::InMemory(Arc::clone(&self.tables)))
+        Some(StorageSnapshot::InMemory(self.clone()))
     }
 
     fn restore_fast_snapshot(
@@ -238,36 +317,42 @@ impl Storage for InMemoryStorage {
         snapshot: &StorageSnapshot,
         preserve_table_ids: &std::collections::HashSet<u32>,
     ) -> Result<bool, DbError> {
-        let StorageSnapshot::InMemory(snap_tables) = snapshot else {
+        let StorageSnapshot::InMemory(snap) = snapshot else {
             return Ok(false);
         };
-        if Arc::ptr_eq(&self.tables, snap_tables) {
-            return Ok(true);
-        }
         let mut overrides: Vec<(u32, Arc<Vec<StoredRow>>)> = Vec::new();
         for &tid in preserve_table_ids {
-            if let Some(cur_rows) = self.tables.get(&tid) {
-                let unchanged = snap_tables
-                    .get(&tid)
+            if let Some(cur_rows) = self.get_table(tid) {
+                let unchanged = snap
+                    .get_table(tid)
                     .is_some_and(|s_rows| Arc::ptr_eq(cur_rows, s_rows));
                 if !unchanged {
                     overrides.push((tid, Arc::clone(cur_rows)));
                 }
             }
         }
-        if self.tables.len() > snap_tables.len() {
-            for &tid in self.tables.keys() {
-                if !snap_tables.contains_key(&tid) && !preserve_table_ids.contains(&tid) {
+        for (&tid, entry) in &self.delta {
+            if entry.is_some()
+                && snap.get_table(tid).is_none()
+                && !preserve_table_ids.contains(&tid)
+            {
+                overrides.push((tid, Arc::new(Vec::new())));
+            }
+        }
+        if !Arc::ptr_eq(&self.base, &snap.base) {
+            for &tid in self.base.keys() {
+                if self.get_table(tid).is_some()
+                    && snap.get_table(tid).is_none()
+                    && !preserve_table_ids.contains(&tid)
+                {
                     overrides.push((tid, Arc::new(Vec::new())));
                 }
             }
         }
-        self.tables = Arc::clone(snap_tables);
-        if !overrides.is_empty() {
-            let map = Arc::make_mut(&mut self.tables);
-            for (tid, rows) in overrides {
-                map.insert(tid, rows);
-            }
+        self.base = Arc::clone(&snap.base);
+        self.delta = snap.delta.clone();
+        for (tid, rows) in overrides {
+            self.delta.insert(tid, Some(rows));
         }
         Ok(true)
     }
@@ -280,22 +365,87 @@ impl Storage for InMemoryStorage {
     }
 
     fn merge_workspace(&mut self, workspace: Self, base: &Self) {
-        if Arc::ptr_eq(&workspace.tables, &base.tables) {
+        if Arc::ptr_eq(&workspace.base, &base.base)
+            && workspace.delta.is_empty()
+            && base.delta.is_empty()
+        {
             return;
         }
-        let target = Arc::make_mut(&mut self.tables);
-        for (&table_id, ws_rows) in workspace.tables.iter() {
-            let unchanged = base
-                .tables
-                .get(&table_id)
-                .is_some_and(|base_rows| Arc::ptr_eq(ws_rows, base_rows));
-            if !unchanged {
-                target.insert(table_id, Arc::clone(ws_rows));
+        let mut changed: Vec<(u32, Option<Arc<Vec<StoredRow>>>)> = Vec::new();
+        if Arc::ptr_eq(&workspace.base, &base.base) {
+            for (&tid, ws_opt) in &workspace.delta {
+                let base_opt = base.get_table(tid);
+                let unchanged = match (ws_opt.as_ref(), base_opt) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !unchanged {
+                    changed.push((tid, ws_opt.as_ref().map(Arc::clone)));
+                }
+            }
+            for &tid in base.delta.keys() {
+                if !workspace.delta.contains_key(&tid) {
+                    let ws_opt = workspace.get_table(tid);
+                    let base_opt = base.get_table(tid);
+                    let unchanged = match (ws_opt, base_opt) {
+                        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !unchanged {
+                        changed.push((tid, ws_opt.map(Arc::clone)));
+                    }
+                }
+            }
+        } else {
+            let mut all_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            all_ids.extend(workspace.base.keys().copied());
+            all_ids.extend(workspace.delta.keys().copied());
+            all_ids.extend(base.base.keys().copied());
+            all_ids.extend(base.delta.keys().copied());
+            for tid in all_ids {
+                let ws_opt = workspace.get_table(tid);
+                let base_opt = base.get_table(tid);
+                let unchanged = match (ws_opt, base_opt) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !unchanged {
+                    changed.push((tid, ws_opt.map(Arc::clone)));
+                }
             }
         }
-        for &table_id in base.tables.keys() {
-            if !workspace.tables.contains_key(&table_id) {
-                target.remove(&table_id);
+        if changed.is_empty() {
+            return;
+        }
+        if self.is_unshared() {
+            let map = Arc::make_mut(&mut self.base);
+            for (tid, opt_rows) in changed {
+                match opt_rows {
+                    Some(rows) => {
+                        map.insert(tid, rows);
+                    }
+                    None => {
+                        map.remove(&tid);
+                    }
+                }
+            }
+        } else {
+            for (tid, opt_rows) in changed {
+                match opt_rows {
+                    Some(rows) => {
+                        self.delta.insert(tid, Some(rows));
+                    }
+                    None => {
+                        if self.base.contains_key(&tid) {
+                            self.delta.insert(tid, None);
+                        } else {
+                            self.delta.remove(&tid);
+                        }
+                    }
+                }
             }
         }
     }
@@ -304,16 +454,17 @@ impl Storage for InMemoryStorage {
 impl CheckpointableStorage for InMemoryStorage {
     fn get_checkpoint_data(&self) -> StorageCheckpointData {
         StorageCheckpointData::InMemory(
-            self.tables
-                .iter()
-                .map(|(&k, v)| (k, v.as_ref().clone()))
+            self.materialized_tables()
+                .into_iter()
+                .map(|(k, v)| (k, v.to_vec()))
                 .collect(),
         )
     }
 
     fn restore_from_checkpoint(&mut self, data: StorageCheckpointData) -> Result<(), DbError> {
         if let StorageCheckpointData::InMemory(tables) = data {
-            self.tables = Arc::new(tables.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+            self.base = Arc::new(tables.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+            self.delta.clear();
             Ok(())
         } else {
             Err(DbError::Storage(

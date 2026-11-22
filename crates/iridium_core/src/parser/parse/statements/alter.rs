@@ -88,10 +88,10 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     _ => return parser.backtrack(Expected::Description("constraint name or ALL")),
                 }
             };
-            return Ok(Statement::Ddl(DdlStatement::AlterTable {
+            return Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                 table,
                 action: AlterTableAction::CheckConstraint { check, name },
-            }));
+            })));
         }
         if parser.at_keyword(Keyword::Add) {
             let _ = parser.next();
@@ -115,22 +115,22 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             };
             let first = parse_add_item(parser)?;
             if !matches!(parser.peek(), Some(Token::Comma)) {
-                Ok(Statement::Ddl(DdlStatement::AlterTable {
+                Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                     table,
                     action: first,
-                }))
+                })))
             } else {
-                let mut stmts = vec![Statement::Ddl(DdlStatement::AlterTable {
+                let mut stmts = vec![Statement::Ddl(Box::new(DdlStatement::AlterTable {
                     table: table.clone(),
                     action: first,
-                })];
+                }))];
                 while matches!(parser.peek(), Some(Token::Comma)) {
                     let _ = parser.next();
                     let next_action = parse_add_item(parser)?;
-                    stmts.push(Statement::Ddl(DdlStatement::AlterTable {
+                    stmts.push(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                         table: table.clone(),
                         action: next_action,
-                    }));
+                    })));
                 }
                 Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
             }
@@ -152,14 +152,14 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parser.next();
                 nullable = Some(true);
             }
-            Ok(Statement::Ddl(DdlStatement::AlterTable {
+            Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                 table,
                 action: AlterTableAction::AlterColumn {
                     name: col_name,
                     data_type,
                     nullable,
                 },
-            }))
+            })))
         } else if parser.at_keyword(Keyword::Drop) {
             let _ = parser.next();
             let parse_ident = |p: &mut Parser, desc: &'static str| -> ParseResult<String> {
@@ -182,18 +182,18 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     parse_ident(p, "column name")
                 })?;
                 if cols.len() == 1 {
-                    Ok(Statement::Ddl(DdlStatement::AlterTable {
+                    Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                         table,
                         action: AlterTableAction::DropColumn(cols.into_iter().next().unwrap()),
-                    }))
+                    })))
                 } else {
                     let stmts = cols
                         .into_iter()
                         .map(|c| {
-                            Statement::Ddl(DdlStatement::AlterTable {
+                            Statement::Ddl(Box::new(DdlStatement::AlterTable {
                                 table: table.clone(),
                                 action: AlterTableAction::DropColumn(c),
-                            })
+                            }))
                         })
                         .collect();
                     Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
@@ -210,18 +210,18 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     parse_ident(p, "constraint name")
                 })?;
                 if names.len() == 1 {
-                    Ok(Statement::Ddl(DdlStatement::AlterTable {
+                    Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                         table,
                         action: AlterTableAction::DropConstraint(names.into_iter().next().unwrap()),
-                    }))
+                    })))
                 } else {
                     let stmts = names
                         .into_iter()
                         .map(|c| {
-                            Statement::Ddl(DdlStatement::AlterTable {
+                            Statement::Ddl(Box::new(DdlStatement::AlterTable {
                                 table: table.clone(),
                                 action: AlterTableAction::DropConstraint(c),
-                            })
+                            }))
                         })
                         .collect();
                     Ok(Statement::Procedural(ProceduralStatement::BeginEnd(stmts)))
@@ -293,7 +293,9 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         {
             *or_alter = true;
         }
-        Ok(Statement::Ddl(DdlStatement::Create(Box::new(stmt))))
+        Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
+            stmt,
+        )))))
     } else if parser.at_keyword(Keyword::Partition) {
         let _ = parser.next();
         let is_scheme = matches!(
@@ -425,11 +427,13 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 None
             };
             let source = super::parse_multipart_name(parser)?;
-            Ok(Statement::Ddl(DdlStatement::AlterSchemaTransfer {
-                target_schema,
-                entity_type,
-                source,
-            }))
+            Ok(Statement::Ddl(Box::new(
+                DdlStatement::AlterSchemaTransfer {
+                    target_schema,
+                    entity_type,
+                    source,
+                },
+            )))
         } else {
             skip_ddl_tail(parser);
             Ok(Statement::Procedural(ProceduralStatement::BeginEnd(

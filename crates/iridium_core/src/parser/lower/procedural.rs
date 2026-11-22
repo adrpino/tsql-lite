@@ -122,7 +122,7 @@ pub fn lower_procedural(
                 executor_ast::statements::ProceduralStatement::DeclareCursor(Box::new(
                     executor_ast::statements::procedural::DeclareCursorStmt {
                         name,
-                        query: lower_select(query)?,
+                        query: lower_select(*query)?,
                     },
                 )),
             ))

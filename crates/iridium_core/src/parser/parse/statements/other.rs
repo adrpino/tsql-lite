@@ -164,7 +164,7 @@ pub fn parse_set(parser: &mut Parser) -> ParseResult<Statement> {
                 let query = super::query::parse_select(parser)?;
                 return Ok(Statement::Procedural(ProceduralStatement::DeclareCursor {
                     name: variable,
-                    query,
+                    query: Box::new(query),
                 }));
             }
             let expr = crate::parser::parse::expressions::parse_expr(parser)?;

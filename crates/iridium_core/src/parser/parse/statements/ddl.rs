@@ -724,7 +724,10 @@ pub fn parse_create_type(parser: &mut Parser) -> ParseResult<Statement> {
     parser.expect_lparen()?;
     let (columns, _constraints) = parse_table_body(parser)?;
     parser.expect_rparen()?;
-    Ok(Statement::Ddl(DdlStatement::CreateType { name, columns }))
+    Ok(Statement::Ddl(Box::new(DdlStatement::CreateType {
+        name,
+        columns,
+    })))
 }
 
 pub fn parse_create_schema(parser: &mut Parser) -> ParseResult<Statement> {
@@ -740,7 +743,7 @@ pub fn parse_create_schema(parser: &mut Parser) -> ParseResult<Statement> {
             _ => return parser.backtrack(Expected::Description("authorization principal")),
         }
     }
-    Ok(Statement::Ddl(DdlStatement::CreateSchema(name)))
+    Ok(Statement::Ddl(Box::new(DdlStatement::CreateSchema(name))))
 }
 
 pub fn parse_create_sequence(parser: &mut Parser) -> ParseResult<Statement> {
@@ -794,7 +797,7 @@ pub fn parse_create_sequence(parser: &mut Parser) -> ParseResult<Statement> {
         }
     }
 
-    Ok(Statement::Ddl(DdlStatement::CreateSequence {
+    Ok(Statement::Ddl(Box::new(DdlStatement::CreateSequence {
         name,
         data_type,
         start_with,
@@ -802,7 +805,7 @@ pub fn parse_create_sequence(parser: &mut Parser) -> ParseResult<Statement> {
         min_value,
         max_value,
         cycle,
-    }))
+    })))
 }
 
 fn parse_signed_int(parser: &mut Parser) -> ParseResult<i64> {

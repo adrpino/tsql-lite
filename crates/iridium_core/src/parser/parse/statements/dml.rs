@@ -359,7 +359,7 @@ fn parse_update_assignment_group(parser: &mut Parser) -> ParseResult<Vec<UpdateA
             expr: Expr::FunctionCall {
                 name: "__XML_MODIFY".to_string(),
                 args: fn_args,
-                within_group: Vec::new(),
+                within_group: None,
             },
         }]);
     }

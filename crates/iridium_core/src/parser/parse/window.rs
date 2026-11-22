@@ -84,13 +84,13 @@ pub(crate) fn parse_window_over(
     }
 
     parser.expect_rparen()?;
-    Ok(Expr::WindowFunction {
+    Ok(Expr::WindowFunction(Box::new(WindowFunctionExpr {
         name,
         args,
         partition_by,
         order_by,
         frame,
-    })
+    })))
 }
 
 fn parse_window_frame_bound(parser: &mut Parser) -> ParseResult<WindowFrameBound> {

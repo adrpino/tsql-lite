@@ -87,7 +87,7 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
             Ok(Expr::FunctionCall {
                 name,
                 args,
-                within_group: Vec::new(),
+                within_group: None,
             })
         }
         Some(Token::Keyword(k)) if *k == Keyword::Case => {
@@ -169,7 +169,7 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
             Ok(Expr::FunctionCall {
                 name,
                 args: vec![],
-                within_group: vec![],
+                within_group: None,
             })
         }
         Some(Token::Keyword(k)) if matches!(parser.peek_at(1), Some(Token::LParen)) => {
@@ -440,9 +440,9 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
                 crate::parser::parse::statements::query::parse_order_by_expr,
             )?;
             parser.expect_rparen()?;
-            order_by
+            Some(Box::new(order_by))
         } else {
-            vec![]
+            None
         };
         if parser.at_keyword(Keyword::Over) {
             return parse_window_over(parser, function_name, args);
@@ -467,7 +467,7 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
             Ok(Expr::FunctionCall {
                 name: parts.remove(0),
                 args: vec![],
-                within_group: vec![],
+                within_group: None,
             })
         } else {
             Ok(Expr::Identifier(parts.remove(0)))

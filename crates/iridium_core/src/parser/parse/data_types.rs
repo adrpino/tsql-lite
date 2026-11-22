@@ -30,7 +30,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                     Ok(DataType::Float)
                 }
                 "REAL" => Ok(DataType::Real),
-                "DECIMAL" | "NUMERIC" => {
+                "DECIMAL" | "DEC" | "NUMERIC" => {
                     let mut p = 18;
                     let mut s = 0;
                     if matches!(parser.peek(), Some(Token::LParen)) {
@@ -46,7 +46,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                         }
                         parser.expect_rparen()?;
                     }
-                    if upper == "DECIMAL" {
+                    if upper == "DECIMAL" || upper == "DEC" {
                         Ok(DataType::Decimal(p, s))
                     } else {
                         Ok(DataType::Numeric(p, s))

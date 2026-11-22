@@ -32,12 +32,25 @@ pub(super) fn bind_view(
         return Ok(None);
     };
 
-    let view_query = match view.query.as_ref() {
-        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => s.clone(),
+    let result = match view.query.as_ref() {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => {
+            executor.execute_select(s.clone().into(), ctx)?
+        }
+        crate::ast::Statement::WithCte(_) => {
+            let mut temp_cat = catalog.clone_boxed();
+            let mut temp_stor = executor.storage.clone_boxed();
+            let mut script = crate::executor::script::ScriptExecutor {
+                catalog: temp_cat.as_mut(),
+                storage: temp_stor.as_mut(),
+                clock: executor.clock,
+            };
+            match script.execute(view.query.as_ref().clone(), ctx)? {
+                crate::error::StmtOutcome::Ok(Some(res)) => res,
+                _ => crate::executor::result::QueryResult::default(),
+            }
+        }
         _ => return Err(DbError::Execution("view query must be SELECT".into())),
     };
-
-    let result = executor.execute_select(view_query.into(), ctx)?;
     Ok(Some(query_result_to_bound_table(
         tref.alias.clone().unwrap_or_else(|| name.clone()),
         name.clone(),

@@ -249,13 +249,46 @@ fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
     Ok(())
 }
 
+pub(super) fn skip_exec_dynamic_tail(parser: &mut Parser) -> ParseResult<()> {
+    // Optional `AS LOGIN|USER = '...'` and/or linked-server `AT [server]`
+    loop {
+        if parser.at_keyword(Keyword::As)
+            && matches!(
+                parser.peek_at(1),
+                Some(Token::Keyword(Keyword::User)) | Some(Token::Identifier(_))
+            )
+        {
+            let _ = parser.next(); // AS
+            let _ = parser.next(); // LOGIN | USER
+            if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                let _ = parser.next();
+                let _ = crate::parser::parse::expressions::parse_expr(parser)?;
+            }
+            continue;
+        }
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("AT")) {
+            let _ = parser.next(); // AT
+            let _ = super::parse_multipart_name(parser)?;
+            continue;
+        }
+        break;
+    }
+    skip_exec_with_options(parser)?;
+    Ok(())
+}
+
 pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
     match parser.peek() {
         Some(Token::LParen) => {
             let _ = parser.next();
             let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
+            // Optional pass-through arguments: `EXEC('SELECT ?', @p1, @p2) AT [RemoteServer]`
+            while matches!(parser.peek(), Some(Token::Comma)) {
+                let _ = parser.next();
+                let _ = parse_exec_arg(parser)?;
+            }
             parser.expect_rparen()?;
-            skip_exec_with_options(parser)?;
+            skip_exec_dynamic_tail(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::ExecDynamic {
                 sql_expr,
             }))

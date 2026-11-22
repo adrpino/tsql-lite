@@ -342,19 +342,35 @@ pub fn parse_try_convert(parser: &mut Parser) -> ParseResult<Expr> {
 
 fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResult<Expr> {
     let mut parts = vec![name];
-    while matches!(parser.peek(), Some(Token::Dot)) {
-        let _ = parser.next();
-        if let Some(tok) = parser.next() {
-            match tok {
-                Token::Identifier(next_id) => parts.push(next_id.clone()),
-                Token::Keyword(k) => parts.push(k.as_ref().to_string()),
-                Token::Star => {
-                    return Ok(Expr::QualifiedWildcard(parts));
+    loop {
+        if matches!(parser.peek(), Some(Token::Dot)) {
+            let _ = parser.next();
+            if let Some(tok) = parser.next() {
+                match tok {
+                    Token::Identifier(next_id) => parts.push(next_id.clone()),
+                    Token::Keyword(k) => parts.push(k.as_ref().to_string()),
+                    Token::Star => {
+                        return Ok(Expr::QualifiedWildcard(parts));
+                    }
+                    _ => return parser.backtrack(Expected::Description("identifier")),
                 }
-                _ => return parser.backtrack(Expected::Description("identifier")),
+            } else {
+                return parser.backtrack(Expected::Description("identifier"));
+            }
+        } else if matches!(parser.peek(), Some(Token::Operator(op)) if op == "::") {
+            // T-SQL static CLR/spatial type method call: `geometry::STGeomFromText(...)`
+            let _ = parser.next();
+            let method = match parser.next() {
+                Some(Token::Identifier(next_id)) => next_id.clone(),
+                Some(Token::Keyword(k)) => k.as_ref().to_string(),
+                _ => return parser.backtrack(Expected::Description("method name")),
+            };
+            if let Some(last) = parts.last_mut() {
+                last.push_str("::");
+                last.push_str(&method);
             }
         } else {
-            return parser.backtrack(Expected::Description("identifier"));
+            break;
         }
     }
 
@@ -412,9 +428,6 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
         if has_distinct {
             function_name = format!("{}_DISTINCT", function_name.to_uppercase());
         }
-        if parser.at_keyword(Keyword::Over) {
-            return parse_window_over(parser, function_name, args);
-        }
         let within_group = if parser.at_keyword(Keyword::Within) {
             let _ = parser.next();
             parser.expect_keyword(Keyword::Group)?;
@@ -430,6 +443,9 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
         } else {
             vec![]
         };
+        if parser.at_keyword(Keyword::Over) {
+            return parse_window_over(parser, function_name, args);
+        }
         Ok(Expr::FunctionCall {
             name: function_name,
             args,

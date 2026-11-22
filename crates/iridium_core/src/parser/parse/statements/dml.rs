@@ -84,15 +84,11 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
     {
         let _ = parser.next();
         columns = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
-            if let Some(tok) = p.next() {
-                match tok {
-                    Token::Identifier(id) => Ok(id.clone()),
-                    Token::Keyword(kw) => Ok(kw.as_ref().to_string()),
-                    _ => p.backtrack(Expected::Description("column name")),
-                }
-            } else {
-                p.backtrack(Expected::Description("column name"))
-            }
+            // T-SQL accepts both `col` and qualified `tbl.col` in INSERT column lists.
+            let mut parts = super::parse_multipart_name(p)?;
+            parts
+                .pop()
+                .ok_or_else(|| p.error(Expected::Description("column name")))
         })?;
         parser.expect_rparen()?;
     }
@@ -162,7 +158,12 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
             if matches!(parser.peek(), Some(Token::LParen)) {
                 let _ = parser.next();
                 let sql_expr = crate::parser::parse::expressions::parse_expr(parser)?;
+                while matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                    let _ = super::other::parse_exec_arg(parser)?;
+                }
                 parser.expect_rparen()?;
+                super::other::skip_exec_dynamic_tail(parser)?;
                 InsertSource::ExecDynamic(sql_expr)
             } else {
                 let mut return_variable = None;

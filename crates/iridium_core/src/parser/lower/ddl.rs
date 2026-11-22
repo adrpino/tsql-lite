@@ -206,9 +206,22 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
         ast::CreateStmt::View {
             name,
             columns,
+            ctes,
             query,
         } => {
             let mut lowered_query = lower_select(query)?;
+            let lowered_ctes = ctes
+                .into_iter()
+                .map(|c| {
+                    Ok(executor_ast::statements::procedural::CteDef {
+                        name: c.name,
+                        columns: c.columns,
+                        query: executor_ast::Statement::Dml(
+                            executor_ast::statements::DmlStatement::Select(lower_select(c.query)?),
+                        ),
+                    })
+                })
+                .collect::<Result<Vec<_>, DbError>>()?;
             if !columns.is_empty() {
                 let has_wildcard = lowered_query.projection.iter().any(|item| {
                     matches!(
@@ -234,6 +247,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                 executor_ast::statements::ProceduralStatement::CreateView(
                     executor_ast::statements::ddl::CreateViewStmt {
                         name: lower_object_name(name),
+                        ctes: lowered_ctes,
                         query: lowered_query,
                     },
                 ),

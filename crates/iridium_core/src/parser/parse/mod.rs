@@ -67,8 +67,10 @@ pub fn parse_statement(parser: &mut Parser) -> ParseResult<Statement> {
 }
 
 fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
-    // Label definition: `<label>:`
-    if matches!(parser.peek_at(1), Some(Token::Colon)) {
+    // Label definition: `<label>:` (must not be a `::` scope qualifier)
+    if matches!(parser.peek_at(1), Some(Token::Colon))
+        && !matches!(parser.peek_at(2), Some(Token::Colon))
+    {
         match parser.peek() {
             Some(Token::Identifier(id)) => {
                 let label = id.clone();
@@ -466,7 +468,10 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             Keyword::Return => {
                 let _ = parser.next();
+                let next_is_label = matches!(parser.peek_at(1), Some(Token::Colon))
+                    && !matches!(parser.peek_at(2), Some(Token::Colon));
                 let expr = if !parser.is_empty()
+                    && !next_is_label
                     && !matches!(
                         parser.peek(),
                         Some(Token::Semicolon)

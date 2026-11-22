@@ -90,6 +90,11 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         })?;
     }
     parser.expect_keyword(Keyword::As)?;
+    let mut ctes = Vec::new();
+    if parser.at_keyword(Keyword::With) {
+        let _ = parser.next();
+        ctes = crate::parser::parse::parse_comma_list(parser, crate::parser::parse::parse_cte_def)?;
+    }
     let mut paren_depth = 0usize;
     while matches!(parser.peek(), Some(Token::LParen)) {
         let _ = parser.next();
@@ -102,6 +107,7 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
     Ok(CreateStmt::View {
         name,
         columns,
+        ctes,
         query,
     })
 }
@@ -147,7 +153,19 @@ fn parse_procedure_with_options(parser: &mut Parser) -> ParseResult<()> {
 }
 
 pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
-    let name = super::parse_multipart_name(parser)?;
+    let mut name = super::parse_multipart_name(parser)?;
+    // Optional T-SQL numbered procedure group suffix: `CREATE PROCEDURE dbo.p;2 ...`
+    if matches!(parser.peek(), Some(Token::Semicolon))
+        && matches!(parser.peek_at(1), Some(Token::Number { .. }))
+    {
+        let _ = parser.next();
+        if let Some(Token::Number { value, .. }) = parser.next() {
+            if let Some(last) = name.last_mut() {
+                last.push(';');
+                last.push_str(&value.to_string());
+            }
+        }
+    }
     let mut params = Vec::new();
     if matches!(parser.peek(), Some(Token::LParen)) {
         let _ = parser.next();
@@ -164,33 +182,28 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
     }
     parse_procedure_with_options(parser)?;
     parser.expect_keyword(Keyword::As)?;
-    let is_begin_block = parser.at_keyword(Keyword::Begin)
-        && !matches!(
-            parser.peek_at(1),
-            Some(Token::Keyword(
-                Keyword::Transaction | Keyword::Tran | Keyword::Try | Keyword::Distributed
-            ))
-        );
-    let body = if is_begin_block {
-        let _ = parser.next();
-        match super::other::parse_begin_end(parser)? {
-            Statement::Procedural(ProceduralStatement::BeginEnd(stmts)) => stmts,
-            _ => unreachable!(),
+    // In T-SQL, a CREATE PROCEDURE body runs to the end of the batch (EOF or GO).
+    // Even if the first statement is `BEGIN ... END`, subsequent statements in the
+    // same batch remain part of the procedure body (e.g. cleanup/logging after END).
+    let mut stmts = Vec::new();
+    while !parser.is_empty() && !matches!(parser.peek(), Some(Token::Go)) {
+        while matches!(parser.peek(), Some(Token::Semicolon)) {
+            let _ = parser.next();
+        }
+        if parser.is_empty() || matches!(parser.peek(), Some(Token::Go)) {
+            break;
+        }
+        stmts.push(crate::parser::parse::parse_statement(parser)?);
+        while matches!(parser.peek(), Some(Token::Semicolon)) {
+            let _ = parser.next();
+        }
+    }
+    let body = if stmts.len() == 1 {
+        match stmts.pop().unwrap() {
+            Statement::Procedural(ProceduralStatement::BeginEnd(inner)) => inner,
+            single => vec![single],
         }
     } else {
-        let mut stmts = Vec::new();
-        while !parser.is_empty() && !matches!(parser.peek(), Some(Token::Go)) {
-            while matches!(parser.peek(), Some(Token::Semicolon)) {
-                let _ = parser.next();
-            }
-            if parser.is_empty() || matches!(parser.peek(), Some(Token::Go)) {
-                break;
-            }
-            stmts.push(crate::parser::parse::parse_statement(parser)?);
-            while matches!(parser.peek(), Some(Token::Semicolon)) {
-                let _ = parser.next();
-            }
-        }
         stmts
     };
     Ok(CreateStmt::Procedure {
@@ -295,7 +308,12 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
     }
 
     parse_function_with_options(parser)?;
-    parser.expect_keyword(Keyword::As)?;
+    // In T-SQL, `AS` is optional before `BEGIN` in scalar and multi-statement TVFs.
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+    } else if !parser.at_keyword(Keyword::Begin) {
+        parser.expect_keyword(Keyword::As)?;
+    }
 
     let body = if let Some((table_var, columns, constraints)) = multi_stmt_table {
         parser.expect_keyword(Keyword::Begin)?;

@@ -274,14 +274,22 @@ pub(crate) fn create_view(
     let view_name = stmt.name.name;
     let query = stmt.query;
     let schema_id = executor.catalog.get_schema_id(&schema).unwrap_or(1);
+    let select_stmt = crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(query));
+    let view_stmt = if stmt.ctes.is_empty() {
+        select_stmt
+    } else {
+        crate::ast::Statement::WithCte(crate::ast::WithCteStmt {
+            recursive: false,
+            ctes: stmt.ctes,
+            body: Box::new(select_stmt),
+        })
+    };
     let mut view = crate::catalog::ViewDef {
         object_id: executor.catalog.alloc_object_id(),
         schema,
         name: view_name,
         schema_id,
-        query: std::sync::Arc::new(crate::ast::Statement::Dml(
-            crate::ast::DmlStatement::Select(query),
-        )),
+        query: std::sync::Arc::new(view_stmt),
         definition_sql: String::new(),
     };
     view.definition_sql = format_view_definition(&view);

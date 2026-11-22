@@ -57,9 +57,33 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
     } else if parser.at_keyword(Keyword::Index) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
-        let name = super::parse_multipart_name(parser)?;
-        parser.expect_keyword(Keyword::On)?;
-        let table = super::parse_multipart_name(parser)?;
+        let mut first = super::parse_multipart_name(parser)?;
+        let (name, table) = if parser.at_keyword(Keyword::On) {
+            let _ = parser.next();
+            let table = super::parse_multipart_name(parser)?;
+            (first, table)
+        } else if first.len() >= 2 {
+            // Legacy T-SQL syntax: `DROP INDEX [schema.]table.index_name`
+            let idx_name = first.pop().unwrap();
+            (vec![idx_name], first)
+        } else {
+            return parser.backtrack(Expected::Keyword(Keyword::On));
+        };
+        if parser.at_keyword(Keyword::With) {
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::LParen)) {
+                let _ = parser.next();
+                let mut depth = 1usize;
+                while depth > 0 {
+                    match parser.next() {
+                        Some(Token::LParen) => depth += 1,
+                        Some(Token::RParen) => depth -= 1,
+                        Some(_) => {}
+                        None => return parser.backtrack(Expected::Description(")")),
+                    }
+                }
+            }
+        }
         Ok(Statement::Ddl(DdlStatement::DropIndex {
             name,
             table,

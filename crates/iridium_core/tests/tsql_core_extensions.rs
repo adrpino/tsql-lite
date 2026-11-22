@@ -791,4 +791,222 @@ fn concurrent_disjoint_ddl_and_dml_transactions_merge_without_clobbering() {
         .expect("s3 exec usp_beta")
         .expect("result");
     assert_eq!(pb.rows[0][0].to_integer_i64(), Some(202));
+
+    // Same table name in two distinct schemas must acquire disjoint schema-qualified locks.
+    db.execute_session_batch_sql(s3, "CREATE SCHEMA analytics;")
+        .expect("create schema analytics");
+    let s4 = db.create_session();
+    let s5 = db.create_session();
+    db.execute_session_batch_sql_multi(s4, "BEGIN TRANSACTION; CREATE TABLE dbo.SharedName (Id INT);")
+        .expect("s4 dbo.SharedName");
+    db.execute_session_batch_sql_multi(
+        s5,
+        "BEGIN TRANSACTION; CREATE TABLE analytics.SharedName (Id INT);",
+    )
+    .expect("s5 analytics.SharedName must not conflict with dbo.SharedName");
+    db.execute_session_batch_sql_multi(s4, "COMMIT TRANSACTION;")
+        .expect("s4 commit");
+    db.execute_session_batch_sql_multi(s5, "COMMIT TRANSACTION;")
+        .expect("s5 commit");
+}
+
+#[test]
+fn multithreaded_concurrent_table_batches_never_lose_committed_tables() {
+    use std::sync::Arc;
+    let db = Arc::new(Database::new());
+    let mut handles = Vec::new();
+    for worker in 0..4usize {
+        let db = Arc::clone(&db);
+        handles.push(std::thread::spawn(move || {
+            let sid = db.create_session();
+            for batch in 0..20usize {
+                let mut sql = String::from("SET XACT_ABORT ON;\nBEGIN TRANSACTION;\n");
+                for i in 0..10usize {
+                    let tbl = format!("Tbl_W{}_B{}_I{}", worker, batch, i);
+                    sql.push_str(&format!(
+                        "CREATE TABLE [dbo].[{tbl}] ([Id] INT NOT NULL PRIMARY KEY, [Val] INT);\n"
+                    ));
+                }
+                sql.push_str("IF @@TRANCOUNT > 0 COMMIT TRANSACTION;");
+                db.execute_session_batch_sql_multi(sid, &sql)
+                    .unwrap_or_else(|e| panic!("worker {worker} batch {batch} failed: {e}"));
+            }
+            db.close_session(sid).unwrap();
+        }));
+    }
+    for h in handles {
+        h.join().expect("worker panicked");
+    }
+    let check_sid = db.create_session();
+    let res = db
+        .execute_session_batch_sql(check_sid, "SELECT COUNT(*) FROM sys.tables")
+        .expect("count sys.tables")
+        .expect("result");
+    assert_eq!(
+        res.rows[0][0].to_integer_i64(),
+        Some(800),
+        "all 4 * 20 * 10 = 800 concurrently created tables must survive COMMIT merging"
+    );
+}
+
+#[test]
+fn numbered_stored_procedures_and_linked_server_exec_at() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_item_group;1 @id INT AS SELECT @id AS v;",
+    );
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_item_group;2 @id INT AS SELECT @id + 1 AS v;",
+    );
+    // In T-SQL, CREATE PROCEDURE consumes the entire batch until GO/EOF; statements
+    // after an initial BEGIN...END block remain part of the procedure body and must
+    // NEVER execute eagerly at CREATE PROCEDURE time.
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_multi_block_after_begin_end AS
+         BEGIN
+             DECLARE @x INT = 1;
+         END
+         INSERT INTO dbo.NotYetCreatedTable VALUES (1);",
+    );
+    let tc = query(&mut e, "SELECT @@TRANCOUNT AS tc");
+    assert_eq!(tc.rows[0][0].to_integer_i64(), Some(0));
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_remote_query AS
+         BEGIN
+             DECLARE @p INT = 1;
+             CREATE TABLE #Out (V INT);
+             EXEC ('SELECT 1') AT [RemoteServer];
+             EXEC ('SELECT ?', @p) AT [RemoteServer];
+             INSERT INTO #Out EXEC ('SELECT 1') AT [RemoteServer];
+             CREATE INDEX IX_Out_V ON #Out (V);
+             DROP INDEX #Out.IX_Out_V;
+         END;",
+    );
+}
+
+#[test]
+fn create_view_with_cte_executes_and_returns_rows() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.SalesLog (Id INT NOT NULL PRIMARY KEY, Category NVARCHAR(20), Amount INT);
+         INSERT INTO dbo.SalesLog VALUES (1, N'A', 10), (2, N'A', 25), (3, N'B', 50);",
+    );
+    exec(
+        &mut e,
+        "CREATE VIEW dbo.vw_TopCategorySales AS
+         WITH Ranked AS (
+             SELECT Category, Amount,
+                    ROW_NUMBER() OVER (PARTITION BY Category ORDER BY Amount DESC) AS rn
+             FROM dbo.SalesLog
+         )
+         SELECT Category, Amount FROM Ranked WHERE rn = 1;",
+    );
+    let r = query(
+        &mut e,
+        "SELECT Category, Amount FROM dbo.vw_TopCategorySales ORDER BY Category",
+    );
+    assert_eq!(r.rows.len(), 2);
+    assert_eq!(r.rows[0][0].to_string_value(), "A");
+    assert_eq!(r.rows[0][1].to_integer_i64(), Some(25));
+    assert_eq!(r.rows[1][0].to_string_value(), "B");
+    assert_eq!(r.rows[1][1].to_integer_i64(), Some(50));
+}
+
+#[test]
+fn create_function_allows_optional_as_before_begin() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.ufn_empty_rows()
+         RETURNS @res TABLE (Id INT, Label NVARCHAR(20))
+         BEGIN
+             INSERT INTO @res VALUES (1, N'ok');
+             RETURN;
+         END;",
+    );
+    exec(
+        &mut e,
+        "CREATE FUNCTION dbo.ufn_double(@x INT)
+         RETURNS INT
+         BEGIN
+             RETURN @x * 2;
+         END;",
+    );
+    let r1 = query(&mut e, "SELECT Id, Label FROM dbo.ufn_empty_rows()");
+    assert_eq!(r1.rows.len(), 1);
+    assert_eq!(r1.rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(r1.rows[0][1].to_string_value(), "ok");
+
+    let r2 = query(&mut e, "SELECT dbo.ufn_double(21) AS val");
+    assert_eq!(r2.rows[0][0].to_integer_i64(), Some(42));
+}
+
+#[test]
+fn spaced_comparison_ops_comma_after_join_switch_partition_and_double_colon() {
+    let mut e = Engine::new();
+    // 1. Spaced two-char comparison operators: > =, < =, < >
+    let r_ops = query(
+        &mut e,
+        "SELECT CASE WHEN 5 > = 5 AND 4 < = 4 AND 3 < > 4 THEN 1 ELSE 0 END AS ok",
+    );
+    assert_eq!(r_ops.rows[0][0].to_integer_i64(), Some(1));
+
+    // 2. Comma-join after INNER JOIN (including TVF or table)
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.LeftItems (Id INT);
+         CREATE TABLE dbo.MidItems (Id INT);
+         CREATE TABLE dbo.RightItems (Id INT);
+         INSERT INTO dbo.LeftItems VALUES (7);
+         INSERT INTO dbo.MidItems VALUES (7);
+         INSERT INTO dbo.RightItems VALUES (7);",
+    );
+    let r_join = query(
+        &mut e,
+        "SELECT l.Id, r.Id
+         FROM dbo.LeftItems l
+         INNER JOIN dbo.MidItems m ON l.Id = m.Id,
+         dbo.RightItems r
+         WHERE r.Id = l.Id",
+    );
+    assert_eq!(r_join.rows.len(), 1);
+    assert_eq!(r_join.rows[0][0].to_integer_i64(), Some(7));
+    assert_eq!(r_join.rows[0][1].to_integer_i64(), Some(7));
+
+    // 3. ALTER TABLE ... SWITCH PARTITION
+    exec(
+        &mut e,
+        "ALTER TABLE dbo.LeftItems SWITCH PARTITION 1 TO dbo.RightItems;
+         ALTER TABLE dbo.LeftItems SWITCH PARTITION 2 TO dbo.RightItems PARTITION 2;",
+    );
+
+    // 4. Static type double-colon method syntax, DEC(p,s) synonym,
+    //    parameterized table hints WITH (INDEX(...)), and PERCENTILE_CONT WITHIN GROUP OVER
+    exec(
+        &mut e,
+        "CREATE PROCEDURE dbo.usp_extended_tsql_syntax AS
+         BEGIN
+             DECLARE @g NVARCHAR(100) = geometry::STGeomFromText('POINT(0 0)', 4326);
+             CREATE TABLE #Metrics (Id INT, Category INT, Val DEC(18, 2));
+             CREATE INDEX IX_Metrics_Id ON #Metrics (Id);
+             SELECT DISTINCT
+                 m.Category,
+                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m.Val) OVER (PARTITION BY m.Category) AS MedianVal
+             FROM #Metrics m WITH (INDEX(IX_Metrics_Id), NOLOCK);
+             SELECT m.Id FROM #Metrics m (NOLOCK);
+             INSERT INTO #Metrics (m.Id, m.Category, m.Val) VALUES (1, 10, 2.50);
+             ALTER TABLE #Metrics DROP COLUMN Category, Val;
+             IF 1 = 0 GOTO ErrLabel;
+             RETURN
+             ErrLabel:
+             BEGIN
+                 RETURN;
+             END
+         END;",
+    );
 }

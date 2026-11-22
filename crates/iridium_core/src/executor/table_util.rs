@@ -109,22 +109,22 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
             out.insert(normalize_table_name(&s.table));
         }
         Statement::Ddl(DdlStatement::CreateTable(s)) => {
-            out.insert(normalize_identifier(&s.name.name));
+            out.insert(normalize_table_name(&s.name));
         }
         Statement::Ddl(DdlStatement::DropTable(s)) => {
-            out.insert(normalize_identifier(&s.name.name));
+            out.insert(normalize_table_name(&s.name));
         }
         Statement::Ddl(DdlStatement::AlterTable(s)) => {
-            out.insert(normalize_identifier(&s.table.name));
+            out.insert(normalize_table_name(&s.table));
         }
         Statement::Ddl(DdlStatement::TruncateTable(s)) => {
-            out.insert(normalize_identifier(&s.name.name));
+            out.insert(normalize_table_name(&s.name));
         }
         Statement::Ddl(DdlStatement::CreateIndex(s)) => {
-            out.insert(normalize_identifier(&s.table.name));
+            out.insert(normalize_table_name(&s.table));
         }
         Statement::Ddl(DdlStatement::DropIndex(s)) => {
-            out.insert(normalize_identifier(&s.table.name));
+            out.insert(normalize_table_name(&s.table));
         }
         Statement::Ddl(DdlStatement::CreateSchema(s)) => {
             out.insert(format!("__SCHEMA__:{}", normalize_identifier(&s.name)));
@@ -224,7 +224,11 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
 }
 
 pub(crate) fn normalize_table_name(name: &ObjectName) -> String {
-    normalize_identifier(&name.name)
+    format!(
+        "{}.{}",
+        normalize_identifier(name.schema_or_dbo()),
+        normalize_identifier(&name.name)
+    )
 }
 
 pub(crate) fn normalize_table_ref(table_ref: &TableRef) -> String {

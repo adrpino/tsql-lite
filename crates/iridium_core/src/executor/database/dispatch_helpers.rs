@@ -186,7 +186,11 @@ where
     let storage_guard = state.storage.read();
     let read_tables = collect_read_tables(stmt);
     for table_def in storage_guard.catalog.get_tables() {
-        let tname = normalize_identifier(&table_def.name);
+        let tname = format!(
+            "{}.{}",
+            normalize_identifier(table_def.schema_or_dbo()),
+            normalize_identifier(&table_def.name)
+        );
         if workspace.write_tables.contains(&tname) {
             continue;
         }
@@ -201,7 +205,11 @@ where
         }
     }
     for table_def in storage_guard.catalog.get_tables() {
-        let tname = normalize_identifier(&table_def.name);
+        let tname = format!(
+            "{}.{}",
+            normalize_identifier(table_def.schema_or_dbo()),
+            normalize_identifier(&table_def.name)
+        );
         if workspace.write_tables.contains(&tname) {
             continue;
         }

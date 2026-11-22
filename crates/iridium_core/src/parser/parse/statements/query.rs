@@ -791,15 +791,45 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                 if matches!(parser.peek(), Some(Token::LParen)) {
                     let _ = parser.next();
                     hints = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
-                        if let Some(tok) = p.next() {
+                        let hint_name = if let Some(tok) = p.next() {
                             match tok {
-                                Token::Identifier(id) => Ok(id.clone()),
-                                Token::Keyword(kw) => Ok(kw.as_ref().to_string()),
-                                _ => p.backtrack(Expected::Description("identifier")),
+                                Token::Identifier(id) => id.clone(),
+                                Token::Keyword(kw) => kw.as_ref().to_string(),
+                                _ => return p.backtrack(Expected::Description("identifier")),
                             }
                         } else {
-                            p.backtrack(Expected::Description("identifier"))
+                            return p.backtrack(Expected::Description("identifier"));
+                        };
+                        // Parameterized table hints: `WITH (INDEX(ix_name))`, `WITH (INDEX = ix_name)`
+                        if matches!(p.peek(), Some(Token::Operator(op)) if op == "=") {
+                            let _ = p.next();
+                            if matches!(p.peek(), Some(Token::LParen)) {
+                                let _ = p.next();
+                                let mut depth = 1usize;
+                                while depth > 0 {
+                                    match p.next() {
+                                        Some(Token::LParen) => depth += 1,
+                                        Some(Token::RParen) => depth -= 1,
+                                        Some(_) => {}
+                                        None => return p.backtrack(Expected::Description(")")),
+                                    }
+                                }
+                            } else {
+                                let _ = p.next();
+                            }
+                        } else if matches!(p.peek(), Some(Token::LParen)) {
+                            let _ = p.next();
+                            let mut depth = 1usize;
+                            while depth > 0 {
+                                match p.next() {
+                                    Some(Token::LParen) => depth += 1,
+                                    Some(Token::RParen) => depth -= 1,
+                                    Some(_) => {}
+                                    None => return p.backtrack(Expected::Description(")")),
+                                }
+                            }
                         }
+                        Ok(hint_name)
                     })?;
                     parser.expect_rparen()?;
                 } else {
@@ -808,6 +838,78 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
             }
             if alias.is_none() {
                 alias = parse_optional_alias(parser);
+            }
+            // Legacy T-SQL table hints without `WITH`: `FROM tbl alias (NOLOCK)`
+            if hints.is_empty() && matches!(parser.peek(), Some(Token::LParen)) {
+                let is_table_hint = match parser.peek_at(1) {
+                    Some(Token::Identifier(id)) => matches!(
+                        id.to_ascii_uppercase().as_str(),
+                        "NOLOCK"
+                            | "READUNCOMMITTED"
+                            | "READCOMMITTED"
+                            | "READCOMMITTEDLOCK"
+                            | "REPEATABLEREAD"
+                            | "SERIALIZABLE"
+                            | "HOLDLOCK"
+                            | "UPDLOCK"
+                            | "XLOCK"
+                            | "ROWLOCK"
+                            | "PAGLOCK"
+                            | "TABLOCK"
+                            | "TABLOCKX"
+                            | "READPAST"
+                            | "NOWAIT"
+                            | "FASTFIRSTROW"
+                            | "FORCESEEK"
+                            | "FORCESCAN"
+                            | "NOEXPAND"
+                            | "SNAPSHOT"
+                    ),
+                    Some(Token::Keyword(
+                        Keyword::Nolock
+                            | Keyword::Rowlock
+                            | Keyword::Tablock
+                            | Keyword::Holdlock
+                            | Keyword::Updlock
+                            | Keyword::Xlock
+                            | Keyword::Readuncommitted
+                            | Keyword::Readcommitted
+                            | Keyword::Readpast
+                            | Keyword::Index
+                            | Keyword::Read
+                            | Keyword::Serializable
+                            | Keyword::Repeatable
+                            | Keyword::Snapshot,
+                    )) => true,
+                    _ => false,
+                };
+                if is_table_hint {
+                    let _ = parser.next(); // (
+                    hints = crate::parser::parse::expressions::parse_comma_list(parser, |p| {
+                        let hint_name = match p.next() {
+                            Some(Token::Identifier(id)) => id.clone(),
+                            Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
+                            _ => return p.backtrack(Expected::Description("table hint")),
+                        };
+                        if matches!(p.peek(), Some(Token::Operator(op)) if op == "=") {
+                            let _ = p.next();
+                            let _ = p.next();
+                        } else if matches!(p.peek(), Some(Token::LParen)) {
+                            let _ = p.next();
+                            let mut depth = 1usize;
+                            while depth > 0 {
+                                match p.next() {
+                                    Some(Token::LParen) => depth += 1,
+                                    Some(Token::RParen) => depth -= 1,
+                                    Some(_) => {}
+                                    None => return p.backtrack(Expected::Description(")")),
+                                }
+                            }
+                        }
+                        Ok(hint_name)
+                    })?;
+                    parser.expect_rparen()?;
+                }
             }
             (TableFactor::Named(parse_object_name(name)), alias, hints)
         }
@@ -1159,6 +1261,23 @@ pub(crate) fn parse_joins_and_applies(
     applies: &mut Vec<ApplyClause>,
 ) -> ParseResult<()> {
     loop {
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+            let table = parse_table_ref(parser)?;
+            if applies.is_empty() {
+                joins.push(JoinClause {
+                    join_type: JoinType::Cross,
+                    table,
+                    on: None,
+                });
+            } else {
+                applies.push(ApplyClause {
+                    apply_type: ApplyType::Cross,
+                    table,
+                });
+            }
+            continue;
+        }
         if let Some(join) = parse_join_clause(parser)? {
             if applies.is_empty() {
                 joins.push(join);

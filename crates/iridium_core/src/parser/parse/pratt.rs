@@ -216,12 +216,44 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                 }
             }
 
+            let mut op_token_count = 1usize;
             let op = match parser.peek() {
                 Some(Token::Operator(op_str)) => match op_str.as_ref() {
                     "=" => BinaryOp::Eq,
                     "<>" | "!=" => BinaryOp::NotEq,
-                    ">" => BinaryOp::Gt,
-                    "<" => BinaryOp::Lt,
+                    ">" => match parser.peek_at(1) {
+                        Some(Token::Operator(next_op)) if next_op == "=" => {
+                            op_token_count = 2;
+                            BinaryOp::Gte
+                        }
+                        _ => BinaryOp::Gt,
+                    },
+                    "<" => match parser.peek_at(1) {
+                        Some(Token::Operator(next_op)) if next_op == "=" => {
+                            op_token_count = 2;
+                            BinaryOp::Lte
+                        }
+                        Some(Token::Operator(next_op)) if next_op == ">" => {
+                            op_token_count = 2;
+                            BinaryOp::NotEq
+                        }
+                        _ => BinaryOp::Lt,
+                    },
+                    "!" => match parser.peek_at(1) {
+                        Some(Token::Operator(next_op)) if next_op == "=" => {
+                            op_token_count = 2;
+                            BinaryOp::NotEq
+                        }
+                        Some(Token::Operator(next_op)) if next_op == "<" => {
+                            op_token_count = 2;
+                            BinaryOp::Gte
+                        }
+                        Some(Token::Operator(next_op)) if next_op == ">" => {
+                            op_token_count = 2;
+                            BinaryOp::Lte
+                        }
+                        _ => break,
+                    },
                     ">=" => BinaryOp::Gte,
                     "<=" => BinaryOp::Lte,
                     "+" => BinaryOp::Add,
@@ -244,7 +276,9 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                 break;
             }
 
-            let _ = parser.next();
+            for _ in 0..op_token_count {
+                let _ = parser.next();
+            }
             let right = parse_pratt_expr(parser, r_bp)?;
             left = Expr::Binary {
                 left: Box::new(left),

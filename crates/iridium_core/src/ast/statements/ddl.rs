@@ -122,6 +122,8 @@ pub enum AlterTableAction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateViewStmt {
     pub name: ObjectName,
+    #[serde(default)]
+    pub ctes: Vec<crate::ast::CteDef>,
     pub query: SelectStmt,
 }
 

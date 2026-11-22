@@ -297,6 +297,11 @@ impl VirtualTable for SysXmlIndexes {
                 ("using_xml_index_id", DataType::Int, true),
                 ("xml_index_type", DataType::TinyInt, false),
                 ("secondary_type", DataType::VarChar { max_len: 1 }, true),
+                (
+                    "secondary_type_desc",
+                    DataType::NVarChar { max_len: 60 },
+                    true,
+                ),
                 ("fill_factor", DataType::TinyInt, false),
                 ("is_padded", DataType::Bit, false),
                 ("is_disabled", DataType::Bit, false),

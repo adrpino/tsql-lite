@@ -187,6 +187,75 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("ORIGINAL_LOGIN" => |_args, _row, ctx, _catalog, _storage, _clock| {
         system::identity::eval_original_login(_args, ctx)
     }),
+    builtin!("SQL_VARIANT_PROPERTY" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() != 2 {
+            return Err(crate::error::DbError::Execution(
+                "SQL_VARIANT_PROPERTY expects 2 arguments".into(),
+            ));
+        }
+        let val = crate::executor::evaluator::eval_expr(
+            &args[0], row, ctx, catalog, storage, clock,
+        )?;
+        let prop = crate::executor::evaluator::eval_expr(
+            &args[1], row, ctx, catalog, storage, clock,
+        )?;
+        if val.is_null() || prop.is_null() {
+            return Ok(crate::types::Value::Null);
+        }
+        let prop_str = prop.to_string_value().to_ascii_lowercase();
+        let base_type = match &val {
+            crate::types::Value::Bit(_) => "bit",
+            crate::types::Value::TinyInt(_) => "tinyint",
+            crate::types::Value::SmallInt(_) => "smallint",
+            crate::types::Value::Int(_) => "int",
+            crate::types::Value::BigInt(_) => "bigint",
+            crate::types::Value::Float(_) => "float",
+            crate::types::Value::Decimal(_, _) => "decimal",
+            crate::types::Value::Money(_) => "money",
+            crate::types::Value::SmallMoney(_) => "smallmoney",
+            crate::types::Value::Char(_) => "char",
+            crate::types::Value::VarChar(_) => "varchar",
+            crate::types::Value::NChar(_) => "nchar",
+            crate::types::Value::NVarChar(_) => "nvarchar",
+            crate::types::Value::Binary(_) => "binary",
+            crate::types::Value::VarBinary(_) => "varbinary",
+            crate::types::Value::Date(_) => "date",
+            crate::types::Value::Time(_) => "time",
+            crate::types::Value::DateTime(_) | crate::types::Value::DateTime2(_) => "datetime2",
+            crate::types::Value::SmallDateTime(_) => "smalldatetime",
+            crate::types::Value::DateTimeOffset(_) => "datetimeoffset",
+            crate::types::Value::UniqueIdentifier(_) => "uniqueidentifier",
+            _ => "sql_variant",
+        };
+        match prop_str.as_str() {
+            "basetype" => Ok(crate::types::Value::NVarChar(base_type.to_string())),
+            "scale" => match val {
+                crate::types::Value::Decimal(_, s) => Ok(crate::types::Value::Int(s as i32)),
+                _ => Ok(crate::types::Value::Int(0)),
+            },
+            "precision" => match &val {
+                crate::types::Value::Int(_) => Ok(crate::types::Value::Int(10)),
+                crate::types::Value::BigInt(_) => Ok(crate::types::Value::Int(19)),
+                crate::types::Value::SmallInt(_) => Ok(crate::types::Value::Int(5)),
+                crate::types::Value::TinyInt(_) => Ok(crate::types::Value::Int(3)),
+                crate::types::Value::Decimal(_, _) => Ok(crate::types::Value::Int(38)),
+                _ => Ok(crate::types::Value::Int(0)),
+            },
+            "maxlength" => Ok(crate::types::Value::Int(val.to_string_value().len() as i32)),
+            "collation" => Ok(crate::types::Value::NVarChar(
+                "SQL_Latin1_General_CP1_CI_AS".to_string(),
+            )),
+            _ => Ok(crate::types::Value::Null),
+        }
+    }),
+    builtin!("XML_SCHEMA_NAMESPACE" => |args, _row, _ctx, _catalog, _storage, _clock| {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(crate::error::DbError::Execution(
+                "XML_SCHEMA_NAMESPACE expects 2 or 3 arguments".into(),
+            ));
+        }
+        Ok(crate::types::Value::Null)
+    }),
     builtin!("ORIGINAL_DB_NAME" => |args, _row, ctx, _catalog, _storage, _clock| {
         tsql_metadata::eval_original_db_name(args, ctx)
     }),

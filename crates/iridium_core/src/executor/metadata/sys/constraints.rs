@@ -23,6 +23,7 @@ impl VirtualTable for SysCheckConstraints {
                 ("is_not_for_replication", DataType::Bit, false),
                 ("is_disabled", DataType::Bit, false),
                 ("is_not_trusted", DataType::Bit, false),
+                ("is_system_named", DataType::Bit, false),
             ],
         )
     }
@@ -38,6 +39,7 @@ impl VirtualTable for SysCheckConstraints {
                         Value::Int(object_id),
                         Value::Int(t.id as i32),
                         Value::VarChar(format!("({})", format_expr(&chk.expr))),
+                        Value::Bit(false),
                         Value::Bit(false),
                         Value::Bit(false),
                         Value::Bit(false),
@@ -65,6 +67,7 @@ impl VirtualTable for SysForeignKeys {
                 ("modify_date", DataType::DateTime, false),
                 ("is_ms_shipped", DataType::Bit, false),
                 ("is_disabled", DataType::Bit, false),
+                ("is_not_for_replication", DataType::Bit, false),
                 ("referenced_object_id", DataType::Int, false),
                 ("key_index_id", DataType::Int, false),
                 ("delete_referential_action", DataType::TinyInt, false),
@@ -119,6 +122,7 @@ impl VirtualTable for SysForeignKeys {
                         ),
                         Value::Bit(false),
                         Value::Bit(false),
+                        Value::Bit(false),
                         Value::Int(referenced_object_id),
                         Value::Int(0),
                         Value::TinyInt(0),
@@ -145,6 +149,7 @@ impl VirtualTable for SysKeyConstraints {
                 ("parent_object_id", DataType::Int, false),
                 ("type", DataType::Char { len: 2 }, false),
                 ("type_desc", DataType::VarChar { max_len: 60 }, false),
+                ("unique_index_id", DataType::Int, false),
                 ("is_system_named", DataType::Bit, false),
             ],
         )
@@ -153,8 +158,15 @@ impl VirtualTable for SysKeyConstraints {
     fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let mut rows = Vec::new();
         let mut object_id = 2_000_000i32;
+        let indexes = catalog.get_indexes();
 
         for table in catalog.get_tables() {
+            let pk_index_id = indexes
+                .iter()
+                .find(|idx| idx.table_id == table.id && idx.is_clustered)
+                .or_else(|| indexes.iter().find(|idx| idx.table_id == table.id && idx.is_unique))
+                .map(|idx| idx.id as i32)
+                .unwrap_or(1);
             for col in &table.columns {
                 if col.primary_key {
                     rows.push(StoredRow {
@@ -165,12 +177,22 @@ impl VirtualTable for SysKeyConstraints {
                             Value::Int(table.id as i32),
                             Value::Char("PK".to_string()),
                             Value::VarChar("PRIMARY_KEY_CONSTRAINT".to_string()),
+                            Value::Int(pk_index_id),
                             Value::Bit(true),
                         ],
                         deleted: false,
                     });
                     object_id += 1;
                 } else if col.unique {
+                    let uq_index_id = indexes
+                        .iter()
+                        .find(|idx| {
+                            idx.table_id == table.id
+                                && idx.is_unique
+                                && idx.column_ids.as_slice() == [col.id]
+                        })
+                        .map(|idx| idx.id as i32)
+                        .unwrap_or(1);
                     rows.push(StoredRow {
                         values: vec![
                             Value::VarChar(format!("UQ_{}_{}", table.name, col.name)),
@@ -179,6 +201,7 @@ impl VirtualTable for SysKeyConstraints {
                             Value::Int(table.id as i32),
                             Value::Char("UQ".to_string()),
                             Value::VarChar("UNIQUE_CONSTRAINT".to_string()),
+                            Value::Int(uq_index_id),
                             Value::Bit(true),
                         ],
                         deleted: false,
@@ -205,6 +228,7 @@ impl VirtualTable for SysDefaultConstraints {
                 ("create_date", DataType::DateTime, false),
                 ("parent_column_id", DataType::Int, false),
                 ("definition", DataType::VarChar { max_len: 8000 }, false),
+                ("is_system_named", DataType::Bit, false),
             ],
         )
     }
@@ -215,6 +239,7 @@ impl VirtualTable for SysDefaultConstraints {
         for table in catalog.get_tables() {
             for col in &table.columns {
                 if let Some(default_expr) = &col.default {
+                    let is_system_named = col.default_constraint_name.is_none();
                     let name = col
                         .default_constraint_name
                         .clone()
@@ -239,6 +264,7 @@ impl VirtualTable for SysDefaultConstraints {
                             ),
                             Value::Int(col.id as i32),
                             Value::VarChar(format!("({})", format_expr(default_expr))),
+                            Value::Bit(is_system_named),
                         ],
                         deleted: false,
                     });

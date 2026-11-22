@@ -1010,3 +1010,47 @@ fn spaced_comparison_ops_comma_after_join_switch_partition_and_double_colon() {
          END;",
     );
 }
+
+#[test]
+fn catalog_metadata_columns_and_variant_property_functions() {
+    let mut e = Engine::new();
+    exec(
+        &mut e,
+        "CREATE TABLE dbo.CatalogHost (
+             Id INT NOT NULL PRIMARY KEY,
+             Code INT NOT NULL DEFAULT (0),
+             CONSTRAINT CK_CatalogHost_Code CHECK (Code >= 0)
+         );
+         CREATE TABLE dbo.CatalogChild (
+             Id INT NOT NULL PRIMARY KEY,
+             HostId INT NOT NULL REFERENCES dbo.CatalogHost(Id)
+         );",
+    );
+
+    let kc = query(&mut e, "SELECT name, unique_index_id, is_system_named FROM sys.key_constraints");
+    assert!(kc.rows.len() >= 2);
+    let dc = query(&mut e, "SELECT name, is_system_named FROM sys.default_constraints");
+    assert_eq!(dc.rows.len(), 1);
+    let cc = query(&mut e, "SELECT name, is_system_named FROM sys.check_constraints");
+    assert_eq!(cc.rows.len(), 1);
+    let fk = query(&mut e, "SELECT name, is_not_for_replication FROM sys.foreign_keys");
+    assert_eq!(fk.rows.len(), 1);
+    let ty = query(
+        &mut e,
+        "SELECT name, is_nullable, is_table_type FROM sys.types WHERE is_table_type = 0",
+    );
+    assert!(!ty.rows.is_empty());
+    let _ = query(&mut e, "SELECT secondary_type_desc FROM sys.xml_indexes");
+    let _ = query(&mut e, "SELECT is_accent_sensitivity_on FROM sys.fulltext_catalogs");
+    let _ = query(&mut e, "SELECT user_type_id FROM sys.partition_parameters");
+
+    let sv = query(
+        &mut e,
+        "SELECT SQL_VARIANT_PROPERTY(CAST(42 AS INT), 'BaseType'),
+                SQL_VARIANT_PROPERTY(CAST(12.34 AS DECIMAL(10, 2)), 'Scale'),
+                XML_SCHEMA_NAMESPACE(N'dbo', N'MissingSchema')",
+    );
+    assert_eq!(sv.rows[0][0].to_string_value(), "int");
+    assert_eq!(sv.rows[0][1].to_integer_i64(), Some(2));
+    assert!(sv.rows[0][2].is_null());
+}

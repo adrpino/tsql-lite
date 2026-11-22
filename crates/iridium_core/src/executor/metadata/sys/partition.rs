@@ -44,6 +44,7 @@ impl VirtualTable for SysPartitionParameters {
                 ("parameter_id", DataType::Int, false),
                 ("function_id", DataType::Int, false),
                 ("system_type_id", DataType::Int, false),
+                ("user_type_id", DataType::Int, false),
                 ("max_length", DataType::SmallInt, false),
                 ("precision", DataType::TinyInt, false),
                 ("scale", DataType::TinyInt, false),

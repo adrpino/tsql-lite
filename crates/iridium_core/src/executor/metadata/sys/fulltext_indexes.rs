@@ -45,6 +45,7 @@ impl VirtualTable for SysFullTextCatalogs {
                 ("name", DataType::VarChar { max_len: 128 }, false),
                 ("data_space_id", DataType::Int, true),
                 ("is_default", DataType::Bit, true),
+                ("is_accent_sensitivity_on", DataType::Bit, false),
                 ("is_importing", DataType::Bit, false),
                 ("is_paused", DataType::Bit, false),
                 ("status", DataType::TinyInt, false),

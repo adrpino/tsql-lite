@@ -23,6 +23,8 @@ impl VirtualTable for SysTypes {
                 ("scale", DataType::TinyInt, false),
                 ("is_user_defined", DataType::Bit, false),
                 ("is_assembly_type", DataType::Bit, false),
+                ("is_nullable", DataType::Bit, true),
+                ("is_table_type", DataType::Bit, false),
             ],
         )
     }
@@ -54,6 +56,8 @@ impl VirtualTable for SysTypes {
                         scale,
                         Value::Bit(false),
                         Value::Bit(false),
+                        Value::Bit(true),
+                        Value::Bit(false),
                     ],
                     deleted: false,
                 }
@@ -73,6 +77,8 @@ impl VirtualTable for SysTypes {
                     Value::TinyInt(0),
                     Value::Bit(true),
                     Value::Bit(false),
+                    Value::Bit(false),
+                    Value::Bit(true),
                 ],
                 deleted: false,
             });

@@ -94,6 +94,25 @@ pub(crate) fn eval_typeproperty(
             _ => Value::Null,
         });
     }
+    if let Some(st) = catalog.find_scalar_type(schema, name) {
+        return Ok(match prop.as_str() {
+            "ISTABLETYPE" => Value::Int(0),
+            "ALLOWSNULL" => Value::Int(if st.nullable { 1 } else { 0 }),
+            "OWNERID" => catalog
+                .get_schema_id(schema)
+                .map(|id| Value::Int(id as i32))
+                .unwrap_or(Value::Null),
+            "PRECISION" => match &st.base_type {
+                crate::types::DataType::Decimal { precision, .. } => Value::Int(*precision as i32),
+                _ => Value::Null,
+            },
+            "SCALE" => match &st.base_type {
+                crate::types::DataType::Decimal { scale, .. } => Value::Int(*scale as i32),
+                _ => Value::Null,
+            },
+            _ => Value::Null,
+        });
+    }
     let builtin = name.to_ascii_lowercase();
     Ok(match prop.as_str() {
         "ALLOWSNULL" => Value::Int(1),

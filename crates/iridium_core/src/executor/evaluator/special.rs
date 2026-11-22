@@ -1,4 +1,5 @@
 use crate::ast::Expr;
+use crate::catalog::Catalog;
 use crate::error::DbError;
 use crate::executor::context::ExecutionContext;
 use crate::types::Value;
@@ -6,6 +7,7 @@ use crate::types::Value;
 pub(crate) fn eval_special_runtime_expr(
     expr: &Expr,
     ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
 ) -> Result<Value, DbError> {
     match expr {
         Expr::WindowFunction { .. } => {
@@ -19,8 +21,9 @@ pub(crate) fn eval_special_runtime_expr(
             }
         }
         Expr::NextValueFor { sequence_name } => {
-            let _ = sequence_name;
-            Ok(Value::BigInt(1))
+            let schema = sequence_name.schema_or_dbo();
+            let val = catalog.next_sequence_value_shared(schema, &sequence_name.name)?;
+            Ok(Value::BigInt(val))
         }
         _ => Err(DbError::Execution(
             "eval_special_runtime_expr called with non-special expression".into(),

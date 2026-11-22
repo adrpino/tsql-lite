@@ -7,7 +7,7 @@ use super::{
 use crate::ast::RoutineParamType;
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
-use crate::executor::type_mapping::data_type_spec_to_runtime;
+use crate::executor::type_mapping::resolve_data_type_spec;
 use crate::storage::StoredRow;
 use crate::types::{DataType, Value};
 
@@ -122,7 +122,7 @@ impl VirtualTable for Routines {
                         returns: Some(dt_spec),
                         ..
                     } => {
-                        let dt = data_type_spec_to_runtime(dt_spec);
+                        let dt = resolve_data_type_spec(dt_spec, catalog);
                         (
                             Value::VarChar(type_name(&dt)),
                             char_max_length(&dt),
@@ -248,7 +248,7 @@ impl VirtualTable for Parameters {
                     dt_prec,
                 ) = match &p.param_type {
                     RoutineParamType::Scalar(dt_spec) => {
-                        let dt = data_type_spec_to_runtime(dt_spec);
+                        let dt = resolve_data_type_spec(dt_spec, catalog);
                         (
                             type_name(&dt),
                             char_max_length(&dt),

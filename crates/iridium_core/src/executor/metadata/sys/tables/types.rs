@@ -83,7 +83,84 @@ impl VirtualTable for SysTypes {
                 deleted: false,
             });
         }
+        for st in catalog.get_scalar_types() {
+            let schema_id = catalog.get_schema_id(&st.schema).unwrap_or(1);
+            let (sys_id, max_len, prec, scale) = scalar_type_sys_meta(&st.base_type);
+            rows.push(StoredRow {
+                values: vec![
+                    Value::VarChar(st.name.clone()),
+                    Value::TinyInt(sys_id),
+                    Value::Int(st.object_id),
+                    Value::Int(schema_id as i32),
+                    Value::SmallInt(max_len),
+                    Value::TinyInt(prec),
+                    Value::TinyInt(scale),
+                    Value::Bit(true),
+                    Value::Bit(false),
+                    Value::Bit(st.nullable),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            });
+        }
         rows
+    }
+}
+
+fn scalar_type_sys_meta(dt: &DataType) -> (u8, i16, u8, u8) {
+    match dt {
+        DataType::Bit => (104, 1, 1, 0),
+        DataType::TinyInt => (48, 1, 3, 0),
+        DataType::SmallInt => (52, 2, 5, 0),
+        DataType::Int => (56, 4, 10, 0),
+        DataType::BigInt => (127, 8, 19, 0),
+        DataType::Float => (62, 8, 53, 0),
+        DataType::Decimal { precision, scale } => (106, 17, *precision, *scale),
+        DataType::Money => (60, 8, 19, 4),
+        DataType::SmallMoney => (122, 4, 10, 4),
+        DataType::Char { len } => (175, *len as i16, 0, 0),
+        DataType::VarChar { max_len } => (
+            167,
+            if *max_len == u16::MAX {
+                -1
+            } else {
+                *max_len as i16
+            },
+            0,
+            0,
+        ),
+        DataType::NChar { len } => (239, (*len as i16).saturating_mul(2), 0, 0),
+        DataType::NVarChar { max_len } => (
+            231,
+            if *max_len == u16::MAX {
+                -1
+            } else {
+                (*max_len as i16).saturating_mul(2)
+            },
+            0,
+            0,
+        ),
+        DataType::Binary { len } => (173, *len as i16, 0, 0),
+        DataType::VarBinary { max_len } => (
+            165,
+            if *max_len == u16::MAX {
+                -1
+            } else {
+                *max_len as i16
+            },
+            0,
+            0,
+        ),
+        DataType::Date => (40, 3, 10, 0),
+        DataType::Time => (41, 5, 16, 7),
+        DataType::DateTime => (61, 8, 23, 3),
+        DataType::DateTime2 => (42, 8, 27, 7),
+        DataType::SmallDateTime => (58, 4, 16, 0),
+        DataType::DateTimeOffset => (43, 10, 34, 7),
+        DataType::UniqueIdentifier => (36, 16, 0, 0),
+        DataType::SqlVariant => (98, 8016, 0, 0),
+        DataType::Xml => (241, -1, 0, 0),
+        DataType::Vector { dimensions } => (244, (*dimensions as i16).saturating_mul(4), 0, 0),
     }
 }
 

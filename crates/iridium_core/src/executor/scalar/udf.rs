@@ -59,7 +59,7 @@ pub(crate) fn eval_user_scalar_function(
             )));
         };
         let val = eval_expr(arg_expr, row, ctx, catalog, storage, clock)?;
-        let ty = type_mapping::data_type_spec_to_runtime(dt);
+        let ty = type_mapping::resolve_data_type_spec(dt, catalog);
         let coerced =
             value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
         evaluated_params.push((param.name.clone(), ty, coerced));

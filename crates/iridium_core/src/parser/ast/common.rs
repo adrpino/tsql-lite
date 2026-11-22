@@ -47,6 +47,7 @@ pub enum DataType {
     Text,
     NText,
     SqlVariant,
+    RowVersion,
     Table,
     Custom(String),
 }

@@ -125,10 +125,21 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                         .into_iter()
                         .map(lower_column_def)
                         .collect::<Result<Vec<_>, _>>()?,
-                    table_constraints: Vec::new(),
+                    table_constraints: vec![],
                 },
             )
         }
+        ast::DdlStatement::CreateScalarType {
+            name,
+            base_type,
+            nullable,
+        } => executor_ast::statements::DdlStatement::CreateScalarType(
+            executor_ast::statements::ddl::CreateScalarTypeStmt {
+                name: lower_object_name(name),
+                base_type: lower_data_type(base_type)?,
+                nullable,
+            },
+        ),
         ast::DdlStatement::CreateSchema(name) => {
             executor_ast::statements::DdlStatement::CreateSchema(
                 executor_ast::statements::ddl::CreateSchemaStmt { name },
@@ -145,6 +156,9 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                 source: lower_object_name(source),
             },
         ),
+        ast::DdlStatement::CatalogMetadata(action) => {
+            executor_ast::statements::DdlStatement::CatalogMetadata(action)
+        }
         ast::DdlStatement::CreateSynonym { name, base_object } => {
             executor_ast::statements::DdlStatement::CreateSynonym(
                 executor_ast::statements::ddl::CreateSynonymStmt {
@@ -189,6 +203,23 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                 },
             )
         }
+        ast::DdlStatement::AlterSequence {
+            name,
+            restart,
+            increment_by,
+            min_value,
+            max_value,
+            cycle,
+        } => executor_ast::statements::DdlStatement::AlterSequence(
+            executor_ast::statements::ddl::AlterSequenceStmt {
+                name: lower_object_name(name),
+                restart,
+                increment: increment_by,
+                minimum_value: min_value,
+                maximum_value: max_value,
+                is_cycling: cycle,
+            },
+        ),
     };
     Ok(executor_ast::Statement::Ddl(Box::new(lowered)))
 }
@@ -219,6 +250,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             columns,
             ctes,
             query,
+            or_alter,
         } => {
             let mut lowered_query = lower_select(query)?;
             let lowered_ctes = ctes
@@ -262,6 +294,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         name: lower_object_name(name),
                         ctes: lowered_ctes,
                         query: lowered_query,
+                        or_alter,
                     },
                 )),
             ))
@@ -292,6 +325,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             params,
             returns,
             body,
+            or_alter,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::CreateFunction(Box::new(
                 executor_ast::statements::procedural::CreateFunctionStmt {
@@ -301,6 +335,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .map(lower_routine_param)
                         .collect::<Result<Vec<_>, _>>()?,
                     returns: returns.map(lower_data_type).transpose()?,
+                    or_alter,
                     body: match body {
                         ast::FunctionBody::ScalarReturn(e) => {
                             executor_ast::statements::procedural::FunctionBody::ScalarReturn(
@@ -377,6 +412,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             events,
             is_instead_of,
             body,
+            or_alter,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::CreateTrigger(Box::new(
                 executor_ast::statements::procedural::CreateTriggerStmt {
@@ -395,6 +431,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .into_iter()
                         .map(lower_statement)
                         .collect::<Result<Vec<_>, _>>()?,
+                    or_alter,
                 },
             )),
         )),
@@ -444,25 +481,29 @@ pub fn lower_routine_param(
 ) -> Result<executor_ast::statements::RoutineParam, DbError> {
     let (param_type, is_readonly) = match p.data_type {
         ast::DataType::Custom(name) => {
-            if !p.is_readonly {
-                return Err(DbError::Parse(format!(
-                    "table-valued parameter '{}' must be READONLY",
-                    p.name
-                )));
-            }
             let name_str = name.as_str();
             let (schema, type_name) = match name_str.rsplit_once('.') {
                 Some((schema, ty)) => (Some(schema.to_string()), ty.to_string()),
                 None => (None, name_str.to_string()),
             };
-            (
-                executor_ast::statements::RoutineParamType::TableType(executor_ast::ObjectName {
-                    database: None,
-                    schema,
-                    name: type_name,
-                }),
-                true,
-            )
+            let obj = executor_ast::ObjectName {
+                database: None,
+                schema,
+                name: type_name,
+            };
+            if p.is_readonly {
+                (
+                    executor_ast::statements::RoutineParamType::TableType(obj),
+                    true,
+                )
+            } else {
+                (
+                    executor_ast::statements::RoutineParamType::Scalar(
+                        executor_ast::data_types::DataTypeSpec::Custom(Box::new(obj)),
+                    ),
+                    false,
+                )
+            }
         }
         other => (
             executor_ast::statements::RoutineParamType::Scalar(lower_data_type(other)?),

@@ -120,6 +120,7 @@ fn build_virtual_table(alias: &str, sub_result: &QueryResult) -> TableDef {
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             })
             .collect(),
         check_constraints: vec![],

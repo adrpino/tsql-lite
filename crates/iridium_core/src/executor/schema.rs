@@ -1,8 +1,9 @@
 #![allow(dead_code, unused_imports)]
 
 use crate::ast::{
-    AlterSchemaTransferStmt, AlterTableStmt, CreateIndexStmt, CreateSchemaStmt, CreateTableStmt,
-    CreateTypeStmt, DropIndexStmt, DropSchemaStmt, DropTableStmt, DropTypeStmt,
+    AlterSchemaTransferStmt, AlterTableStmt, CreateIndexStmt, CreateScalarTypeStmt,
+    CreateSchemaStmt, CreateTableStmt, CreateTypeStmt, DropIndexStmt, DropSchemaStmt,
+    DropTableStmt, DropTypeStmt,
 };
 use crate::error::DbError;
 
@@ -18,6 +19,10 @@ pub(crate) struct SchemaExecutor<'a> {
 impl<'a> SchemaExecutor<'a> {
     pub(crate) fn create_type(&mut self, stmt: CreateTypeStmt) -> Result<(), DbError> {
         schema_parts::create_type(self, stmt)
+    }
+
+    pub(crate) fn create_scalar_type(&mut self, stmt: CreateScalarTypeStmt) -> Result<(), DbError> {
+        schema_parts::create_scalar_type(self, stmt)
     }
 
     pub(crate) fn drop_type(&mut self, stmt: DropTypeStmt) -> Result<(), DbError> {
@@ -81,6 +86,13 @@ impl<'a> SchemaExecutor<'a> {
         stmt: crate::ast::DropSequenceStmt,
     ) -> Result<(), DbError> {
         schema_parts::drop_sequence(self, stmt)
+    }
+
+    pub(crate) fn alter_sequence(
+        &mut self,
+        stmt: crate::ast::AlterSequenceStmt,
+    ) -> Result<(), DbError> {
+        schema_parts::alter_sequence(self, stmt)
     }
 
     pub(crate) fn create_index(&mut self, stmt: CreateIndexStmt) -> Result<(), DbError> {

@@ -41,6 +41,10 @@ pub(super) fn bind_builtin_tvf(
         return bind_fn_my_permissions(tref);
     }
 
+    if upper.starts_with("GENERATE_SERIES(") {
+        return bind_generate_series(catalog, storage, clock, tref, ctx, name);
+    }
+
     if !upper.starts_with("STRING_SPLIT(") {
         return Ok(None);
     }
@@ -119,6 +123,7 @@ pub(super) fn bind_builtin_tvf(
         collation: None,
         is_clustered: false,
         ansi_padding_on: true,
+        is_rowversion: false,
     }];
 
     if enable_ordinal {
@@ -138,6 +143,7 @@ pub(super) fn bind_builtin_tvf(
             collation: None,
             is_clustered: false,
             ansi_padding_on: true,
+            is_rowversion: false,
         });
     }
 
@@ -235,6 +241,7 @@ fn bind_xml_nodes(
         collation: None,
         is_clustered: false,
         ansi_padding_on: true,
+        is_rowversion: false,
     }];
 
     let table_def = TableDef {
@@ -701,6 +708,7 @@ fn bind_openjson(
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             })
             .collect();
         let table_def = TableDef {
@@ -738,6 +746,7 @@ fn bind_openjson(
             collation: None,
             is_clustered: false,
             ansi_padding_on: true,
+            is_rowversion: false,
         },
         ColumnDef {
             id: 2,
@@ -755,6 +764,7 @@ fn bind_openjson(
             collation: None,
             is_clustered: false,
             ansi_padding_on: true,
+            is_rowversion: false,
         },
         ColumnDef {
             id: 3,
@@ -772,6 +782,7 @@ fn bind_openjson(
             collation: None,
             is_clustered: false,
             ansi_padding_on: true,
+            is_rowversion: false,
         },
     ];
 
@@ -989,6 +1000,7 @@ fn make_permission_column_def(id: u32, name: &str) -> ColumnDef {
         collation: None,
         is_clustered: false,
         ansi_padding_on: true,
+        is_rowversion: false,
     }
 }
 
@@ -1049,6 +1061,215 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
             .alias
             .clone()
             .unwrap_or_else(|| "fn_my_permissions".into()),
+        virtual_rows: Some(rows),
+    }))
+}
+
+fn bind_generate_series(
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+    tref: &TableRef,
+    ctx: &mut ExecutionContext,
+    name: &str,
+) -> Result<Option<BoundTable>, DbError> {
+    if !name.ends_with(')') || name.len() < "GENERATE_SERIES(".len() + 1 {
+        return Err(DbError::Parse(
+            "GENERATE_SERIES requires (start, stop[, step])".into(),
+        ));
+    }
+    let inner = &name["GENERATE_SERIES(".len()..name.len() - 1];
+    let parts = crate::parser::utils::split_csv_top_level(inner);
+    if parts.len() < 2 || parts.len() > 3 {
+        return Err(DbError::Parse(
+            "GENERATE_SERIES requires 2 or 3 arguments".into(),
+        ));
+    }
+
+    let start_expr = parse_expr_subquery_aware(&parts[0])?;
+    let stop_expr = parse_expr_subquery_aware(&parts[1])?;
+    let start_val = eval_expr(&start_expr, &[], ctx, catalog, storage, clock)?;
+    let stop_val = eval_expr(&stop_expr, &[], ctx, catalog, storage, clock)?;
+    let step_val = if parts.len() == 3 {
+        let step_expr = parse_expr_subquery_aware(&parts[2])?;
+        Some(eval_expr(&step_expr, &[], ctx, catalog, storage, clock)?)
+    } else {
+        None
+    };
+
+    let any_null =
+        start_val.is_null() || stop_val.is_null() || step_val.as_ref().is_some_and(|v| v.is_null());
+
+    let is_decimal = matches!(start_val, Value::Decimal(_, _))
+        || matches!(stop_val, Value::Decimal(_, _))
+        || matches!(step_val, Some(Value::Decimal(_, _)));
+
+    let mut rows: Vec<StoredRow> = Vec::new();
+    let col_type: crate::types::DataType;
+
+    if is_decimal {
+        fn to_scaled_decimal(v: &Value) -> Result<(i128, u8), DbError> {
+            match v {
+                Value::TinyInt(n) => Ok((*n as i128, 0)),
+                Value::SmallInt(n) => Ok((*n as i128, 0)),
+                Value::Int(n) => Ok((*n as i128, 0)),
+                Value::BigInt(n) => Ok((*n as i128, 0)),
+                Value::Decimal(u, s) => Ok((*u, *s)),
+                _ => Err(DbError::Execution(
+                    "GENERATE_SERIES arguments must be numeric".into(),
+                )),
+            }
+        }
+        if any_null {
+            col_type = crate::types::DataType::Decimal {
+                precision: 38,
+                scale: 0,
+            };
+        } else {
+            let (s_u, s_sc) = to_scaled_decimal(&start_val)?;
+            let (e_u, e_sc) = to_scaled_decimal(&stop_val)?;
+            let (st_opt, st_sc) = match &step_val {
+                Some(v) => {
+                    let (u, sc) = to_scaled_decimal(v)?;
+                    (Some(u), sc)
+                }
+                None => (None, 0),
+            };
+            let max_scale = s_sc.max(e_sc).max(st_sc);
+            let scale_up = |u: i128, sc: u8| -> i128 { u * 10_i128.pow((max_scale - sc) as u32) };
+            let start = scale_up(s_u, s_sc);
+            let stop = scale_up(e_u, e_sc);
+            let step = match st_opt {
+                Some(u) => scale_up(u, st_sc),
+                None => {
+                    let one = 10_i128.pow(max_scale as u32);
+                    if start <= stop {
+                        one
+                    } else {
+                        -one
+                    }
+                }
+            };
+            if step == 0 {
+                return Err(DbError::Execution(
+                    "The step parameter cannot be zero.".into(),
+                ));
+            }
+            col_type = crate::types::DataType::Decimal {
+                precision: 38,
+                scale: max_scale,
+            };
+            let mut cur = start;
+            const MAX_SERIES_ROWS: usize = 1_000_000;
+            while (step > 0 && cur <= stop) || (step < 0 && cur >= stop) {
+                if rows.len() >= MAX_SERIES_ROWS {
+                    return Err(DbError::Execution(
+                        "GENERATE_SERIES exceeded maximum row limit".into(),
+                    ));
+                }
+                rows.push(StoredRow {
+                    values: vec![Value::Decimal(cur, max_scale)],
+                    deleted: false,
+                });
+                match cur.checked_add(step) {
+                    Some(next) => cur = next,
+                    None => break,
+                }
+            }
+        }
+    } else {
+        let is_bigint = matches!(start_val, Value::BigInt(_))
+            || matches!(stop_val, Value::BigInt(_))
+            || matches!(step_val, Some(Value::BigInt(_)));
+        col_type = if is_bigint {
+            crate::types::DataType::BigInt
+        } else {
+            crate::types::DataType::Int
+        };
+        if !any_null {
+            let start = start_val.to_integer_i64().ok_or_else(|| {
+                DbError::Execution("GENERATE_SERIES start must be an integer".into())
+            })?;
+            let stop = stop_val.to_integer_i64().ok_or_else(|| {
+                DbError::Execution("GENERATE_SERIES stop must be an integer".into())
+            })?;
+            let step = match &step_val {
+                Some(v) => v.to_integer_i64().ok_or_else(|| {
+                    DbError::Execution("GENERATE_SERIES step must be an integer".into())
+                })?,
+                None => {
+                    if start <= stop {
+                        1
+                    } else {
+                        -1
+                    }
+                }
+            };
+            if step == 0 {
+                return Err(DbError::Execution(
+                    "The step parameter cannot be zero.".into(),
+                ));
+            }
+            let mut cur = start;
+            const MAX_SERIES_ROWS: usize = 1_000_000;
+            while (step > 0 && cur <= stop) || (step < 0 && cur >= stop) {
+                if rows.len() >= MAX_SERIES_ROWS {
+                    return Err(DbError::Execution(
+                        "GENERATE_SERIES exceeded maximum row limit".into(),
+                    ));
+                }
+                let val = if is_bigint {
+                    Value::BigInt(cur)
+                } else {
+                    Value::Int(cur as i32)
+                };
+                rows.push(StoredRow {
+                    values: vec![val],
+                    deleted: false,
+                });
+                match cur.checked_add(step) {
+                    Some(next) => cur = next,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    let columns = vec![ColumnDef {
+        id: 1,
+        name: "value".to_string(),
+        data_type: col_type,
+        nullable: false,
+        primary_key: false,
+        unique: false,
+        identity: None,
+        default: None,
+        default_constraint_name: None,
+        check: None,
+        check_constraint_name: None,
+        computed_expr: None,
+        collation: None,
+        is_clustered: false,
+        ansi_padding_on: true,
+        is_rowversion: false,
+    }];
+
+    let table_def = TableDef {
+        id: 0,
+        schema_id: 1,
+        schema_name: "dbo".to_string(),
+        name: "GENERATE_SERIES".to_string(),
+        columns,
+        check_constraints: vec![],
+        foreign_keys: vec![],
+    };
+
+    Ok(Some(BoundTable {
+        table: std::sync::Arc::new(table_def),
+        alias: tref
+            .alias
+            .clone()
+            .unwrap_or_else(|| "GENERATE_SERIES".into()),
         virtual_rows: Some(rows),
     }))
 }

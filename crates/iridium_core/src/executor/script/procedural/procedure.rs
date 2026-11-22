@@ -267,7 +267,8 @@ impl<'a> ScriptExecutor<'a> {
                             )));
                         };
                         let val = eval_expr(def, &[], ctx, self.catalog, self.storage, self.clock)?;
-                        let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
+                        let ty =
+                            crate::executor::type_mapping::resolve_data_type_spec(dt, self.catalog);
                         let coerced = coerce_value_to_type_with_dateformat(
                             val,
                             &ty,
@@ -314,7 +315,8 @@ impl<'a> ScriptExecutor<'a> {
                             }
                             Err(e) => return Err(e),
                         };
-                        let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
+                        let ty =
+                            crate::executor::type_mapping::resolve_data_type_spec(dt, self.catalog);
                         let coerced = truncate_param_string(
                             coerce_value_to_type_with_dateformat(
                                 val,
@@ -478,6 +480,16 @@ impl<'a> ScriptExecutor<'a> {
             }
             Ok(final_result)
         })();
+        if result.is_err() && ctx.options.xact_abort && ctx.frame.trancount > 0 {
+            if let Some(root_snap) = ctx.frame.script_tx.root_snapshot.take() {
+                let _ = self.restore_transactional_tables(&root_snap, ctx);
+                ctx.frame.script_tx.savepoints.clear();
+                ctx.frame.trancount = ctx.frame.script_tx.base_depth;
+                if ctx.frame.trancount == 0 {
+                    ctx.frame.xact_state = 0;
+                }
+            }
+        }
         while ctx.frame.scope_vars.len() > scope_depth {
             ctx.leave_scope();
         }

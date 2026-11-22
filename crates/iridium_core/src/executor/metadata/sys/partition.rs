@@ -31,8 +31,30 @@ impl VirtualTable for SysPartitionFunctions {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let created = Value::DateTime(
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        );
+        catalog
+            .get_partition_functions()
+            .iter()
+            .map(|pf| StoredRow {
+                values: vec![
+                    Value::VarChar(pf.name.clone()),
+                    Value::Int(pf.function_id),
+                    Value::TinyInt(1),
+                    Value::VarChar("RANGE".to_string()),
+                    Value::Int((pf.boundary_values.len() + 1) as i32),
+                    Value::Bit(pf.boundary_value_on_right),
+                    created.clone(),
+                    created.clone(),
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -53,8 +75,36 @@ impl VirtualTable for SysPartitionParameters {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        catalog
+            .get_partition_functions()
+            .iter()
+            .map(|pf| {
+                let sys_id = super::super::system_type_id(&pf.data_type);
+                let max_len = super::super::type_max_length(&pf.data_type);
+                let (prec, scale) = match &pf.data_type {
+                    DataType::Decimal { precision, scale } => (*precision, *scale),
+                    DataType::Int => (10, 0),
+                    DataType::BigInt => (19, 0),
+                    DataType::SmallInt => (5, 0),
+                    DataType::TinyInt => (3, 0),
+                    _ => (0, 0),
+                };
+                StoredRow {
+                    values: vec![
+                        Value::Int(1),
+                        Value::Int(pf.function_id),
+                        Value::Int(sys_id),
+                        Value::Int(sys_id),
+                        Value::SmallInt(max_len),
+                        Value::TinyInt(prec),
+                        Value::TinyInt(scale),
+                        Value::Null,
+                    ],
+                    deleted: false,
+                }
+            })
+            .collect()
     }
 }
 
@@ -74,8 +124,29 @@ impl VirtualTable for SysPartitionSchemes {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let created = Value::DateTime(
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        );
+        catalog
+            .get_partition_schemes()
+            .iter()
+            .map(|ps| StoredRow {
+                values: vec![
+                    Value::VarChar(ps.name.clone()),
+                    Value::Int(ps.data_space_id),
+                    Value::Int(ps.function_id),
+                    Value::Char("PS".to_string()),
+                    Value::VarChar("PARTITION_SCHEME".to_string()),
+                    created.clone(),
+                    created.clone(),
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -91,8 +162,21 @@ impl VirtualTable for SysDestinationDataSpaces {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut rows = Vec::new();
+        for ps in catalog.get_partition_schemes() {
+            for (idx, fg) in ps.filegroups.iter().enumerate() {
+                rows.push(StoredRow {
+                    values: vec![
+                        Value::Int(ps.data_space_id),
+                        Value::Int((idx + 1) as i32),
+                        Value::Int(catalog.filegroup_data_space_id(fg)),
+                    ],
+                    deleted: false,
+                });
+            }
+        }
+        rows
     }
 }
 
@@ -111,8 +195,8 @@ impl VirtualTable for SysFilegroups {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![StoredRow {
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut rows = vec![StoredRow {
             values: vec![
                 Value::Int(1),
                 Value::VarChar("PRIMARY".to_string()),
@@ -122,7 +206,21 @@ impl VirtualTable for SysFilegroups {
                 Value::Bit(true),
             ],
             deleted: false,
-        }]
+        }];
+        for fg in catalog.get_filegroups() {
+            rows.push(StoredRow {
+                values: vec![
+                    Value::Int(fg.data_space_id),
+                    Value::VarChar(fg.name.clone()),
+                    Value::Char("FG".to_string()),
+                    Value::VarChar("ROWS_FILEGROUP".to_string()),
+                    Value::Bit(fg.is_read_only),
+                    Value::Bit(fg.is_default),
+                ],
+                deleted: false,
+            });
+        }
+        rows
     }
 }
 
@@ -262,7 +360,21 @@ impl VirtualTable for SysPartitionRangeValues {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut rows = Vec::new();
+        for pf in catalog.get_partition_functions() {
+            for (idx, val_str) in pf.boundary_values.iter().enumerate() {
+                rows.push(StoredRow {
+                    values: vec![
+                        Value::Int(pf.function_id),
+                        Value::Int((idx + 1) as i32),
+                        Value::Int(1),
+                        Value::SqlVariant(Box::new(Value::NVarChar(val_str.clone()))),
+                    ],
+                    deleted: false,
+                });
+            }
+        }
+        rows
     }
 }

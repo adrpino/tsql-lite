@@ -35,6 +35,12 @@ impl TriggerRegistry for CatalogImpl {
         Ok(())
     }
 
+    fn replace_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError> {
+        let key = trigger_key(&trigger);
+        self.triggers.insert_or_replace(key, trigger);
+        Ok(())
+    }
+
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
         self.triggers

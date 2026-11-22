@@ -217,6 +217,11 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                         "COMMIT without active transaction".into(),
                     ));
                 }
+                if ctx.frame.xact_state == -1 {
+                    return Err(DbError::Execution(
+                        "The current transaction cannot be committed and cannot support operations that write to the log file. Roll back the transaction.".into(),
+                    ));
+                }
                 ctx.frame.trancount -= 1;
                 if ctx.frame.trancount <= ctx.frame.script_tx.base_depth {
                     ctx.frame.script_tx.root_snapshot = None;
@@ -234,6 +239,11 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                     ));
                 }
                 if let Some(ref sp_name) = savepoint {
+                    if ctx.frame.xact_state == -1 {
+                        return Err(DbError::Execution(
+                            "The current transaction cannot be committed and cannot be rolled back to a savepoint. Roll back the entire transaction.".into(),
+                        ));
+                    }
                     let target = sp_name.to_ascii_lowercase();
                     if let Some(pos) = ctx
                         .frame

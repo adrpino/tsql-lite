@@ -95,6 +95,7 @@ pub(super) fn query_result_to_bound_table(
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             })
             .collect(),
         check_constraints: vec![],

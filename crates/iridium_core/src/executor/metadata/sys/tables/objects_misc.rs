@@ -40,8 +40,8 @@ impl VirtualTable for SysDataSpaces {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![StoredRow {
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut rows = vec![StoredRow {
             values: vec![
                 Value::Int(1),
                 Value::VarChar("PRIMARY".to_string()),
@@ -51,7 +51,34 @@ impl VirtualTable for SysDataSpaces {
                 Value::Bit(false),
             ],
             deleted: false,
-        }]
+        }];
+        for fg in catalog.get_filegroups() {
+            rows.push(StoredRow {
+                values: vec![
+                    Value::Int(fg.data_space_id),
+                    Value::VarChar(fg.name.clone()),
+                    Value::Char("FG".to_string()),
+                    Value::VarChar("ROWS_FILEGROUP".to_string()),
+                    Value::Bit(fg.is_default),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            });
+        }
+        for ps in catalog.get_partition_schemes() {
+            rows.push(StoredRow {
+                values: vec![
+                    Value::Int(ps.data_space_id),
+                    Value::VarChar(ps.name.clone()),
+                    Value::Char("PS".to_string()),
+                    Value::VarChar("PARTITION_SCHEME".to_string()),
+                    Value::Bit(false),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            });
+        }
+        rows
     }
 }
 
@@ -950,7 +977,7 @@ impl VirtualTable for SysSequences {
                         Value::Int(127),
                         Value::TinyInt(19),
                         Value::TinyInt(0),
-                        Value::BigInt(s.current_value),
+                        Value::BigInt(s.current_value.load()),
                     ],
                     deleted: false,
                 }

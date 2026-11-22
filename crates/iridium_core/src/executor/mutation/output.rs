@@ -75,6 +75,7 @@ fn build_output_eval_env(
                 computed_expr: None,
                 collation: None,
                 ansi_padding_on: true,
+                is_rowversion: false,
                 is_clustered: false,
             }],
             check_constraints: Vec::new(),

@@ -708,16 +708,21 @@ pub fn parse_create_type(parser: &mut Parser) -> ParseResult<Statement> {
     let name = super::parse_multipart_name(parser)?;
     if parser.at_keyword(Keyword::From) {
         let _ = parser.next();
-        let _ = crate::parser::parse::expressions::parse_data_type(parser)?;
+        let base_type = crate::parser::parse::expressions::parse_data_type(parser)?;
+        let mut nullable = true;
         if parser.at_keyword(Keyword::Not) {
             let _ = parser.next();
             parser.expect_keyword(Keyword::Null)?;
+            nullable = false;
         } else if parser.at_keyword(Keyword::Null) {
             let _ = parser.next();
+            nullable = true;
         }
-        return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-            Vec::new(),
-        )));
+        return Ok(Statement::Ddl(Box::new(DdlStatement::CreateScalarType {
+            name,
+            base_type,
+            nullable,
+        })));
     }
     parser.expect_keyword(Keyword::As)?;
     parser.expect_keyword(Keyword::Table)?;

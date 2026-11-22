@@ -137,9 +137,10 @@ pub(crate) fn execute_system_procedure(
     } else if name.eq_ignore_ascii_case("sp_refresh_parameter_encryption")
         || name.eq_ignore_ascii_case("sp_refreshsqlmodule")
         || name.eq_ignore_ascii_case("sp_refreshview")
-        || name.eq_ignore_ascii_case("sp_tableoption")
     {
         QueryResult::default()
+    } else if name.eq_ignore_ascii_case("sp_tableoption") {
+        execute_sp_tableoption(exec, &args)?
     } else if name.eq_ignore_ascii_case("sp_addextendedproperty") {
         execute_extended_property_proc(exec, stmt, ctx, ExtendedPropOp::Add)?
     } else if name.eq_ignore_ascii_case("sp_updateextendedproperty") {
@@ -174,6 +175,34 @@ fn eval_args(
         result.push(val.to_string_value());
     }
     Ok(result)
+}
+
+fn execute_sp_tableoption(
+    exec: &mut ScriptExecutor<'_>,
+    args: &[String],
+) -> Result<QueryResult, DbError> {
+    if args.len() >= 3
+        && args[1]
+            .trim()
+            .eq_ignore_ascii_case("large value types out of row")
+    {
+        let raw_table = args[0].trim();
+        let (schema, name) = if let Some((s, n)) = raw_table.rsplit_once('.') {
+            (
+                s.trim().trim_matches(&['[', ']'][..]),
+                n.trim().trim_matches(&['[', ']'][..]),
+            )
+        } else {
+            ("dbo", raw_table.trim_matches(&['[', ']'][..]))
+        };
+        if let Some(table_id) = exec.catalog.find_table(schema, name).map(|t| t.id) {
+            let v = args[2].trim();
+            let enabled = matches!(v.to_ascii_lowercase().as_str(), "1" | "on" | "true");
+            exec.catalog
+                .set_table_large_value_out_of_row(table_id, enabled);
+        }
+    }
+    Ok(QueryResult::default())
 }
 
 #[derive(Clone, Copy)]
@@ -252,7 +281,8 @@ fn execute_extended_property_proc(
             let major_opt = exec
                 .catalog
                 .object_id(n0, n1)
-                .or_else(|| exec.catalog.find_table_type(n0, n1).map(|tt| tt.object_id));
+                .or_else(|| exec.catalog.find_table_type(n0, n1).map(|tt| tt.object_id))
+                .or_else(|| exec.catalog.find_scalar_type(n0, n1).map(|st| st.object_id));
             major_opt.map(|major_id| {
                 let minor_id = match (l2_type, l2_name) {
                     (Some(t2), Some(n2)) if t2.eq_ignore_ascii_case("COLUMN") => exec

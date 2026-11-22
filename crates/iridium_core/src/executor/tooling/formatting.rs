@@ -33,6 +33,11 @@ pub(crate) fn format_data_type_spec(dt: &DataTypeSpec) -> String {
         DataTypeSpec::SqlVariant => "SQL_VARIANT".to_string(),
         DataTypeSpec::Numeric(p, s) => format!("NUMERIC({},{})", p, s),
         DataTypeSpec::Xml => "XML".to_string(),
+        DataTypeSpec::RowVersion => "ROWVERSION".to_string(),
+        DataTypeSpec::Custom(obj) => match &obj.schema {
+            Some(s) => format!("[{}].[{}]", s, obj.name),
+            None => format!("[{}]", obj.name),
+        },
     }
 }
 
@@ -319,6 +324,12 @@ pub(crate) fn format_select_stmt(stmt: &SelectStmt) -> String {
     if let Some(top) = &stmt.top {
         out.push_str("TOP ");
         out.push_str(&format_expr(&top.value));
+        if top.percent {
+            out.push_str(" PERCENT");
+        }
+        if top.with_ties {
+            out.push_str(" WITH TIES");
+        }
         out.push(' ');
     }
     out.push_str(&format_select_columns(&stmt.projection));

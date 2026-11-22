@@ -20,8 +20,15 @@ fn parse_create_and_drop_type() {
 
 #[test]
 fn parse_tvp_param_requires_readonly() {
-    let err =
-        parse_sql("CREATE PROCEDURE dbo.p @items dbo.IntList AS BEGIN SELECT 1 END").unwrap_err();
+    // Syntax-level: non-READONLY custom types are valid for scalar alias UDTs,
+    // while catalog-level DDL enforcement rejects table types without READONLY.
+    let engine = iridium_core::Engine::new();
+    engine
+        .exec("CREATE TYPE dbo.IntList AS TABLE (id INT)")
+        .expect("create table type");
+    let err = engine
+        .exec("CREATE PROCEDURE dbo.p @items dbo.IntList AS BEGIN SELECT 1 END")
+        .unwrap_err();
     assert!(err.to_string().to_uppercase().contains("READONLY"));
 }
 

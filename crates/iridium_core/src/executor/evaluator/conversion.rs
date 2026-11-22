@@ -4,7 +4,7 @@ use crate::error::DbError;
 use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
 use crate::executor::model::ContextTable;
-use crate::executor::type_mapping::data_type_spec_to_runtime;
+use crate::executor::type_mapping::resolve_data_type_spec;
 use crate::executor::value_ops::{coerce_value_to_type_with_dateformat, convert_with_style};
 use crate::storage::Storage;
 use crate::types::Value;
@@ -28,14 +28,14 @@ pub(crate) fn eval_conversion_expr(
         )),
         Expr::Cast { expr, target } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            let runtime_ty = data_type_spec_to_runtime(target);
+            let runtime_ty = resolve_data_type_spec(target, catalog);
             let coerced =
                 coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)?;
             Ok(truncate_cast_string(coerced, &runtime_ty))
         }
         Expr::TryCast { expr, target } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            let runtime_ty = data_type_spec_to_runtime(target);
+            let runtime_ty = resolve_data_type_spec(target, catalog);
             match coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)
             {
                 Ok(v) => Ok(truncate_cast_string(v, &runtime_ty)),
@@ -48,7 +48,7 @@ pub(crate) fn eval_conversion_expr(
             style,
         } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            let runtime_ty = data_type_spec_to_runtime(target);
+            let runtime_ty = resolve_data_type_spec(target, catalog);
             let coerced = if let Some(style_code) = style {
                 convert_with_style(value, &runtime_ty, *style_code, &ctx.options.dateformat)?
             } else {
@@ -62,7 +62,7 @@ pub(crate) fn eval_conversion_expr(
             style,
         } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
-            let runtime_ty = data_type_spec_to_runtime(target);
+            let runtime_ty = resolve_data_type_spec(target, catalog);
             let result = if let Some(style_code) = style {
                 convert_with_style(value, &runtime_ty, *style_code, &ctx.options.dateformat)
             } else {

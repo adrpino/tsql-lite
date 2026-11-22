@@ -27,7 +27,18 @@ impl<'a> ScriptExecutor<'a> {
             }
         }
         let declared_name = stmt.name.clone();
-        let ty = crate::executor::type_mapping::data_type_spec_to_runtime(&stmt.data_type);
+        let ty = if let Some(ref custom_type) = stmt.custom_type {
+            if let Some(scalar_def) = self
+                .catalog
+                .find_scalar_type(custom_type.schema_or_dbo(), &custom_type.name)
+            {
+                scalar_def.base_type.clone()
+            } else {
+                crate::executor::type_mapping::resolve_data_type_spec(&stmt.data_type, self.catalog)
+            }
+        } else {
+            crate::executor::type_mapping::resolve_data_type_spec(&stmt.data_type, self.catalog)
+        };
         let value = if let Some(ref default_expr) = stmt.default {
             crate::executor::evaluator::eval_expr(
                 default_expr,

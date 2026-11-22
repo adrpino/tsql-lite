@@ -44,6 +44,7 @@ pub enum DdlStatement {
     CreateTable(CreateTableStmt),
     CreateIndex(CreateIndexStmt),
     CreateType(CreateTypeStmt),
+    CreateScalarType(CreateScalarTypeStmt),
     CreateSchema(CreateSchemaStmt),
     AlterSchemaTransfer(AlterSchemaTransferStmt),
     DropTable(DropTableStmt),
@@ -59,7 +60,9 @@ pub enum DdlStatement {
     CreateSynonym(CreateSynonymStmt),
     DropSynonym(DropSynonymStmt),
     CreateSequence(CreateSequenceStmt),
+    AlterSequence(AlterSequenceStmt),
     DropSequence(DropSequenceStmt),
+    CatalogMetadata(Box<CatalogMetadataAction>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +91,7 @@ pub enum ProceduralStatement {
     Raiserror(Box<RaiserrorStmt>),
     Throw(Box<ThrowStmt>),
     TryCatch(Box<TryCatchStmt>),
+    DbccCheckIdent(Box<DbccCheckIdentStmt>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

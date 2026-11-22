@@ -3,10 +3,32 @@ use crate::ast::{CreateFunctionStmt, CreateProcedureStmt, CreateTriggerStmt, Cre
 use crate::error::DbError;
 
 impl<'a> ScriptExecutor<'a> {
+    fn validate_routine_params(&self, params: &[crate::ast::RoutineParam]) -> Result<(), DbError> {
+        for p in params {
+            if let crate::ast::RoutineParamType::Scalar(crate::ast::DataTypeSpec::Custom(obj)) =
+                &p.param_type
+            {
+                if self
+                    .catalog
+                    .find_table_type(obj.schema_or_dbo(), &obj.name)
+                    .is_some()
+                    && !p.is_readonly
+                {
+                    return Err(DbError::Parse(format!(
+                        "table-valued parameter '{}' must be READONLY",
+                        p.name
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn execute_create_procedure(
         &mut self,
         stmt: CreateProcedureStmt,
     ) -> Result<(), DbError> {
+        self.validate_routine_params(&stmt.params)?;
         let schema = stmt.name.schema_or_dbo().to_string();
         let routine = crate::catalog::RoutineDef {
             object_id: self.catalog.alloc_object_id(),
@@ -30,6 +52,7 @@ impl<'a> ScriptExecutor<'a> {
         &mut self,
         stmt: CreateFunctionStmt,
     ) -> Result<(), DbError> {
+        self.validate_routine_params(&stmt.params)?;
         let schema = stmt.name.schema_or_dbo().to_string();
         let routine = crate::catalog::RoutineDef {
             object_id: self.catalog.alloc_object_id(),
@@ -42,7 +65,11 @@ impl<'a> ScriptExecutor<'a> {
             },
             definition_sql: String::new(),
         };
-        self.catalog.create_routine(routine)?;
+        if stmt.or_alter {
+            self.catalog.replace_routine(routine)?;
+        } else {
+            self.catalog.create_routine(routine)?;
+        }
         Ok(())
     }
 
@@ -71,7 +98,11 @@ impl<'a> ScriptExecutor<'a> {
             body: std::sync::Arc::new(stmt.body),
             definition_sql: String::new(),
         };
-        self.catalog.create_trigger(trigger)?;
+        if stmt.or_alter {
+            self.catalog.replace_trigger(trigger)?;
+        } else {
+            self.catalog.create_trigger(trigger)?;
+        }
         Ok(())
     }
 }

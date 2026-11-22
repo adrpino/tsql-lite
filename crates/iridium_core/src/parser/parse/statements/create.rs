@@ -109,6 +109,7 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         columns,
         ctes,
         query,
+        or_alter: false,
     })
 }
 
@@ -375,6 +376,7 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
         params,
         returns,
         body,
+        or_alter: false,
     })
 }
 
@@ -419,5 +421,6 @@ pub fn parse_create_trigger(parser: &mut Parser) -> ParseResult<CreateStmt> {
         events,
         is_instead_of,
         body,
+        or_alter: false,
     })
 }

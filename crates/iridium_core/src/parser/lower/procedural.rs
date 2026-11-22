@@ -300,6 +300,19 @@ pub fn lower_procedural(
                 },
             )),
         )),
+        ast::ProceduralStatement::DbccCheckIdent {
+            table,
+            reseed,
+            new_reseed_value,
+        } => Ok(executor_ast::Statement::Procedural(
+            executor_ast::statements::ProceduralStatement::DbccCheckIdent(Box::new(
+                executor_ast::statements::procedural::DbccCheckIdentStmt {
+                    table: lower_expr(table)?,
+                    reseed,
+                    new_reseed_value: new_reseed_value.map(lower_expr).transpose()?,
+                },
+            )),
+        )),
     }
 }
 

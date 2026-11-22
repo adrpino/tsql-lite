@@ -141,12 +141,17 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
             let (precision, scale) = precision_scale(&c.data_type);
             let (vector_dimensions, vector_base_type, vector_base_type_desc) =
                 vector_metadata(&c.data_type);
+            let sys_type_id = if c.is_rowversion {
+                189u8
+            } else {
+                system_type_id(&c.data_type) as u8
+            };
             let values = vec![
                 Value::Int(t.id as i32),
                 Value::Int(c.id as i32),
                 Value::VarChar(c.name.clone()),
-                Value::TinyInt(system_type_id(&c.data_type) as u8),
-                Value::TinyInt(system_type_id(&c.data_type) as u8),
+                Value::TinyInt(sys_type_id),
+                Value::TinyInt(sys_type_id),
                 Value::SmallInt(type_max_length(&c.data_type)),
                 Value::TinyInt(precision),
                 Value::TinyInt(scale),

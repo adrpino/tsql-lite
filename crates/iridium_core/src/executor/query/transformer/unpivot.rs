@@ -71,6 +71,7 @@ pub(crate) fn execute_unpivot(
         collation: None,
         is_clustered: false,
         ansi_padding_on: true,
+        is_rowversion: false,
     });
     output_columns.push(ColumnDef {
         id: (output_columns.len() + 1) as u32,
@@ -88,6 +89,7 @@ pub(crate) fn execute_unpivot(
         collation: None,
         is_clustered: false,
         ansi_padding_on: true,
+        is_rowversion: false,
     });
 
     let unpivot_table_def = std::sync::Arc::new(TableDef {

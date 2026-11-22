@@ -55,6 +55,56 @@ pub(crate) fn apply_source_ordering(
     Ok(())
 }
 
+pub(crate) fn extract_source_order_keys(
+    executor: &QueryExecutor<'_>,
+    query: &RelationalQuery,
+    source_rows: &[JoinedRow],
+    ctx: &mut ExecutionContext,
+) -> Vec<Vec<Value>> {
+    let order_by = &query.sort.order_by;
+    source_rows
+        .iter()
+        .map(|row| {
+            order_by
+                .iter()
+                .map(|item| {
+                    crate::executor::evaluator::eval_expr(
+                        &item.expr,
+                        row,
+                        ctx,
+                        executor.catalog,
+                        executor.storage,
+                        executor.clock,
+                    )
+                    .unwrap_or(Value::Null)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+pub(crate) fn order_keys_equal(
+    order_by: &[crate::ast::OrderByExpr],
+    a: &[Value],
+    b: &[Value],
+) -> bool {
+    for (idx, item) in order_by.iter().enumerate() {
+        let va = a.get(idx).unwrap_or(&Value::Null);
+        let vb = b.get(idx).unwrap_or(&Value::Null);
+        let ord = if crate::executor::evaluator::expr_collation_case_sensitive(&item.expr)
+            .unwrap_or(false)
+        {
+            crate::executor::evaluator::compare_values_case_sensitive(va, vb)
+        } else {
+            value_ops::compare_values(va, vb)
+        };
+        if ord != Ordering::Equal {
+            return false;
+        }
+    }
+    true
+}
+
 pub(crate) fn apply_result_ordering(
     _executor: &QueryExecutor<'_>,
     query: &RelationalQuery,

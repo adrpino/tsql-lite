@@ -147,6 +147,13 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
                     normalize_identifier(&s.name.name)
                 ));
             }
+            DdlStatement::CreateScalarType(s) => {
+                out.insert(format!(
+                    "__TYPE__:{}.{}",
+                    normalize_identifier(s.name.schema_or_dbo()),
+                    normalize_identifier(&s.name.name)
+                ));
+            }
             DdlStatement::DropType(s) => {
                 out.insert(format!(
                     "__TYPE__:{}.{}",
@@ -178,6 +185,13 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
             DdlStatement::DropTrigger(s) => {
                 out.insert(format!(
                     "__TRIG__:{}.{}",
+                    normalize_identifier(s.name.schema_or_dbo()),
+                    normalize_identifier(&s.name.name)
+                ));
+            }
+            DdlStatement::AlterSequence(s) => {
+                out.insert(format!(
+                    "__SEQ__:{}.{}",
                     normalize_identifier(s.name.schema_or_dbo()),
                     normalize_identifier(&s.name.name)
                 ));

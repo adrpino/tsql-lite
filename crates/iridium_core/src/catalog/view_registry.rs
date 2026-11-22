@@ -28,6 +28,12 @@ impl ViewRegistry for CatalogImpl {
         Ok(())
     }
 
+    fn replace_view(&mut self, view: ViewDef) -> Result<(), DbError> {
+        let key = view_key(&view);
+        self.views.insert_or_replace(key, view);
+        Ok(())
+    }
+
     fn drop_view(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
         self.views

@@ -98,10 +98,23 @@ pub enum DdlStatement {
         cycle: bool,
     },
     DropSequence(Vec<String>),
+    AlterSequence {
+        name: Vec<String>,
+        restart: Option<Option<i64>>,
+        increment_by: Option<i64>,
+        min_value: Option<Option<i64>>,
+        max_value: Option<Option<i64>>,
+        cycle: Option<bool>,
+    },
     CreateIndex(Box<CreateIndexStmt>),
     CreateType {
         name: Vec<String>,
         columns: Vec<ColumnDef>,
+    },
+    CreateScalarType {
+        name: Vec<String>,
+        base_type: DataType,
+        nullable: bool,
     },
     CreateSchema(String),
     AlterSchemaTransfer {
@@ -109,6 +122,7 @@ pub enum DdlStatement {
         entity_type: Option<String>,
         source: Vec<String>,
     },
+    CatalogMetadata(Box<crate::ast::CatalogMetadataAction>),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -167,6 +181,11 @@ pub enum ProceduralStatement {
         error_number: Option<Expr>,
         message: Option<Expr>,
         state: Option<Expr>,
+    },
+    DbccCheckIdent {
+        table: Expr,
+        reseed: bool,
+        new_reseed_value: Option<Expr>,
     },
     TryCatch {
         try_body: Vec<Statement>,
@@ -370,6 +389,7 @@ pub enum CreateStmt {
         columns: Vec<String>,
         ctes: Vec<CteDef>,
         query: SelectStmt,
+        or_alter: bool,
     },
     Procedure {
         name: Vec<String>,
@@ -382,6 +402,7 @@ pub enum CreateStmt {
         params: Vec<RoutineParam>,
         returns: Option<DataType>,
         body: FunctionBody,
+        or_alter: bool,
     },
     Trigger {
         name: Vec<String>,
@@ -389,6 +410,7 @@ pub enum CreateStmt {
         events: Vec<TriggerEvent>,
         is_instead_of: bool,
         body: Vec<Statement>,
+        or_alter: bool,
     },
 }
 

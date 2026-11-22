@@ -101,6 +101,8 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                             .map(|t| {
                                 Ok(executor_ast::statements::query::TopSpec {
                                     value: lower_expr(t.value)?,
+                                    percent: t.percent,
+                                    with_ties: t.with_ties,
                                 })
                             })
                             .transpose()?,
@@ -123,6 +125,8 @@ pub fn lower_select(
             .map(|top| {
                 Ok(executor_ast::statements::query::TopSpec {
                     value: lower_expr(top.value)?,
+                    percent: top.percent,
+                    with_ties: top.with_ties,
                 })
             })
             .transpose()?,
@@ -797,6 +801,8 @@ pub fn lower_update(
             .map(|e| {
                 Ok(executor_ast::statements::query::TopSpec {
                     value: lower_expr(e)?,
+                    percent: false,
+                    with_ties: false,
                 })
             })
             .transpose()?,
@@ -833,6 +839,8 @@ pub fn lower_delete(
             .map(|e| {
                 Ok(executor_ast::statements::query::TopSpec {
                     value: lower_expr(e)?,
+                    percent: false,
+                    with_ties: false,
                 })
             })
             .transpose()?,

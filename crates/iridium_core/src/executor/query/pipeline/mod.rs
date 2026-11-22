@@ -29,6 +29,20 @@ pub(crate) fn execute_rows_to_result(
         order::apply_source_ordering(executor, query, &mut source_rows, ctx)?;
     }
 
+    let source_order_keys = if query.pagination.top.as_ref().is_some_and(|t| t.with_ties)
+        && state.needs_pre_sort
+        && !query.projection.distinct
+    {
+        Some(order::extract_source_order_keys(
+            executor,
+            query,
+            &source_rows,
+            ctx,
+        ))
+    } else {
+        None
+    };
+
     let result = projection::execute_projection_stage(
         executor,
         query,
@@ -51,7 +65,14 @@ pub(crate) fn execute_rows_to_result(
             order::apply_result_ordering(executor, query, &result_columns, final_rows, ctx)?;
     }
 
-    final_rows = pagination::apply_pagination(executor, query, final_rows, ctx)?;
+    final_rows = pagination::apply_pagination(
+        executor,
+        query,
+        &result_columns,
+        final_rows,
+        source_order_keys.as_deref(),
+        ctx,
+    )?;
 
     Ok(result::QueryResult {
         columns: result_columns,

@@ -12,19 +12,47 @@ use super::value_ops::compare_values;
 use crate::catalog::Catalog;
 use crate::storage::Storage;
 
-pub fn eval_top_n(
+pub fn eval_top_count(
     top: &TopSpec,
+    total_rows: usize,
     ctx: &mut ExecutionContext,
     catalog: &dyn Catalog,
     storage: &dyn Storage,
     clock: &dyn Clock,
 ) -> Result<usize, DbError> {
-    match eval_constant_expr(&top.value, ctx, catalog, storage, clock)? {
-        Value::Int(v) => Ok(v.max(0) as usize),
-        Value::BigInt(v) => Ok(v.max(0) as usize),
-        _ => Err(DbError::Execution(
-            "TOP currently requires an integer expression".into(),
-        )),
+    let val = eval_constant_expr(&top.value, ctx, catalog, storage, clock)?;
+    if top.percent {
+        let pct = match val {
+            Value::TinyInt(v) => v as f64,
+            Value::SmallInt(v) => v as f64,
+            Value::Int(v) => v as f64,
+            Value::BigInt(v) => v as f64,
+            Value::Float(bits) => f64::from_bits(bits),
+            Value::Decimal(unscaled, scale) => (unscaled as f64) / 10_f64.powi(scale as i32),
+            _ => {
+                return Err(DbError::Execution(
+                    "TOP PERCENT requires a numeric expression".into(),
+                ));
+            }
+        };
+        if !(0.0..=100.0).contains(&pct) {
+            return Err(DbError::Execution(
+                "PERCENT values must be between 0 and 100.".into(),
+            ));
+        }
+        let exact = (pct / 100.0) * (total_rows as f64);
+        Ok(exact.ceil().max(0.0) as usize)
+    } else {
+        match val {
+            Value::TinyInt(v) => Ok(v as usize),
+            Value::SmallInt(v) => Ok(v.max(0) as usize),
+            Value::Int(v) => Ok(v.max(0) as usize),
+            Value::BigInt(v) => Ok(v.max(0) as usize),
+            Value::Decimal(unscaled, scale) if scale == 0 => Ok(unscaled.max(0) as usize),
+            _ => Err(DbError::Execution(
+                "TOP currently requires an integer expression".into(),
+            )),
+        }
     }
 }
 

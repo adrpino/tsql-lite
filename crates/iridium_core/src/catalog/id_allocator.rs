@@ -22,4 +22,14 @@ impl IdAllocator for CatalogImpl {
     fn alloc_schema_id(&mut self) -> u32 {
         self.next_schema_id.fetch_add(1, Ordering::Relaxed)
     }
+
+    fn next_rowversion(&self) -> u64 {
+        self.next_rowversion.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn current_rowversion(&self) -> u64 {
+        self.next_rowversion
+            .load(Ordering::Relaxed)
+            .saturating_sub(1)
+    }
 }

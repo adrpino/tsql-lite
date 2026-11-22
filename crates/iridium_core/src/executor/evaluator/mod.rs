@@ -119,7 +119,7 @@ fn eval_expr_inner(
         }
 
         Expr::WindowFunction { .. } | Expr::NextValueFor { .. } => {
-            special::eval_special_runtime_expr(expr, ctx)
+            special::eval_special_runtime_expr(expr, ctx, catalog)
         }
 
         Expr::FunctionCall { name, args, .. } => {

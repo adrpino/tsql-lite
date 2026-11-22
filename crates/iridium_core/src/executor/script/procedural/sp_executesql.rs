@@ -61,7 +61,8 @@ pub(crate) fn execute_sp_executesql(
                 RoutineParamType::Scalar(dt) => {
                     let val =
                         eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
-                    let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
+                    let ty =
+                        crate::executor::type_mapping::resolve_data_type_spec(dt, exec.catalog);
                     let coerced =
                         coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
                     let output_caller_var = if arg.is_output {

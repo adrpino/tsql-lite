@@ -470,7 +470,74 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         };
         json::json_keys(&json_val.to_string_value(), path.as_deref())
     }),
+    builtin!("__JSON_OBJECT_NULL" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_object_fn(args, false, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__JSON_OBJECT_ABSENT" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_object_fn(args, true, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("JSON_OBJECT" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_object_fn(args, false, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__JSON_ARRAY_ABSENT" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_array_fn(args, false, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__JSON_ARRAY_NULL" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_array_fn(args, true, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("JSON_ARRAY" => |args, row, ctx, catalog, storage, clock| {
+        eval_json_array_fn(args, false, row, ctx, catalog, storage, clock)
+    }),
 ];
+
+fn eval_json_object_fn(
+    args: &[Expr],
+    absent_on_null: bool,
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() % 2 != 0 {
+        return Err(DbError::Execution(
+            "JSON_OBJECT requires key:value pairs".into(),
+        ));
+    }
+    let mut pairs = Vec::with_capacity(args.len() / 2);
+    for pair in args.chunks_exact(2) {
+        let key_val =
+            crate::executor::evaluator::eval_expr(&pair[0], row, ctx, catalog, storage, clock)?;
+        if key_val.is_null() {
+            return Err(DbError::Execution("JSON_OBJECT key cannot be NULL".into()));
+        }
+        let val =
+            crate::executor::evaluator::eval_expr(&pair[1], row, ctx, catalog, storage, clock)?;
+        pairs.push((
+            key_val.to_string_value(),
+            val,
+            json::is_json_producing_expr(&pair[1]),
+        ));
+    }
+    Ok(json::build_json_object(&pairs, absent_on_null))
+}
+
+fn eval_json_array_fn(
+    args: &[Expr],
+    null_on_null: bool,
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    let mut items = Vec::with_capacity(args.len());
+    for arg in args {
+        let val = crate::executor::evaluator::eval_expr(arg, row, ctx, catalog, storage, clock)?;
+        items.push((val, json::is_json_producing_expr(arg)));
+    }
+    Ok(json::build_json_array(&items, null_on_null))
+}
 
 const REGEXP_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("REGEXP_LIKE" => regexp::eval_regexp_like),

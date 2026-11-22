@@ -109,6 +109,8 @@ pub struct CreateFunctionStmt {
     pub params: Vec<crate::ast::RoutineParam>,
     pub returns: Option<DataTypeSpec>,
     pub body: FunctionBody,
+    #[serde(default)]
+    pub or_alter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +178,13 @@ pub struct TryCatchStmt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbccCheckIdentStmt {
+    pub table: Expr,
+    pub reseed: bool,
+    pub new_reseed_value: Option<Expr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclareCursorStmt {
     pub name: String,
     pub query: SelectStmt,
@@ -205,6 +214,8 @@ pub struct CreateTriggerStmt {
     pub events: Vec<TriggerEvent>,
     pub is_instead_of: bool,
     pub body: Vec<crate::ast::Statement>,
+    #[serde(default)]
+    pub or_alter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

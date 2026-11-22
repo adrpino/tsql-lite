@@ -1,8 +1,11 @@
+use std::cmp::Ordering;
+
 use crate::error::DbError;
 
+use super::order::order_keys_equal;
 use super::pagination_value::value_to_usize;
 use crate::executor::context::ExecutionContext;
-use crate::executor::projection::eval_top_n;
+use crate::executor::projection::{compare_projected_rows, eval_top_count};
 use crate::executor::query::plan::RelationalQuery;
 
 use super::super::QueryExecutor;
@@ -10,17 +13,44 @@ use super::super::QueryExecutor;
 pub(crate) fn apply_pagination(
     executor: &QueryExecutor<'_>,
     query: &RelationalQuery,
+    columns: &[String],
     mut final_rows: Vec<Vec<crate::types::Value>>,
+    source_order_keys: Option<&[Vec<crate::types::Value>]>,
     ctx: &mut ExecutionContext,
 ) -> Result<Vec<Vec<crate::types::Value>>, DbError> {
     if let Some(top) = query.pagination.top.clone() {
-        let n = eval_top_n(
+        if top.with_ties && query.sort.order_by.is_empty() {
+            return Err(DbError::Execution(
+                "The TOP N WITH TIES clause is not allowed without a corresponding ORDER BY clause."
+                    .into(),
+            ));
+        }
+        let mut n = eval_top_count(
             &top,
+            final_rows.len(),
             ctx,
             executor.catalog,
             executor.storage,
             executor.clock,
         )?;
+        if top.with_ties && n > 0 && n < final_rows.len() {
+            let order_by = &query.sort.order_by;
+            if let Some(keys) = source_order_keys.filter(|k| k.len() == final_rows.len()) {
+                let boundary = &keys[n - 1];
+                while n < final_rows.len() && order_keys_equal(order_by, boundary, &keys[n]) {
+                    n += 1;
+                }
+            } else {
+                let boundary = &final_rows[n - 1];
+                while n < final_rows.len()
+                    && compare_projected_rows(boundary, &final_rows[n], columns, order_by)
+                        .unwrap_or(Ordering::Less)
+                        == Ordering::Equal
+                {
+                    n += 1;
+                }
+            }
+        }
         if final_rows.len() > n {
             final_rows.truncate(n);
         }

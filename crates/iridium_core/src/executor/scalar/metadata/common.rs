@@ -293,6 +293,9 @@ pub(super) fn resolve_type_id(catalog: &dyn Catalog, type_name: &str) -> Option<
     if let Some(id) = catalog.find_table_type(schema, name).map(|t| t.object_id) {
         return Some(id);
     }
+    if let Some(id) = catalog.find_scalar_type(schema, name).map(|t| t.object_id) {
+        return Some(id);
+    }
     builtin_type_id(name)
 }
 
@@ -300,8 +303,16 @@ pub(super) fn resolve_type_name(catalog: &dyn Catalog, type_id: i32) -> Option<S
     if let Some(name) = builtin_type_name(type_id) {
         return Some(name.to_string());
     }
-    catalog
+    if let Some(name) = catalog
         .get_table_types()
+        .iter()
+        .find(|t| t.object_id == type_id)
+        .map(|t| format!("{}.{}", t.schema, t.name))
+    {
+        return Some(name);
+    }
+    catalog
+        .get_scalar_types()
         .iter()
         .find(|t| t.object_id == type_id)
         .map(|t| format!("{}.{}", t.schema, t.name))

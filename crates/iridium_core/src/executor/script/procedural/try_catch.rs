@@ -19,6 +19,11 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(outcome)
             }
             Err(e) => {
+                // Under SET XACT_ABORT ON, an error inside an active transaction entering
+                // CATCH dooms the transaction (XACT_STATE() = -1) until a full ROLLBACK.
+                if ctx.options.xact_abort && ctx.frame.trancount > 0 {
+                    ctx.frame.xact_state = -1;
+                }
                 // Store error for ERROR_* functions
                 ctx.frame.last_error = Some(e);
 

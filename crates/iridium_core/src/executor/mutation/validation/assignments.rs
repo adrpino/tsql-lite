@@ -57,6 +57,12 @@ pub(crate) fn apply_assignments(
                 table.columns[idx].name
             )));
         }
+        if table.columns[idx].is_rowversion {
+            return Err(DbError::Execution(format!(
+                "Cannot update a timestamp column '{}'.",
+                table.columns[idx].name
+            )));
+        }
         let value = eval_expr_to_type_in_context(
             &assignment.expr,
             target,
@@ -73,6 +79,11 @@ pub(crate) fn apply_assignments(
     }
 
     for (idx, col) in table.columns.iter().enumerate() {
+        if col.is_rowversion {
+            let rv = catalog.next_rowversion();
+            row.values[idx] = crate::types::Value::Binary(rv.to_be_bytes().to_vec());
+            continue;
+        }
         if let Some(computed) = &col.computed_expr {
             let snapshot = row.clone();
             let joined = single_row_context(table, snapshot);

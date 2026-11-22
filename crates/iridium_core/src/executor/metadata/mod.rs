@@ -64,6 +64,7 @@ pub(super) fn virtual_table_def(name: &str, cols: Vec<(&str, DataType, bool)>) -
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             })
             .collect(),
         check_constraints: vec![],

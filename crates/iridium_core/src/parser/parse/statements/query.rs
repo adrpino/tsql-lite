@@ -315,8 +315,29 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
     let mut top = None;
     if let Some(Token::Keyword(Keyword::Top)) = parser.peek() {
         let _ = parser.next();
+        let value = crate::parser::parse::expressions::parse_primary(parser)?;
+        let mut percent = false;
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("PERCENT"))
+        {
+            let _ = parser.next();
+            percent = true;
+        }
+        let mut with_ties = false;
+        if parser.at_keyword(Keyword::With) {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TIES"))
+            {
+                let _ = parser.next();
+                with_ties = true;
+            } else {
+                parser.restore(saved);
+            }
+        }
         top = Some(TopSpec {
-            value: crate::parser::parse::expressions::parse_primary(parser)?,
+            value,
+            percent,
+            with_ties,
         });
     }
 

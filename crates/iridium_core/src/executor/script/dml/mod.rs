@@ -187,6 +187,7 @@ impl<'a> ScriptExecutor<'a> {
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             });
         }
 

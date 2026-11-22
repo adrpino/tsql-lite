@@ -39,6 +39,69 @@ pub struct DropSequenceStmt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlterSequenceStmt {
+    pub name: ObjectName,
+    pub restart: Option<Option<i64>>,
+    pub increment: Option<i64>,
+    pub minimum_value: Option<Option<i64>>,
+    pub maximum_value: Option<Option<i64>>,
+    pub is_cycling: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CatalogMetadataAction {
+    CreateUser {
+        name: String,
+        default_schema: Option<String>,
+    },
+    DropUser {
+        name: String,
+        if_exists: bool,
+    },
+    CreateRole {
+        name: String,
+    },
+    DropRole {
+        name: String,
+        if_exists: bool,
+    },
+    AlterRoleMember {
+        role: String,
+        member: String,
+        add: bool,
+    },
+    Permission {
+        action: String,
+        permissions: Vec<String>,
+        target_class: Option<String>,
+        target_name: Option<ObjectName>,
+        grantees: Vec<String>,
+        with_grant_option: bool,
+    },
+    CreatePartitionFunction {
+        name: String,
+        data_type: DataTypeSpec,
+        range_right: bool,
+        boundary_values: Vec<String>,
+    },
+    DropPartitionFunction {
+        name: String,
+    },
+    CreatePartitionScheme {
+        name: String,
+        function_name: String,
+        all_to: bool,
+        filegroups: Vec<String>,
+    },
+    DropPartitionScheme {
+        name: String,
+    },
+    AddFilegroup {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DropTableStmt {
     pub name: ObjectName,
     #[serde(default)]
@@ -130,8 +193,10 @@ pub enum AlterTableAction {
 pub struct CreateViewStmt {
     pub name: ObjectName,
     #[serde(default)]
-    pub ctes: Vec<crate::ast::CteDef>,
+    pub ctes: Vec<crate::ast::statements::procedural::CteDef>,
     pub query: SelectStmt,
+    #[serde(default)]
+    pub or_alter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +211,13 @@ pub struct CreateTypeStmt {
     pub name: ObjectName,
     pub columns: Vec<ColumnSpec>,
     pub table_constraints: Vec<TableConstraintSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateScalarTypeStmt {
+    pub name: ObjectName,
+    pub base_type: DataTypeSpec,
+    pub nullable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

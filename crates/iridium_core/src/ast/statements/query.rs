@@ -118,6 +118,10 @@ pub struct SelectItem {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TopSpec {
     pub value: Expr,
+    #[serde(default)]
+    pub percent: bool,
+    #[serde(default)]
+    pub with_ties: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

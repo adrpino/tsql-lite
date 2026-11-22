@@ -1,6 +1,7 @@
 mod cow_registry;
 mod id_allocator;
 mod index_registry;
+pub mod metadata_registry;
 mod object_resolver;
 mod routine_registry;
 mod schema_registry;
@@ -13,6 +14,10 @@ mod view_registry;
 
 use cow_registry::CowRegistry;
 pub use cow_registry::{CowRegistryIter, CowRegistryView};
+pub use metadata_registry::{
+    FilegroupDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef, PrincipalDef,
+    RoleMemberDef,
+};
 
 use crate::ast::Expr;
 use crate::ast::{DataTypeSpec, FunctionBody, RoutineParam, Statement, TriggerEvent};
@@ -80,6 +85,8 @@ pub struct ColumnDef {
     pub is_clustered: bool,
     #[serde(default = "default_ansi_padding_on")]
     pub ansi_padding_on: bool,
+    #[serde(default)]
+    pub is_rowversion: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +180,16 @@ pub struct TableTypeDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalarTypeDef {
+    #[serde(default)]
+    pub object_id: i32,
+    pub schema: String,
+    pub name: String,
+    pub base_type: DataType,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViewDef {
     #[serde(default)]
     pub object_id: i32,
@@ -217,6 +234,52 @@ pub struct SynonymDef {
     pub base_object: crate::ast::ObjectName,
 }
 
+#[derive(Debug)]
+pub struct SeqCounter(std::sync::atomic::AtomicI64);
+
+impl SeqCounter {
+    pub fn new(v: i64) -> Self {
+        Self(std::sync::atomic::AtomicI64::new(v))
+    }
+
+    pub fn load(&self) -> i64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    pub fn store(&self, v: i64) {
+        self.0.store(v, Ordering::Relaxed);
+    }
+
+    pub fn compare_exchange(&self, current: i64, new: i64) -> Result<i64, i64> {
+        self.0
+            .compare_exchange(current, new, Ordering::AcqRel, Ordering::Acquire)
+    }
+}
+
+impl Clone for SeqCounter {
+    fn clone(&self) -> Self {
+        Self::new(self.load())
+    }
+}
+
+impl Serialize for SeqCounter {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.load().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SeqCounter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        i64::deserialize(deserializer).map(Self::new)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SequenceDef {
     #[serde(default)]
@@ -226,7 +289,7 @@ pub struct SequenceDef {
     pub data_type: DataType,
     pub start_value: i64,
     pub increment: i64,
-    pub current_value: i64,
+    pub current_value: SeqCounter,
     pub minimum_value: i64,
     pub maximum_value: i64,
     pub is_cycling: bool,
@@ -248,6 +311,8 @@ pub trait IdAllocator {
     fn alloc_column_id(&mut self) -> u32;
     fn alloc_index_id(&mut self) -> u32;
     fn alloc_schema_id(&mut self) -> u32;
+    fn next_rowversion(&self) -> u64;
+    fn current_rowversion(&self) -> u64;
 }
 
 pub trait SchemaRegistry {
@@ -328,12 +393,17 @@ pub trait TypeRegistry {
     fn find_table_type(&self, schema: &str, name: &str) -> Option<&TableTypeDef>;
     fn create_table_type(&mut self, def: TableTypeDef) -> Result<(), DbError>;
     fn drop_table_type(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
+    fn get_scalar_types(&self) -> &[ScalarTypeDef];
+    fn find_scalar_type(&self, schema: &str, name: &str) -> Option<&ScalarTypeDef>;
+    fn create_scalar_type(&mut self, def: ScalarTypeDef) -> Result<(), DbError>;
+    fn drop_scalar_type(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
 }
 
 pub trait ViewRegistry {
     fn get_views(&self) -> CowRegistryView<'_, ViewDef>;
     fn find_view(&self, schema: &str, name: &str) -> Option<&ViewDef>;
     fn create_view(&mut self, view: ViewDef) -> Result<(), DbError>;
+    fn replace_view(&mut self, view: ViewDef) -> Result<(), DbError>;
     fn drop_view(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
 }
 
@@ -341,6 +411,7 @@ pub trait TriggerRegistry {
     fn get_triggers(&self) -> CowRegistryView<'_, TriggerDef>;
     fn find_triggers_for_table(&self, schema: &str, name: &str) -> Vec<&TriggerDef>;
     fn create_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError>;
+    fn replace_trigger(&mut self, trigger: TriggerDef) -> Result<(), DbError>;
     fn drop_trigger(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
     fn set_trigger_enabled(
         &mut self,
@@ -363,8 +434,19 @@ pub trait SequenceRegistry {
     fn get_sequences(&self) -> &[SequenceDef];
     fn find_sequence(&self, schema: &str, name: &str) -> Option<&SequenceDef>;
     fn create_sequence(&mut self, sequence: SequenceDef) -> Result<(), DbError>;
+    fn alter_sequence(
+        &mut self,
+        schema: &str,
+        name: &str,
+        restart: Option<Option<i64>>,
+        increment: Option<i64>,
+        minimum_value: Option<Option<i64>>,
+        maximum_value: Option<Option<i64>>,
+        is_cycling: Option<bool>,
+    ) -> Result<(), DbError>;
     fn drop_sequence(&mut self, schema: &str, name: &str) -> Result<(), DbError>;
     fn next_sequence_value(&mut self, schema: &str, name: &str) -> Result<i64, DbError>;
+    fn next_sequence_value_shared(&self, schema: &str, name: &str) -> Result<i64, DbError>;
 }
 
 pub trait ObjectResolver {
@@ -413,6 +495,54 @@ pub trait Catalog:
         Ok(())
     }
 
+    fn get_principals(&self) -> &[PrincipalDef] {
+        &[]
+    }
+    fn get_role_members(&self) -> &[RoleMemberDef] {
+        &[]
+    }
+    fn get_permissions(&self) -> &[PermissionDef] {
+        &[]
+    }
+    fn get_partition_functions(&self) -> &[PartitionFunctionDef] {
+        &[]
+    }
+    fn get_partition_schemes(&self) -> &[PartitionSchemeDef] {
+        &[]
+    }
+    fn get_filegroups(&self) -> &[FilegroupDef] {
+        &[]
+    }
+    fn filegroup_data_space_id(&self, _name: &str) -> i32 {
+        1
+    }
+    fn find_principal_id(&self, _name: &str) -> Option<i32> {
+        None
+    }
+    fn upsert_principal(&mut self, _def: PrincipalDef) -> i32 {
+        0
+    }
+    fn drop_principal(&mut self, _name: &str, _if_exists: bool) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn alter_role_member(&mut self, _role: &str, _member: &str, _add: bool) {}
+    fn apply_permission(&mut self, _def: PermissionDef, _is_revoke: bool) {}
+    fn upsert_partition_function(&mut self, _def: PartitionFunctionDef) {}
+    fn drop_partition_function(&mut self, _name: &str) {}
+    fn upsert_partition_scheme(
+        &mut self,
+        _name: String,
+        _function_name: &str,
+        _filegroups: Vec<String>,
+    ) {
+    }
+    fn drop_partition_scheme(&mut self, _name: &str) {}
+    fn add_filegroup(&mut self, _name: String) {}
+    fn is_table_large_value_out_of_row(&self, _table_id: u32) -> bool {
+        false
+    }
+    fn set_table_large_value_out_of_row(&mut self, _table_id: u32, _enabled: bool) {}
+
     fn clone_boxed(&self) -> Box<dyn Catalog>;
     fn rebuild_maps(&mut self) {}
     /// Merges changes made in `workspace` relative to `base` into `self` during
@@ -426,7 +556,7 @@ pub trait Catalog:
 }
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 mod atomic_u32_serde {
@@ -469,6 +599,30 @@ mod atomic_i32_serde {
     }
 }
 
+mod atomic_u64_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    pub fn serialize<S>(val: &Arc<AtomicU64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        val.load(Ordering::Relaxed).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<AtomicU64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        u64::deserialize(deserializer).map(|v| Arc::new(AtomicU64::new(v)))
+    }
+}
+
+fn default_next_rowversion() -> Arc<AtomicU64> {
+    Arc::new(AtomicU64::new(1))
+}
+
 mod arc_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
@@ -500,6 +654,8 @@ pub struct CatalogImpl {
     routines: CowRegistry<(String, String), RoutineDef>,
     #[serde(with = "arc_serde")]
     table_types: Arc<Vec<TableTypeDef>>,
+    #[serde(default, with = "arc_serde")]
+    scalar_types: Arc<Vec<ScalarTypeDef>>,
     views: CowRegistry<(String, String), ViewDef>,
     triggers: CowRegistry<(String, String), TriggerDef>,
     #[serde(with = "arc_serde")]
@@ -508,6 +664,20 @@ pub struct CatalogImpl {
     sequences: Arc<Vec<SequenceDef>>,
     #[serde(default, with = "arc_serde")]
     extended_properties: Arc<Vec<ExtendedPropertyDef>>,
+    #[serde(default, with = "arc_serde")]
+    principals: Arc<Vec<PrincipalDef>>,
+    #[serde(default, with = "arc_serde")]
+    role_members: Arc<Vec<RoleMemberDef>>,
+    #[serde(default, with = "arc_serde")]
+    permissions: Arc<Vec<PermissionDef>>,
+    #[serde(default, with = "arc_serde")]
+    partition_functions: Arc<Vec<PartitionFunctionDef>>,
+    #[serde(default, with = "arc_serde")]
+    partition_schemes: Arc<Vec<PartitionSchemeDef>>,
+    #[serde(default, with = "arc_serde")]
+    filegroups: Arc<Vec<FilegroupDef>>,
+    #[serde(default, with = "arc_serde")]
+    table_large_value_out_of_row: Arc<Vec<u32>>,
     #[serde(with = "atomic_u32_serde")]
     next_schema_id: Arc<AtomicU32>,
     #[serde(with = "atomic_u32_serde")]
@@ -518,11 +688,15 @@ pub struct CatalogImpl {
     next_index_id: Arc<AtomicU32>,
     #[serde(default = "default_next_object_id", with = "atomic_i32_serde")]
     next_object_id: Arc<AtomicI32>,
+    #[serde(default = "default_next_rowversion", with = "atomic_u64_serde")]
+    next_rowversion: Arc<AtomicU64>,
 
     #[serde(skip)]
     schema_map: Arc<HashMap<String, usize>>,
     #[serde(skip)]
     type_map: Arc<HashMap<(String, String), usize>>,
+    #[serde(skip)]
+    scalar_type_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
     synonym_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
@@ -561,6 +735,21 @@ impl CatalogImpl {
         });
         self.type_map = Arc::new(
             self.table_types
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    (
+                        (
+                            normalize_identifier(&t.schema),
+                            normalize_identifier(&t.name),
+                        ),
+                        i,
+                    )
+                })
+                .collect(),
+        );
+        self.scalar_type_map = Arc::new(
+            self.scalar_types
                 .iter()
                 .enumerate()
                 .map(|(i, t)| {
@@ -649,18 +838,28 @@ impl Default for CatalogImpl {
             indexes: Arc::new(Vec::new()),
             routines: CowRegistry::default(),
             table_types: Arc::new(Vec::new()),
+            scalar_types: Arc::new(Vec::new()),
             views: CowRegistry::default(),
             triggers: CowRegistry::default(),
             synonyms: Arc::new(Vec::new()),
             sequences: Arc::new(Vec::new()),
             extended_properties: Arc::new(Vec::new()),
+            principals: Arc::new(Vec::new()),
+            role_members: Arc::new(Vec::new()),
+            permissions: Arc::new(Vec::new()),
+            partition_functions: Arc::new(Vec::new()),
+            partition_schemes: Arc::new(Vec::new()),
+            filegroups: Arc::new(Vec::new()),
+            table_large_value_out_of_row: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
             next_table_id: Arc::new(AtomicU32::new(1234567890)),
             next_column_id: Arc::new(AtomicU32::new(1)),
             next_index_id: Arc::new(AtomicU32::new(234567890)),
             next_object_id: Arc::new(AtomicI32::new(-1)),
+            next_rowversion: default_next_rowversion(),
             schema_map: Arc::new(HashMap::new()),
             type_map: Arc::new(HashMap::new()),
+            scalar_type_map: Arc::new(HashMap::new()),
             synonym_map: Arc::new(HashMap::new()),
             sequence_map: Arc::new(HashMap::new()),
             index_map: Arc::new(HashMap::new()),
@@ -795,6 +994,76 @@ impl Catalog for CatalogImpl {
         Ok(())
     }
 
+    fn get_principals(&self) -> &[PrincipalDef] {
+        &self.principals
+    }
+    fn get_role_members(&self) -> &[RoleMemberDef] {
+        &self.role_members
+    }
+    fn get_permissions(&self) -> &[PermissionDef] {
+        &self.permissions
+    }
+    fn get_partition_functions(&self) -> &[PartitionFunctionDef] {
+        &self.partition_functions
+    }
+    fn get_partition_schemes(&self) -> &[PartitionSchemeDef] {
+        &self.partition_schemes
+    }
+    fn get_filegroups(&self) -> &[FilegroupDef] {
+        &self.filegroups
+    }
+    fn filegroup_data_space_id(&self, name: &str) -> i32 {
+        CatalogImpl::filegroup_data_space_id(self, name)
+    }
+    fn find_principal_id(&self, name: &str) -> Option<i32> {
+        CatalogImpl::find_principal_id_by_name(self, name)
+    }
+    fn upsert_principal(&mut self, def: PrincipalDef) -> i32 {
+        CatalogImpl::upsert_principal(self, def)
+    }
+    fn drop_principal(&mut self, name: &str, if_exists: bool) -> Result<(), DbError> {
+        CatalogImpl::drop_principal_by_name(self, name, if_exists)
+    }
+    fn alter_role_member(&mut self, role: &str, member: &str, add: bool) {
+        CatalogImpl::alter_role_member(self, role, member, add);
+    }
+    fn apply_permission(&mut self, def: PermissionDef, is_revoke: bool) {
+        CatalogImpl::apply_permission(self, def, is_revoke);
+    }
+    fn upsert_partition_function(&mut self, def: PartitionFunctionDef) {
+        CatalogImpl::upsert_partition_function(self, def);
+    }
+    fn drop_partition_function(&mut self, name: &str) {
+        CatalogImpl::drop_partition_function(self, name);
+    }
+    fn upsert_partition_scheme(
+        &mut self,
+        name: String,
+        function_name: &str,
+        filegroups: Vec<String>,
+    ) {
+        CatalogImpl::upsert_partition_scheme(self, name, function_name, filegroups);
+    }
+    fn drop_partition_scheme(&mut self, name: &str) {
+        CatalogImpl::drop_partition_scheme(self, name);
+    }
+    fn add_filegroup(&mut self, name: String) {
+        CatalogImpl::add_filegroup(self, name);
+    }
+    fn is_table_large_value_out_of_row(&self, table_id: u32) -> bool {
+        self.table_large_value_out_of_row.contains(&table_id)
+    }
+    fn set_table_large_value_out_of_row(&mut self, table_id: u32, enabled: bool) {
+        let list = Arc::make_mut(&mut self.table_large_value_out_of_row);
+        if enabled {
+            if !list.contains(&table_id) {
+                list.push(table_id);
+            }
+        } else {
+            list.retain(|&id| id != table_id);
+        }
+    }
+
     fn clone_boxed(&self) -> Box<dyn Catalog> {
         Box::new(self.clone())
     }
@@ -880,6 +1149,33 @@ impl Catalog for CatalogImpl {
             );
         }
         if merge_arc_vec(
+            &mut self.scalar_types,
+            &workspace.scalar_types,
+            &base.scalar_types,
+            |t| {
+                (
+                    normalize_identifier(&t.schema),
+                    normalize_identifier(&t.name),
+                )
+            },
+        ) {
+            self.scalar_type_map = Arc::new(
+                self.scalar_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        (
+                            (
+                                normalize_identifier(&t.schema),
+                                normalize_identifier(&t.name),
+                            ),
+                            i,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        if merge_arc_vec(
             &mut self.synonyms,
             &workspace.synonyms,
             &base.synonyms,
@@ -945,6 +1241,56 @@ impl Catalog for CatalogImpl {
                     normalize_identifier(&p.name),
                 )
             },
+        );
+        merge_arc_vec(
+            &mut self.principals,
+            &workspace.principals,
+            &base.principals,
+            |p| normalize_identifier(&p.name),
+        );
+        merge_arc_vec(
+            &mut self.role_members,
+            &workspace.role_members,
+            &base.role_members,
+            |m| (m.role_principal_id, m.member_principal_id),
+        );
+        merge_arc_vec(
+            &mut self.permissions,
+            &workspace.permissions,
+            &base.permissions,
+            |p| {
+                (
+                    p.class,
+                    p.major_id,
+                    p.minor_id,
+                    p.grantee_principal_id,
+                    p.permission_name.to_ascii_uppercase(),
+                )
+            },
+        );
+        merge_arc_vec(
+            &mut self.partition_functions,
+            &workspace.partition_functions,
+            &base.partition_functions,
+            |p| normalize_identifier(&p.name),
+        );
+        merge_arc_vec(
+            &mut self.partition_schemes,
+            &workspace.partition_schemes,
+            &base.partition_schemes,
+            |s| normalize_identifier(&s.name),
+        );
+        merge_arc_vec(
+            &mut self.filegroups,
+            &workspace.filegroups,
+            &base.filegroups,
+            |f| normalize_identifier(&f.name),
+        );
+        merge_arc_vec(
+            &mut self.table_large_value_out_of_row,
+            &workspace.table_large_value_out_of_row,
+            &base.table_large_value_out_of_row,
+            |id| *id,
         );
 
         // Advance atomic counters defensively if workspace came from a distinct allocator.

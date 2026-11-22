@@ -11,6 +11,99 @@ pub fn json_to_string(json: &JsonValue) -> String {
     serde_json::to_string(json).unwrap_or_else(|_| "null".to_string())
 }
 
+pub fn sql_value_to_json_fragment(val: &Value, embed_raw_json: bool) -> String {
+    if embed_raw_json {
+        if let Value::VarChar(s) | Value::NVarChar(s) | Value::Char(s) | Value::NChar(s) = val {
+            if serde_json::from_str::<JsonValue>(s).is_ok() {
+                return s.clone();
+            }
+        }
+    }
+    match val {
+        Value::Null => "null".to_string(),
+        Value::Bit(b) => if *b { "true" } else { "false" }.to_string(),
+        Value::TinyInt(n) => n.to_string(),
+        Value::SmallInt(n) => n.to_string(),
+        Value::Int(n) => n.to_string(),
+        Value::BigInt(n) => n.to_string(),
+        Value::Float(bits) => {
+            let f = f64::from_bits(*bits);
+            if f.is_finite() {
+                serde_json::Number::from_f64(f)
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "null".to_string())
+            } else {
+                "null".to_string()
+            }
+        }
+        Value::Decimal(unscaled, scale) => {
+            if *scale == 0 {
+                unscaled.to_string()
+            } else {
+                val.to_string_value()
+            }
+        }
+        Value::Money(_) | Value::SmallMoney(_) => val.to_string_value(),
+        _ => serde_json::to_string(&val.to_string_value()).unwrap_or_else(|_| "\"\"".to_string()),
+    }
+}
+
+pub fn is_json_producing_expr(expr: &crate::ast::Expr) -> bool {
+    match expr {
+        crate::ast::Expr::FunctionCall { name, .. } => {
+            let u = name.to_ascii_uppercase();
+            matches!(
+                u.as_str(),
+                "JSON_OBJECT"
+                    | "__JSON_OBJECT_NULL"
+                    | "__JSON_OBJECT_ABSENT"
+                    | "JSON_ARRAY"
+                    | "__JSON_ARRAY_NULL"
+                    | "__JSON_ARRAY_ABSENT"
+                    | "JSON_QUERY"
+            )
+        }
+        crate::ast::Expr::Subquery(sub) => sub.for_json().is_some(),
+        _ => false,
+    }
+}
+
+pub fn build_json_object(pairs: &[(String, Value, bool)], absent_on_null: bool) -> Value {
+    let mut out = String::from("{");
+    let mut first = true;
+    for (k, v, raw) in pairs {
+        if absent_on_null && v.is_null() {
+            continue;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&serde_json::to_string(k).unwrap_or_else(|_| "\"\"".to_string()));
+        out.push(':');
+        out.push_str(&sql_value_to_json_fragment(v, *raw));
+    }
+    out.push('}');
+    Value::NVarChar(out)
+}
+
+pub fn build_json_array(items: &[(Value, bool)], null_on_null: bool) -> Value {
+    let mut out = String::from("[");
+    let mut first = true;
+    for (v, raw) in items {
+        if !null_on_null && v.is_null() {
+            continue;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&sql_value_to_json_fragment(v, *raw));
+    }
+    out.push(']');
+    Value::NVarChar(out)
+}
+
 pub fn json_value(json_str: &str, path: &str) -> Result<Value, DbError> {
     let json = parse_json(json_str)?;
     let normalized_path = normalize_json_path(path);

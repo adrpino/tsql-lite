@@ -379,6 +379,7 @@ pub fn lower_data_type(
             Ok(executor_ast::data_types::DataTypeSpec::UniqueIdentifier)
         }
         ast::DataType::SqlVariant => Ok(executor_ast::data_types::DataTypeSpec::SqlVariant),
+        ast::DataType::RowVersion => Ok(executor_ast::data_types::DataTypeSpec::RowVersion),
         ast::DataType::Xml => Ok(executor_ast::data_types::DataTypeSpec::Xml),
         ast::DataType::DateTimeOffset => Ok(executor_ast::data_types::DataTypeSpec::DateTimeOffset),
         ast::DataType::SmallDateTime => Ok(executor_ast::data_types::DataTypeSpec::SmallDateTime),
@@ -386,7 +387,16 @@ pub fn lower_data_type(
         ast::DataType::Text => Ok(executor_ast::data_types::DataTypeSpec::VarChar(8000)),
         ast::DataType::NText => Ok(executor_ast::data_types::DataTypeSpec::NVarChar(4000)),
         ast::DataType::Table => Ok(executor_ast::data_types::DataTypeSpec::VarChar(255)),
-        ast::DataType::Custom(_) => Ok(executor_ast::data_types::DataTypeSpec::VarChar(255)),
+        ast::DataType::Custom(raw) => {
+            let parts: Vec<String> = raw
+                .split('.')
+                .map(|p| p.trim().trim_matches(&['[', ']'][..]).to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            Ok(executor_ast::data_types::DataTypeSpec::Custom(Box::new(
+                lower_object_name(parts),
+            )))
+        }
         ast::DataType::NationalChar(n) => Ok(executor_ast::data_types::DataTypeSpec::NChar(
             n.unwrap_or(1) as u16,
         )),

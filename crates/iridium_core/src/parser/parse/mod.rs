@@ -191,6 +191,27 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             Keyword::Create => {
                 let _ = parser.next();
+                if parser.at_keyword(Keyword::Or) {
+                    let saved = parser.save();
+                    let _ = parser.next();
+                    if parser.at_keyword(Keyword::Alter) {
+                        let _ = parser.next();
+                        let mut stmt = parse_create(parser)?;
+                        match &mut stmt {
+                            CreateStmt::Procedure { or_alter, .. }
+                            | CreateStmt::View { or_alter, .. }
+                            | CreateStmt::Function { or_alter, .. }
+                            | CreateStmt::Trigger { or_alter, .. } => {
+                                *or_alter = true;
+                            }
+                            _ => {}
+                        }
+                        return Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
+                            stmt,
+                        )))));
+                    }
+                    parser.restore(saved);
+                }
                 if parser.at_keyword(Keyword::Unique) {
                     let _ = parser.next();
                     let mut is_clustered = false;
@@ -248,15 +269,226 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     return parse_create_sequence(parser);
                 }
-                if parser.at_keyword(Keyword::Partition)
-                    || parser.at_keyword(Keyword::Statistics)
-                    || parser.at_keyword(Keyword::User)
+                if parser.at_keyword(Keyword::User) {
+                    let _ = parser.next();
+                    let name = match parser.next() {
+                        Some(Token::Identifier(id)) => id.clone(),
+                        Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                        _ => return parser.backtrack(Expected::Description("user name")),
+                    };
+                    let mut default_schema = None;
+                    // Consume optional FOR/FROM LOGIN <x> | WITHOUT LOGIN and WITH DEFAULT_SCHEMA = <schema>
+                    while !parser.is_empty()
+                        && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
+                    {
+                        if matches!(
+                            parser.peek(),
+                            Some(Token::Keyword(
+                                Keyword::Create
+                                    | Keyword::Alter
+                                    | Keyword::Drop
+                                    | Keyword::Select
+                                    | Keyword::Insert
+                                    | Keyword::Update
+                                    | Keyword::Delete
+                                    | Keyword::Declare
+                                    | Keyword::Set
+                                    | Keyword::Exec
+                                    | Keyword::Execute
+                            ))
+                        ) {
+                            break;
+                        }
+                        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("DEFAULT_SCHEMA"))
+                        {
+                            let _ = parser.next();
+                            if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                                let _ = parser.next();
+                                match parser.next() {
+                                    Some(Token::Identifier(s)) => default_schema = Some(s.clone()),
+                                    Some(Token::Keyword(k)) => {
+                                        default_schema = Some(k.as_sql().to_string())
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        } else {
+                            let _ = parser.next();
+                        }
+                    }
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                        Box::new(crate::ast::CatalogMetadataAction::CreateUser {
+                            name,
+                            default_schema,
+                        }),
+                    ))));
+                }
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLE"))
+                {
+                    let _ = parser.next();
+                    let name = match parser.next() {
+                        Some(Token::Identifier(id)) => id.clone(),
+                        Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                        _ => return parser.backtrack(Expected::Description("role name")),
+                    };
+                    statements::alter::skip_ddl_tail(parser);
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                        Box::new(crate::ast::CatalogMetadataAction::CreateRole { name }),
+                    ))));
+                }
+                if parser.at_keyword(Keyword::Partition) {
+                    let _ = parser.next();
+                    if parser.at_keyword(Keyword::Function) {
+                        let _ = parser.next();
+                        let name = match parser.next() {
+                            Some(Token::Identifier(id)) => id.clone(),
+                            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                            _ => {
+                                return parser
+                                    .backtrack(Expected::Description("partition function name"))
+                            }
+                        };
+                        parser.expect_lparen()?;
+                        let parsed_dt = expressions::parse_data_type(parser)?;
+                        parser.expect_rparen()?;
+                        let data_type = crate::parser::lower::common::lower_data_type(parsed_dt)
+                            .unwrap_or(crate::ast::DataTypeSpec::Int);
+                        let _ = parser.at_keyword(Keyword::As).then(|| parser.next());
+                        let _ = parser.at_keyword(Keyword::Range).then(|| parser.next());
+                        let mut range_right = false;
+                        if parser.at_keyword(Keyword::Right) {
+                            let _ = parser.next();
+                            range_right = true;
+                        } else if parser.at_keyword(Keyword::Left) {
+                            let _ = parser.next();
+                            range_right = false;
+                        }
+                        let mut boundary_values = Vec::new();
+                        if parser.at_keyword(Keyword::For) {
+                            let _ = parser.next();
+                            if parser.at_keyword(Keyword::Values) {
+                                let _ = parser.next();
+                            }
+                            if matches!(parser.peek(), Some(Token::LParen)) {
+                                let _ = parser.next();
+                                while !parser.is_empty()
+                                    && !matches!(parser.peek(), Some(Token::RParen))
+                                {
+                                    let mut val_text = String::new();
+                                    let mut depth = 0usize;
+                                    while let Some(tok) = parser.peek() {
+                                        if depth == 0 && matches!(tok, Token::Comma | Token::RParen)
+                                        {
+                                            break;
+                                        }
+                                        match parser.next() {
+                                            Some(Token::LParen) => {
+                                                depth += 1;
+                                                val_text.push('(');
+                                            }
+                                            Some(Token::RParen) => {
+                                                depth = depth.saturating_sub(1);
+                                                val_text.push(')');
+                                            }
+                                            Some(Token::String(s)) | Some(Token::NString(s)) => {
+                                                val_text.push_str(s);
+                                            }
+                                            Some(Token::Number { raw, .. }) => {
+                                                val_text.push_str(raw);
+                                            }
+                                            Some(Token::Operator(op)) => val_text.push_str(op),
+                                            Some(Token::Identifier(id)) => val_text.push_str(id),
+                                            Some(Token::Keyword(k)) => {
+                                                val_text.push_str(k.as_sql())
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    if !val_text.trim().is_empty() {
+                                        boundary_values.push(val_text.trim().to_string());
+                                    }
+                                    if matches!(parser.peek(), Some(Token::Comma)) {
+                                        let _ = parser.next();
+                                    }
+                                }
+                                let _ = parser.expect_rparen();
+                            }
+                        }
+                        return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                            Box::new(crate::ast::CatalogMetadataAction::CreatePartitionFunction {
+                                name,
+                                data_type,
+                                range_right,
+                                boundary_values,
+                            }),
+                        ))));
+                    } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCHEME"))
+                    {
+                        let _ = parser.next();
+                        let name = match parser.next() {
+                            Some(Token::Identifier(id)) => id.clone(),
+                            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                            _ => {
+                                return parser
+                                    .backtrack(Expected::Description("partition scheme name"))
+                            }
+                        };
+                        let _ = parser.at_keyword(Keyword::As).then(|| parser.next());
+                        let _ = parser.at_keyword(Keyword::Partition).then(|| parser.next());
+                        let function_name = match parser.next() {
+                            Some(Token::Identifier(id)) => id.clone(),
+                            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                            _ => {
+                                return parser
+                                    .backtrack(Expected::Description("partition function name"))
+                            }
+                        };
+                        let all_to = if parser.at_keyword(Keyword::All) {
+                            let _ = parser.next();
+                            true
+                        } else {
+                            false
+                        };
+                        if is_to_token(parser.peek()) {
+                            let _ = parser.next();
+                        }
+                        let mut filegroups = Vec::new();
+                        if matches!(parser.peek(), Some(Token::LParen)) {
+                            let _ = parser.next();
+                            while !parser.is_empty()
+                                && !matches!(parser.peek(), Some(Token::RParen))
+                            {
+                                match parser.next() {
+                                    Some(Token::Identifier(fg)) => filegroups.push(fg.clone()),
+                                    Some(Token::Keyword(k)) => {
+                                        filegroups.push(k.as_sql().to_string())
+                                    }
+                                    Some(Token::Comma) => {}
+                                    _ => {}
+                                }
+                            }
+                            let _ = parser.expect_rparen();
+                        }
+                        return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                            Box::new(crate::ast::CatalogMetadataAction::CreatePartitionScheme {
+                                name,
+                                function_name,
+                                all_to,
+                                filegroups,
+                            }),
+                        ))));
+                    }
+                    statements::alter::skip_ddl_tail(parser);
+                    return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                        Vec::new(),
+                    )));
+                }
+                if parser.at_keyword(Keyword::Statistics)
                     || parser.at_keyword(Keyword::Column)
                     || matches!(
                         parser.peek(),
                         Some(Token::Identifier(id))
                             if id.eq_ignore_ascii_case("LOGIN")
-                                || id.eq_ignore_ascii_case("ROLE")
                                 || id.eq_ignore_ascii_case("FULLTEXT")
                                 || id.eq_ignore_ascii_case("MASTER")
                                 || id.eq_ignore_ascii_case("CERTIFICATE")
@@ -577,6 +809,50 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
         {
             parse_dcl_permission_stmt(parser)
         }
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("DBCC") => {
+            let _ = parser.next();
+            let cmd = match parser.next() {
+                Some(Token::Identifier(c)) => c.clone(),
+                Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                _ => return parser.backtrack(Expected::Description("DBCC command")),
+            };
+            if !cmd.eq_ignore_ascii_case("CHECKIDENT") {
+                return parser.backtrack(Expected::Description("supported DBCC command"));
+            }
+            parser.expect_lparen()?;
+            let table = parse_expr(parser)?;
+            let mut reseed = true;
+            let mut new_reseed_value = None;
+            if matches!(parser.peek(), Some(Token::Comma)) {
+                let _ = parser.next();
+                match parser.next() {
+                    Some(Token::Identifier(m)) if m.eq_ignore_ascii_case("NORESEED") => {
+                        reseed = false;
+                    }
+                    Some(Token::Identifier(m)) if m.eq_ignore_ascii_case("RESEED") => {
+                        reseed = true;
+                    }
+                    _ => return parser.backtrack(Expected::Description("RESEED or NORESEED")),
+                }
+                if matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                    new_reseed_value = Some(parse_expr(parser)?);
+                }
+            }
+            parser.expect_rparen()?;
+            if parser.at_keyword(Keyword::With) {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("NO_INFOMSGS"))
+                {
+                    let _ = parser.next();
+                }
+            }
+            Ok(Statement::Procedural(ProceduralStatement::DbccCheckIdent {
+                table,
+                reseed,
+                new_reseed_value,
+            }))
+        }
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GOTO") => {
             let _ = parser.next();
             let label = match parser.next() {
@@ -608,15 +884,28 @@ fn is_to_token(tok: Option<&Token>) -> bool {
 }
 
 fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
-    let _ = parser.next(); // GRANT | REVOKE | DENY
-                           // Consume optional GRANT OPTION FOR (on REVOKE) and permission list until ON / TO / FROM
+    let action = match parser.next() {
+        Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+        Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+        _ => "GRANT".to_string(),
+    };
+    // Parse permission list (comma-separated phrases like `SELECT`, `VIEW DEFINITION`, `EXECUTE`)
+    let mut permissions: Vec<String> = Vec::new();
+    let mut cur_perm = String::new();
     while !parser.is_empty()
         && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
         && !parser.at_keyword(Keyword::On)
         && !is_to_token(parser.peek())
         && !parser.at_keyword(Keyword::From)
     {
-        if matches!(parser.peek(), Some(Token::LParen)) {
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+            let trimmed = cur_perm.trim().to_string();
+            if !trimmed.is_empty() {
+                permissions.push(trimmed);
+            }
+            cur_perm.clear();
+        } else if matches!(parser.peek(), Some(Token::LParen)) {
             let _ = parser.next();
             let mut depth = 1usize;
             while depth > 0 {
@@ -628,27 +917,53 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
                 }
             }
         } else {
-            let _ = parser.next();
+            match parser.next() {
+                Some(Token::Identifier(id)) => {
+                    if !cur_perm.is_empty() {
+                        cur_perm.push(' ');
+                    }
+                    cur_perm.push_str(id);
+                }
+                Some(Token::Keyword(k)) => {
+                    if !cur_perm.is_empty() {
+                        cur_perm.push(' ');
+                    }
+                    cur_perm.push_str(k.as_sql());
+                }
+                _ => {}
+            }
         }
     }
+    let trimmed = cur_perm.trim().to_string();
+    if !trimmed.is_empty() {
+        permissions.push(trimmed);
+    }
+
     // Optional ON [class::]object[(col, ...)]
+    let mut target_class: Option<String> = None;
+    let mut target_name: Option<crate::ast::ObjectName> = None;
     if parser.at_keyword(Keyword::On) {
         let _ = parser.next();
-        // Consume optional securable class prefix (e.g. OBJECT::, SCHEMA::, TYPE::)
         if matches!(
             parser.peek(),
             Some(Token::Identifier(_)) | Some(Token::Keyword(_))
         ) {
             let saved = parser.save();
-            let _ = parser.next();
+            let cls_tok = match parser.next() {
+                Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
+                Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
+                _ => String::new(),
+            };
             if matches!(parser.peek(), Some(Token::Operator(op)) if op == "::") {
                 let _ = parser.next();
+                target_class = Some(cls_tok);
             } else {
                 parser.restore(saved);
             }
         }
         if !is_to_token(parser.peek()) && !parser.at_keyword(Keyword::From) {
-            let _ = multipart_name(parser)?;
+            let parts = multipart_name(parser)?;
+            target_name = Some(crate::parser::lower::common::lower_object_name(parts));
             if matches!(parser.peek(), Some(Token::LParen)) {
                 let _ = parser.next();
                 let mut depth = 1usize;
@@ -664,11 +979,13 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
         }
     }
     // TO | FROM <principal>, ...
+    let mut grantees: Vec<String> = Vec::new();
     if is_to_token(parser.peek()) || parser.at_keyword(Keyword::From) {
         let _ = parser.next();
         loop {
             match parser.next() {
-                Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+                Some(Token::Identifier(id)) => grantees.push(id.clone()),
+                Some(Token::Keyword(k)) => grantees.push(k.as_sql().to_string()),
                 _ => return parser.backtrack(Expected::Description("principal name")),
             }
             if matches!(parser.peek(), Some(Token::Comma)) {
@@ -679,6 +996,7 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
         }
     }
     // Optional trailing WITH GRANT OPTION / CASCADE / AS <principal>
+    let mut with_grant_option = false;
     if parser.at_keyword(Keyword::With) {
         let saved = parser.save();
         let _ = parser.next();
@@ -687,6 +1005,7 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
             Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("GRANT")
         ) {
             let _ = parser.next();
+            with_grant_option = true;
             if matches!(
                 parser.peek(),
                 Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("OPTION")
@@ -704,9 +1023,16 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
         let _ = parser.next();
         let _ = parser.next();
     }
-    Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-        Vec::new(),
-    )))
+    Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+        Box::new(crate::ast::CatalogMetadataAction::Permission {
+            action,
+            permissions,
+            target_class,
+            target_name,
+            grantees,
+            with_grant_option,
+        }),
+    ))))
 }
 
 fn parse_declare_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
@@ -1405,10 +1731,6 @@ pub fn parse_routine_param(parser: &mut Parser) -> ParseResult<RoutineParam> {
             continue;
         }
         break;
-    }
-
-    if matches!(data_type, crate::parser::ast::DataType::Custom(_)) && !is_readonly {
-        return parser.backtrack(Expected::Description("READONLY"));
     }
 
     Ok(RoutineParam {

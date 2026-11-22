@@ -2,7 +2,7 @@ use super::super::{numeric_precision, numeric_scale_val, virtual_table_def, Virt
 use crate::ast::RoutineParamType;
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
-use crate::executor::type_mapping::data_type_spec_to_runtime;
+use crate::executor::type_mapping::resolve_data_type_spec;
 use crate::storage::StoredRow;
 use crate::types::{DataType, Value};
 
@@ -37,7 +37,7 @@ impl VirtualTable for SysParameters {
             for (i, p) in r.params.iter().enumerate() {
                 let (dt, is_user_defined) = match &p.param_type {
                     RoutineParamType::Scalar(dt_spec) => {
-                        (data_type_spec_to_runtime(dt_spec), false)
+                        (resolve_data_type_spec(dt_spec, catalog), false)
                     }
                     RoutineParamType::TableType(_) => {
                         // For table types, we use a placeholder or look up its base type if applicable.

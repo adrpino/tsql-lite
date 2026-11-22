@@ -82,38 +82,71 @@ impl SchemaRegistry for CatalogImpl {
         if is_type_only {
             let src_key = (norm_src.clone(), norm_name.clone());
             let dst_key = (norm_dst.clone(), norm_name.clone());
-            let Some(&idx) = self.type_map.get(&src_key) else {
-                return Err(DbError::ObjectNotFound {
-                    object: format!("{source_schema}.{source_name}"),
-                });
-            };
-            if same_schema {
+            if let Some(&idx) = self.type_map.get(&src_key) {
+                if same_schema {
+                    return Ok(());
+                }
+                if self.type_map.contains_key(&dst_key)
+                    || self.scalar_type_map.contains_key(&dst_key)
+                {
+                    return Err(DbError::DuplicateType {
+                        schema: target_schema_name,
+                        type_name: source_name.to_string(),
+                    });
+                }
+                let types = Arc::make_mut(&mut self.table_types);
+                types[idx].schema = target_schema_name;
+                self.type_map = Arc::new(
+                    types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| {
+                            (
+                                (
+                                    normalize_identifier(&t.schema),
+                                    normalize_identifier(&t.name),
+                                ),
+                                i,
+                            )
+                        })
+                        .collect(),
+                );
                 return Ok(());
             }
-            if self.type_map.contains_key(&dst_key) {
-                return Err(DbError::DuplicateType {
-                    schema: target_schema_name,
-                    type_name: source_name.to_string(),
-                });
-            }
-            let types = Arc::make_mut(&mut self.table_types);
-            types[idx].schema = target_schema_name;
-            self.type_map = Arc::new(
-                types
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| {
-                        (
+            if let Some(idx) = self.scalar_type_map.get(&src_key).copied() {
+                if same_schema {
+                    return Ok(());
+                }
+                if self.scalar_type_map.contains_key(&dst_key)
+                    || self.type_map.contains_key(&dst_key)
+                {
+                    return Err(DbError::DuplicateType {
+                        schema: target_schema_name,
+                        type_name: source_name.to_string(),
+                    });
+                }
+                let types = Arc::make_mut(&mut self.scalar_types);
+                types[idx].schema = target_schema_name;
+                self.scalar_type_map = Arc::new(
+                    types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| {
                             (
-                                normalize_identifier(&t.schema),
-                                normalize_identifier(&t.name),
-                            ),
-                            i,
-                        )
-                    })
-                    .collect(),
-            );
-            return Ok(());
+                                (
+                                    normalize_identifier(&t.schema),
+                                    normalize_identifier(&t.name),
+                                ),
+                                i,
+                            )
+                        })
+                        .collect(),
+                );
+                return Ok(());
+            }
+            return Err(DbError::ObjectNotFound {
+                object: format!("{source_schema}.{source_name}"),
+            });
         }
 
         // 1. Table (preserves table_id so storage rows remain intact; also moves indexes & triggers)

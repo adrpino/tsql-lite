@@ -59,6 +59,7 @@ pub(super) fn bind_plain_table(
                     collation: None,
                     is_clustered: false,
                     ansi_padding_on: true,
+                    is_rowversion: false,
                 });
             }
 

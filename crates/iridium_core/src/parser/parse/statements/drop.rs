@@ -128,6 +128,55 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
             name,
             if_exists,
         })))
+    } else if parser.at_keyword(Keyword::User) {
+        let _ = parser.next();
+        let if_exists = consume_if_exists(parser);
+        let name = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+            _ => return parser.backtrack(Expected::Description("user name")),
+        };
+        Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+            Box::new(crate::ast::CatalogMetadataAction::DropUser { name, if_exists }),
+        ))))
+    } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLE"))
+    {
+        let _ = parser.next();
+        let if_exists = consume_if_exists(parser);
+        let name = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+            _ => return parser.backtrack(Expected::Description("role name")),
+        };
+        Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+            Box::new(crate::ast::CatalogMetadataAction::DropRole { name, if_exists }),
+        ))))
+    } else if parser.at_keyword(Keyword::Partition) {
+        let _ = parser.next();
+        if parser.at_keyword(Keyword::Function) {
+            let _ = parser.next();
+            let name = match parser.next() {
+                Some(Token::Identifier(id)) => id.clone(),
+                Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                _ => return parser.backtrack(Expected::Description("partition function name")),
+            };
+            Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                Box::new(crate::ast::CatalogMetadataAction::DropPartitionFunction { name }),
+            ))))
+        } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCHEME"))
+        {
+            let _ = parser.next();
+            let name = match parser.next() {
+                Some(Token::Identifier(id)) => id.clone(),
+                Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                _ => return parser.backtrack(Expected::Description("partition scheme name")),
+            };
+            Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                Box::new(crate::ast::CatalogMetadataAction::DropPartitionScheme { name }),
+            ))))
+        } else {
+            parser.backtrack(Expected::Description("FUNCTION or SCHEME"))
+        }
     } else {
         parser.backtrack(Expected::Description("drop target"))
     }

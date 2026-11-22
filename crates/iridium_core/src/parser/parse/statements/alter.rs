@@ -296,6 +296,45 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
             stmt,
         )))))
+    } else if parser.at_keyword(Keyword::View) {
+        let _ = parser.next();
+        let mut stmt = super::create::parse_create_view(parser)?;
+        if let CreateStmt::View {
+            ref mut or_alter, ..
+        } = stmt
+        {
+            *or_alter = true;
+        }
+        Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
+            stmt,
+        )))))
+    } else if parser.at_keyword(Keyword::Function) {
+        let _ = parser.next();
+        let mut stmt = super::create::parse_create_function(parser)?;
+        if let CreateStmt::Function {
+            ref mut or_alter, ..
+        } = stmt
+        {
+            *or_alter = true;
+        }
+        Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
+            stmt,
+        )))))
+    } else if parser.at_keyword(Keyword::Trigger) {
+        let _ = parser.next();
+        let mut stmt = super::create::parse_create_trigger(parser)?;
+        if let CreateStmt::Trigger {
+            ref mut or_alter, ..
+        } = stmt
+        {
+            *or_alter = true;
+        }
+        Ok(Statement::Ddl(Box::new(DdlStatement::Create(Box::new(
+            stmt,
+        )))))
+    } else if parser.at_keyword(Keyword::Sequence) {
+        let _ = parser.next();
+        parse_alter_sequence(parser)
     } else if parser.at_keyword(Keyword::Partition) {
         let _ = parser.next();
         let is_scheme = matches!(
@@ -377,13 +416,30 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             let _ = parser.next();
         }
         // Support storage clauses: ADD FILEGROUP / ADD FILE / MODIFY FILE / REMOVE FILE
-        if parser.at_keyword(Keyword::Add)
-            || matches!(
-                parser.peek(),
-                Some(Token::Identifier(id))
-                    if id.eq_ignore_ascii_case("MODIFY") || id.eq_ignore_ascii_case("REMOVE")
-            )
-        {
+        if parser.at_keyword(Keyword::Add) {
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("FILEGROUP"))
+            {
+                let _ = parser.next();
+                let fg_name = match parser.next() {
+                    Some(Token::Identifier(id)) => id.clone(),
+                    Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                    _ => return parser.backtrack(Expected::Description("filegroup name")),
+                };
+                skip_ddl_tail(parser);
+                return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                    Box::new(crate::ast::CatalogMetadataAction::AddFilegroup { name: fg_name }),
+                ))));
+            }
+            skip_ddl_tail(parser);
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        } else if matches!(
+            parser.peek(),
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("MODIFY") || id.eq_ignore_ascii_case("REMOVE")
+        ) {
             let _ = parser.next();
             skip_ddl_tail(parser);
             Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
@@ -440,6 +496,45 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 Vec::new(),
             )))
         }
+    } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLE"))
+    {
+        let _ = parser.next();
+        let role = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+            _ => return parser.backtrack(Expected::Description("role name")),
+        };
+        let add = if parser.at_keyword(Keyword::Add) {
+            let _ = parser.next();
+            Some(true)
+        } else if parser.at_keyword(Keyword::Drop) {
+            let _ = parser.next();
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(add_flag) = add {
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MEMBER"))
+            {
+                let _ = parser.next();
+                let member = match parser.next() {
+                    Some(Token::Identifier(id)) => id.clone(),
+                    Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                    _ => return parser.backtrack(Expected::Description("member name")),
+                };
+                return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                    Box::new(crate::ast::CatalogMetadataAction::AlterRoleMember {
+                        role,
+                        member,
+                        add: add_flag,
+                    }),
+                ))));
+            }
+        }
+        skip_ddl_tail(parser);
+        Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+            Vec::new(),
+        )))
     } else if parser.at_keyword(Keyword::User)
         || parser.at_keyword(Keyword::Index)
         || matches!(
@@ -478,4 +573,109 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
     } else {
         parser.backtrack(Expected::Description("table, procedure, or partition"))
     }
+}
+
+fn parse_signed_i64(parser: &mut Parser) -> ParseResult<i64> {
+    let mut neg = false;
+    if matches!(parser.peek(), Some(Token::Operator(op)) if op == "-") {
+        let _ = parser.next();
+        neg = true;
+    } else if matches!(parser.peek(), Some(Token::Operator(op)) if op == "+") {
+        let _ = parser.next();
+    }
+    match parser.next() {
+        Some(Token::Number { value, .. }) => {
+            let v = *value as i64;
+            Ok(if neg { -v } else { v })
+        }
+        _ => parser.backtrack(Expected::Description("integer")),
+    }
+}
+
+fn parse_alter_sequence(parser: &mut Parser) -> ParseResult<Statement> {
+    let name = super::parse_multipart_name(parser)?;
+    let mut restart: Option<Option<i64>> = None;
+    let mut increment_by: Option<i64> = None;
+    let mut min_value: Option<Option<i64>> = None;
+    let mut max_value: Option<Option<i64>> = None;
+    let mut cycle: Option<bool> = None;
+
+    while !parser.is_empty() {
+        if matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go)) {
+            break;
+        }
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RESTART"))
+        {
+            let _ = parser.next();
+            if parser.at_keyword(Keyword::With) {
+                let _ = parser.next();
+                restart = Some(Some(parse_signed_i64(parser)?));
+            } else {
+                restart = Some(None);
+            }
+        } else if parser.at_keyword(Keyword::Increment)
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("INCREMENT"))
+        {
+            let _ = parser.next();
+            parser.expect_keyword(Keyword::By)?;
+            increment_by = Some(parse_signed_i64(parser)?);
+        } else if parser.at_keyword(Keyword::Minvalue)
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MINVALUE"))
+        {
+            let _ = parser.next();
+            min_value = Some(Some(parse_signed_i64(parser)?));
+        } else if parser.at_keyword(Keyword::Maxvalue)
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MAXVALUE"))
+        {
+            let _ = parser.next();
+            max_value = Some(Some(parse_signed_i64(parser)?));
+        } else if parser.at_keyword(Keyword::Cycle)
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CYCLE"))
+        {
+            let _ = parser.next();
+            cycle = Some(true);
+        } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CACHE"))
+        {
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Number { .. })) {
+                let _ = parser.next();
+            }
+        } else if parser.at_keyword(Keyword::No)
+            || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NO"))
+        {
+            let _ = parser.next();
+            if parser.at_keyword(Keyword::Minvalue)
+                || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MINVALUE"))
+            {
+                let _ = parser.next();
+                min_value = Some(None);
+            } else if parser.at_keyword(Keyword::Maxvalue)
+                || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MAXVALUE"))
+            {
+                let _ = parser.next();
+                max_value = Some(None);
+            } else if parser.at_keyword(Keyword::Cycle)
+                || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CYCLE"))
+            {
+                let _ = parser.next();
+                cycle = Some(false);
+            } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CACHE"))
+            {
+                let _ = parser.next();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok(Statement::Ddl(Box::new(DdlStatement::AlterSequence {
+        name,
+        restart,
+        increment_by,
+        min_value,
+        max_value,
+        cycle,
+    })))
 }

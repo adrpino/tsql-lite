@@ -248,6 +248,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                 "NTEXT" => Ok(DataType::NText),
                 "IMAGE" => Ok(DataType::Image),
                 "SQL_VARIANT" => Ok(DataType::SqlVariant),
+                "ROWVERSION" | "TIMESTAMP" => Ok(DataType::RowVersion),
                 _ => {
                     let mut parts = vec![id.clone()];
                     while matches!(parser.peek(), Some(Token::Dot)) {

@@ -28,4 +28,6 @@ pub enum DataTypeSpec {
     SqlVariant,
     Numeric(u8, u8),
     Xml,
+    RowVersion,
+    Custom(Box<crate::ast::ObjectName>),
 }

@@ -37,6 +37,46 @@ impl SequenceRegistry for CatalogImpl {
         Ok(())
     }
 
+    fn alter_sequence(
+        &mut self,
+        schema: &str,
+        name: &str,
+        restart: Option<Option<i64>>,
+        increment: Option<i64>,
+        minimum_value: Option<Option<i64>>,
+        maximum_value: Option<Option<i64>>,
+        is_cycling: Option<bool>,
+    ) -> Result<(), DbError> {
+        let key = (normalize_identifier(schema), normalize_identifier(name));
+        let idx = *self
+            .sequence_map
+            .get(&key)
+            .ok_or_else(|| DbError::object_not_found(format!("{}.{}", schema, name)))?;
+        let seq = &mut Arc::make_mut(&mut self.sequences)[idx];
+        if let Some(inc) = increment {
+            if inc == 0 {
+                return Err(DbError::Execution(
+                    "The increment value for a sequence object cannot be zero.".into(),
+                ));
+            }
+            seq.increment = inc;
+        }
+        if let Some(min_opt) = minimum_value {
+            seq.minimum_value = min_opt.unwrap_or(i64::MIN);
+        }
+        if let Some(max_opt) = maximum_value {
+            seq.maximum_value = max_opt.unwrap_or(i64::MAX);
+        }
+        if let Some(cyc) = is_cycling {
+            seq.is_cycling = cyc;
+        }
+        if let Some(restart_val) = restart {
+            seq.current_value
+                .store(restart_val.unwrap_or(seq.start_value));
+        }
+        Ok(())
+    }
+
     fn drop_sequence(&mut self, schema: &str, name: &str) -> Result<(), DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
         let idx = *self
@@ -61,31 +101,33 @@ impl SequenceRegistry for CatalogImpl {
     }
 
     fn next_sequence_value(&mut self, schema: &str, name: &str) -> Result<i64, DbError> {
+        self.next_sequence_value_shared(schema, name)
+    }
+
+    fn next_sequence_value_shared(&self, schema: &str, name: &str) -> Result<i64, DbError> {
         let key = (normalize_identifier(schema), normalize_identifier(name));
         let idx = *self
             .sequence_map
             .get(&key)
             .ok_or_else(|| DbError::object_not_found(format!("{}.{}", schema, name)))?;
 
-        let seq = &mut Arc::make_mut(&mut self.sequences)[idx];
-        let val = seq.current_value;
-
-        let next_val = if seq.increment >= 0 {
-            if val > seq.maximum_value - seq.increment {
-                if seq.is_cycling {
-                    seq.minimum_value
+        let seq = &self.sequences[idx];
+        loop {
+            let val = seq.current_value.load();
+            let next_val = if seq.increment >= 0 {
+                if val > seq.maximum_value - seq.increment {
+                    if seq.is_cycling {
+                        seq.minimum_value
+                    } else {
+                        return Err(DbError::Execution(format!(
+                            "sequence '{}' has reached its maximum value",
+                            name
+                        )));
+                    }
                 } else {
-                    return Err(DbError::Execution(format!(
-                        "sequence '{}' has reached its maximum value",
-                        name
-                    )));
+                    val + seq.increment
                 }
-            } else {
-                val + seq.increment
-            }
-        } else {
-            // Negative increment
-            if val < seq.minimum_value - seq.increment {
+            } else if val < seq.minimum_value - seq.increment {
                 if seq.is_cycling {
                     seq.maximum_value
                 } else {
@@ -96,10 +138,10 @@ impl SequenceRegistry for CatalogImpl {
                 }
             } else {
                 val + seq.increment
+            };
+            if seq.current_value.compare_exchange(val, next_val).is_ok() {
+                return Ok(val);
             }
-        };
-
-        seq.current_value = next_val;
-        Ok(val)
+        }
     }
 }

@@ -152,7 +152,7 @@ impl<'a> MutationExecutor<'a> {
             table
                 .columns
                 .iter()
-                .filter(|c| c.computed_expr.is_none() && c.identity.is_none())
+                .filter(|c| c.computed_expr.is_none() && c.identity.is_none() && !c.is_rowversion)
                 .map(|c| c.name.clone())
                 .collect::<Vec<_>>()
         }
@@ -174,6 +174,12 @@ impl<'a> MutationExecutor<'a> {
                     col.name
                 )));
             }
+            if col.is_rowversion {
+                return Err(DbError::Execution(format!(
+                    "Cannot insert an explicit value into a timestamp column '{}'.",
+                    col.name
+                )));
+            }
             apply_ansi_padding(&mut value, &col.data_type, col.ansi_padding_on);
             enforce_string_length(&col.data_type, &value, &col.name)?;
             final_values[col_idx] = value;
@@ -183,7 +189,11 @@ impl<'a> MutationExecutor<'a> {
             deleted: false,
         };
         let needs_defaults_or_computed = table.columns.iter().any(|c| {
-            c.identity.is_some() || c.default.is_some() || !c.nullable || c.computed_expr.is_some()
+            c.identity.is_some()
+                || c.default.is_some()
+                || !c.nullable
+                || c.computed_expr.is_some()
+                || c.is_rowversion
         });
         if needs_defaults_or_computed {
             self.apply_missing_values(table, &mut temp_row.values, ctx)?;
@@ -223,6 +233,12 @@ impl<'a> MutationExecutor<'a> {
                     col.name
                 )));
             }
+            if col.is_rowversion {
+                return Err(DbError::Execution(format!(
+                    "Cannot insert an explicit value into a timestamp column '{}'.",
+                    col.name
+                )));
+            }
             let value = eval_expr_to_type_constant(
                 expr,
                 &col.data_type,
@@ -257,6 +273,11 @@ impl<'a> MutationExecutor<'a> {
     ) -> Result<(), DbError> {
         for (idx, col) in table.columns.iter().enumerate() {
             if col.computed_expr.is_some() {
+                continue;
+            }
+            if col.is_rowversion {
+                let rv = self.catalog.next_rowversion();
+                final_values[idx] = Value::Binary(rv.to_be_bytes().to_vec());
                 continue;
             }
             if matches!(final_values[idx], Value::Null) {

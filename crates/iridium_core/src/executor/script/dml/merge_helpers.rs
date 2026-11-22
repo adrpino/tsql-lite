@@ -57,6 +57,7 @@ fn table_def_from_query_result(
                 collation: None,
                 is_clustered: false,
                 ansi_padding_on: true,
+                is_rowversion: false,
             })
             .collect(),
         check_constraints: vec![],

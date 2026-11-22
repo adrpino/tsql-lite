@@ -1,16 +1,17 @@
 use crate::ast::{
-    AlterTableAction, AlterTableStmt, CreateIndexStmt, CreateSchemaStmt, CreateTableStmt,
-    CreateTypeStmt, DropIndexStmt, DropSchemaStmt, DropTableStmt, DropTypeStmt,
+    AlterTableAction, AlterTableStmt, CreateIndexStmt, CreateScalarTypeStmt, CreateSchemaStmt,
+    CreateTableStmt, CreateTypeStmt, DropIndexStmt, DropSchemaStmt, DropTableStmt, DropTypeStmt,
     TableConstraintSpec,
 };
 use crate::catalog::{
-    CheckConstraintDef, ColumnDef, ForeignKeyDef, IdentityDef, TableDef, TableTypeDef,
+    CheckConstraintDef, ColumnDef, ForeignKeyDef, IdentityDef, ScalarTypeDef, TableDef,
+    TableTypeDef,
 };
 use crate::error::DbError;
 
 use super::schema::SchemaExecutor;
 use super::schema_physical;
-use super::type_mapping::data_type_spec_to_runtime;
+use super::type_mapping::{resolve_data_type_spec, resolve_data_type_spec_with_nullability};
 
 pub(crate) fn apply_table_constraint(
     table: &mut TableDef,
@@ -97,9 +98,15 @@ fn build_column_def(
     executor: &mut SchemaExecutor<'_>,
     spec: crate::ast::ColumnSpec,
 ) -> Result<ColumnDef, DbError> {
-    let data_type = data_type_spec_to_runtime(&spec.data_type);
+    let is_rowversion = matches!(spec.data_type, crate::ast::DataTypeSpec::RowVersion);
+    let (data_type, udt_nullable) =
+        resolve_data_type_spec_with_nullability(&spec.data_type, executor.catalog);
     let nullable = if spec.nullable_explicit {
         spec.nullable
+    } else if is_rowversion {
+        false
+    } else if let Some(udt_null) = udt_nullable {
+        udt_null
     } else {
         executor.session_options.ansi_null_dflt_on
     };
@@ -119,6 +126,7 @@ fn build_column_def(
         collation: spec.collation,
         is_clustered: spec.is_clustered,
         ansi_padding_on: executor.session_options.ansi_padding,
+        is_rowversion,
     })
 }
 
@@ -140,11 +148,37 @@ pub(crate) fn create_type(
     })
 }
 
+pub(crate) fn create_scalar_type(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: CreateScalarTypeStmt,
+) -> Result<(), DbError> {
+    let schema = stmt.name.schema_or_dbo().to_string();
+    if executor.catalog.get_schema_id(&schema).is_none() {
+        return Err(DbError::schema_not_found(schema));
+    }
+    let base_type = resolve_data_type_spec(&stmt.base_type, executor.catalog);
+    let object_id = executor.catalog.alloc_object_id();
+    executor.catalog.create_scalar_type(ScalarTypeDef {
+        object_id,
+        schema,
+        name: stmt.name.name,
+        base_type,
+        nullable: stmt.nullable,
+    })
+}
+
 pub(crate) fn drop_type(
     executor: &mut SchemaExecutor<'_>,
     stmt: DropTypeStmt,
 ) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo().to_string();
+    if executor
+        .catalog
+        .find_scalar_type(&schema, &stmt.name.name)
+        .is_some()
+    {
+        return executor.catalog.drop_scalar_type(&schema, &stmt.name.name);
+    }
     executor.catalog.drop_table_type(&schema, &stmt.name.name)
 }
 
@@ -304,7 +338,27 @@ pub(crate) fn create_view(
         query: std::sync::Arc::new(view_stmt),
         definition_sql: String::new(),
     };
-    executor.catalog.create_view(view)
+    if stmt.or_alter {
+        executor.catalog.replace_view(view)
+    } else {
+        executor.catalog.create_view(view)
+    }
+}
+
+pub(crate) fn alter_sequence(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: crate::ast::AlterSequenceStmt,
+) -> Result<(), DbError> {
+    let schema = stmt.name.schema_or_dbo();
+    executor.catalog.alter_sequence(
+        schema,
+        &stmt.name.name,
+        stmt.restart,
+        stmt.increment,
+        stmt.minimum_value,
+        stmt.maximum_value,
+        stmt.is_cycling,
+    )
 }
 
 pub(crate) fn drop_view(
@@ -342,7 +396,7 @@ pub(crate) fn create_sequence(
     stmt: crate::ast::CreateSequenceStmt,
 ) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo().to_string();
-    let data_type = data_type_spec_to_runtime(&stmt.data_type);
+    let data_type = resolve_data_type_spec(&stmt.data_type, executor.catalog);
     let object_id = executor.catalog.alloc_object_id();
     executor
         .catalog
@@ -353,7 +407,7 @@ pub(crate) fn create_sequence(
             data_type,
             start_value: stmt.start_value,
             increment: stmt.increment,
-            current_value: stmt.start_value,
+            current_value: crate::catalog::SeqCounter::new(stmt.start_value),
             minimum_value: stmt.minimum_value,
             maximum_value: stmt.maximum_value,
             is_cycling: stmt.is_cycling,
@@ -456,6 +510,7 @@ pub(crate) fn alter_table(
             data_type,
             nullable,
         } => {
+            let resolved_dt = resolve_data_type_spec(&data_type, executor.catalog);
             let table_mut = executor
                 .catalog
                 .find_table_mut(&schema_name, &stmt.table.name)
@@ -465,7 +520,7 @@ pub(crate) fn alter_table(
                 .iter_mut()
                 .find(|c| c.name.eq_ignore_ascii_case(&name))
                 .ok_or_else(|| DbError::column_not_found(&name))?;
-            col.data_type = data_type_spec_to_runtime(&data_type);
+            col.data_type = resolved_dt;
             if let Some(n) = nullable {
                 col.nullable = n;
             }

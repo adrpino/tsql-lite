@@ -10,7 +10,10 @@ pub fn parse_if(parser: &mut Parser) -> ParseResult<Statement> {
     while matches!(parser.peek_at(semi_count), Some(Token::Semicolon)) {
         semi_count += 1;
     }
-    let else_stmt = if matches!(parser.peek_at(semi_count), Some(Token::Keyword(Keyword::Else))) {
+    let else_stmt = if matches!(
+        parser.peek_at(semi_count),
+        Some(Token::Keyword(Keyword::Else))
+    ) {
         for _ in 0..=semi_count {
             let _ = parser.next();
         }

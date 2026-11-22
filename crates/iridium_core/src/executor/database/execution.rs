@@ -4,10 +4,10 @@ use crate::parser::parse_batch_with_quoted_ident;
 
 use super::super::locks::SessionId;
 use super::super::result::QueryResult;
+use super::cursor_rpc;
+use super::execution_support;
 use super::{CursorFetchResult, StatementExecutor};
 use super::{EngineCatalog, EngineStorage};
-use super::execution_support;
-use super::cursor_rpc;
 
 impl<C, S> StatementExecutor for super::StatementExecutorService<C, S>
 where

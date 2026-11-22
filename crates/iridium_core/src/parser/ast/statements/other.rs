@@ -103,6 +103,11 @@ pub enum DdlStatement {
         columns: Vec<ColumnDef>,
     },
     CreateSchema(String),
+    AlterSchemaTransfer {
+        target_schema: String,
+        entity_type: Option<String>,
+        source: Vec<String>,
+    },
 }
 
 #[allow(clippy::large_enum_variant)]

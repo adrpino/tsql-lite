@@ -62,11 +62,8 @@ pub(crate) fn execute_sp_executesql(
                     let val =
                         eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
                     let ty = crate::executor::type_mapping::data_type_spec_to_runtime(dt);
-                    let coerced = coerce_value_to_type_with_dateformat(
-                        val,
-                        &ty,
-                        &ctx.options.dateformat,
-                    )?;
+                    let coerced =
+                        coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
                     let output_caller_var = if arg.is_output {
                         match &arg.expr {
                             crate::ast::Expr::Identifier(caller_var) => Some(caller_var.clone()),

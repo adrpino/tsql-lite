@@ -21,7 +21,9 @@ use super::VirtualTable;
 pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> {
     if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("syspolicy_configuration") {
         Some(Box::new(policy_configuration::SysPolicyConfiguration))
-    } else if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("syspolicy_system_health_state") {
+    } else if schema.eq_ignore_ascii_case("dbo")
+        && name.eq_ignore_ascii_case("syspolicy_system_health_state")
+    {
         Some(Box::new(policy_configuration::SysPolicySystemHealthState))
     } else if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("spt_values") {
         Some(Box::new(spt::SysSptValues))

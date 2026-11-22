@@ -256,11 +256,21 @@ pub(super) fn charset_name(dt: &DataType) -> Value {
 }
 
 pub(super) fn collation_name_val(dt: &DataType) -> Value {
+    column_collation_name_val(dt, None)
+}
+
+pub(super) fn column_collation_name_val(dt: &DataType, collation: Option<&str>) -> Value {
     match dt {
         DataType::Char { .. }
         | DataType::VarChar { .. }
         | DataType::NChar { .. }
-        | DataType::NVarChar { .. } => Value::VarChar("SQL_Latin1_General_CP1_CI_AS".to_string()),
+        | DataType::NVarChar { .. } => {
+            let resolved = match collation {
+                Some(c) if !c.is_empty() && !c.eq_ignore_ascii_case("DATABASE_DEFAULT") => c,
+                _ => "SQL_Latin1_General_CP1_CI_AS",
+            };
+            Value::VarChar(resolved.to_string())
+        }
         _ => Value::Null,
     }
 }

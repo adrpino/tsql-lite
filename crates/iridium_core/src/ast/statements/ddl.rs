@@ -87,6 +87,13 @@ pub struct DropSchemaStmt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlterSchemaTransferStmt {
+    pub target_schema: String,
+    pub entity_type: Option<String>,
+    pub source: ObjectName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TruncateTableStmt {
     pub name: ObjectName,
 }

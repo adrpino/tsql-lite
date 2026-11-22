@@ -386,7 +386,10 @@ pub fn parse_money_string(s: &str) -> Result<Value, DbError> {
     rest = rest.trim_start_matches('$').trim_start();
     let cleaned = rest.replace(',', "");
     if cleaned.is_empty() {
-        return Err(DbError::Execution(format!("cannot convert '{}' to MONEY", s)));
+        return Err(DbError::Execution(format!(
+            "cannot convert '{}' to MONEY",
+            s
+        )));
     }
 
     let parts: Vec<&str> = cleaned.splitn(2, '.').collect();

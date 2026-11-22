@@ -67,7 +67,8 @@ impl IndexRegistry for CatalogImpl {
             is_clustered: false,
         });
         let new_idx = indexes.len() - 1;
-        Arc::make_mut(&mut self.index_map).insert((index_schema_id, normalize_identifier(name)), new_idx);
+        Arc::make_mut(&mut self.index_map)
+            .insert((index_schema_id, normalize_identifier(name)), new_idx);
         Ok(())
     }
 
@@ -129,7 +130,8 @@ impl IndexRegistry for CatalogImpl {
             is_clustered,
         });
         let new_idx = indexes.len() - 1;
-        Arc::make_mut(&mut self.index_map).insert((index_schema_id, normalize_identifier(name)), new_idx);
+        Arc::make_mut(&mut self.index_map)
+            .insert((index_schema_id, normalize_identifier(name)), new_idx);
         Ok(())
     }
 

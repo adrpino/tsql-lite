@@ -1,11 +1,14 @@
 use crate::error::DbError;
 use crate::executor::context::ExecutionContext;
+use crate::executor::metadata::{type_max_length, type_name};
 use crate::executor::result::QueryResult;
 use crate::executor::script::ScriptExecutor;
 use crate::types::{DataType, Value};
-use crate::executor::metadata::{type_name, type_max_length};
 
-pub(crate) fn execute_sp_help(exec: &mut ScriptExecutor<'_>, args: &[String]) -> Result<QueryResult, DbError> {
+pub(crate) fn execute_sp_help(
+    exec: &mut ScriptExecutor<'_>,
+    args: &[String],
+) -> Result<QueryResult, DbError> {
     if args.is_empty() {
         let mut rows = Vec::new();
         for t in exec.catalog.get_tables() {
@@ -357,7 +360,10 @@ pub(crate) fn execute_sp_helpconstraint(
         rows.push(vec![
             Value::NVarChar("Check".into()),
             Value::NVarChar(ck.name.clone()),
-            Value::NVarChar(format!("CHECK {}", crate::executor::tooling::formatting::format_expr(&ck.expr))),
+            Value::NVarChar(format!(
+                "CHECK {}",
+                crate::executor::tooling::formatting::format_expr(&ck.expr)
+            )),
         ]);
     }
 
@@ -430,11 +436,14 @@ pub(crate) fn execute_sp_helpfile(
     exec: &mut ScriptExecutor<'_>,
     ctx: &mut ExecutionContext<'_>,
 ) -> Result<QueryResult, DbError> {
-    let sql = "SELECT name, file_id, physical_name, type_desc AS usage, size FROM sys.database_files";
+    let sql =
+        "SELECT name, file_id, physical_name, type_desc AS usage, size FROM sys.database_files";
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helpfile query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helpfile query".into(),
+        )),
     }
 }
 
@@ -446,7 +455,9 @@ pub(crate) fn execute_sp_helpfilegroup(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helpfilegroup query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helpfilegroup query".into(),
+        )),
     }
 }
 
@@ -495,4 +506,3 @@ pub(crate) fn execute_sp_rename(
 
     Ok(QueryResult::default())
 }
-

@@ -133,6 +133,19 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                 executor_ast::statements::ddl::CreateSchemaStmt { name },
             ),
         )),
+        ast::DdlStatement::AlterSchemaTransfer {
+            target_schema,
+            entity_type,
+            source,
+        } => Ok(executor_ast::Statement::Ddl(
+            executor_ast::statements::DdlStatement::AlterSchemaTransfer(
+                executor_ast::statements::ddl::AlterSchemaTransferStmt {
+                    target_schema,
+                    entity_type,
+                    source: lower_object_name(source),
+                },
+            ),
+        )),
         ast::DdlStatement::CreateSynonym { name, base_object } => Ok(executor_ast::Statement::Ddl(
             executor_ast::statements::DdlStatement::CreateSynonym(
                 executor_ast::statements::ddl::CreateSynonymStmt {

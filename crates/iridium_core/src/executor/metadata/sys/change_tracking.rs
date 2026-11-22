@@ -21,7 +21,11 @@ impl VirtualTable for SysChangeTrackingTables {
                 ("is_auto_cleanup_on", DataType::Bit, true),
                 ("retention_period", DataType::Int, true),
                 ("retention_period_units", DataType::TinyInt, true),
-                ("retention_period_units_desc", DataType::VarChar { max_len: 60 }, true),
+                (
+                    "retention_period_units_desc",
+                    DataType::VarChar { max_len: 60 },
+                    true,
+                ),
             ],
         )
     }

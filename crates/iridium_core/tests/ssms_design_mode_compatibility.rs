@@ -31,7 +31,10 @@ fn exec(engine: &mut Engine, sql: &str) {
 #[test]
 fn test_sys_tables_has_lob_data_space_id() {
     let mut engine = Engine::new();
-    exec(&mut engine, "CREATE TABLE dbo.lob_test_table (id INT PRIMARY KEY, data VARCHAR(MAX))");
+    exec(
+        &mut engine,
+        "CREATE TABLE dbo.lob_test_table (id INT PRIMARY KEY, data VARCHAR(MAX))",
+    );
 
     let result = engine_exec(
         &mut engine,
@@ -47,7 +50,10 @@ fn test_sys_tables_has_lob_data_space_id() {
 #[test]
 fn test_sys_tables_has_filestream_data_space_id() {
     let mut engine = Engine::new();
-    exec(&mut engine, "CREATE TABLE dbo.fs_test_table (id INT PRIMARY KEY)");
+    exec(
+        &mut engine,
+        "CREATE TABLE dbo.fs_test_table (id INT PRIMARY KEY)",
+    );
 
     let result = engine_exec(
         &mut engine,
@@ -63,7 +69,10 @@ fn test_sys_tables_has_filestream_data_space_id() {
 #[test]
 fn test_sys_tables_has_lock_escalation_desc() {
     let mut engine = Engine::new();
-    exec(&mut engine, "CREATE TABLE dbo.lock_test_table (id INT PRIMARY KEY)");
+    exec(
+        &mut engine,
+        "CREATE TABLE dbo.lock_test_table (id INT PRIMARY KEY)",
+    );
 
     let result = engine_exec(
         &mut engine,
@@ -78,7 +87,10 @@ fn test_sys_tables_has_lock_escalation_desc() {
 #[test]
 fn test_sys_tables_has_is_replicated() {
     let mut engine = Engine::new();
-    exec(&mut engine, "CREATE TABLE dbo.repl_test (id INT PRIMARY KEY)");
+    exec(
+        &mut engine,
+        "CREATE TABLE dbo.repl_test (id INT PRIMARY KEY)",
+    );
 
     let result = engine_exec(
         &mut engine,
@@ -93,7 +105,10 @@ fn test_sys_tables_has_is_replicated() {
 #[test]
 fn test_sys_tables_all_ssms_columns_present() {
     let mut engine = Engine::new();
-    exec(&mut engine, "CREATE TABLE dbo.ssms_compat_test (id INT PRIMARY KEY, name VARCHAR(50))");
+    exec(
+        &mut engine,
+        "CREATE TABLE dbo.ssms_compat_test (id INT PRIMARY KEY, name VARCHAR(50))",
+    );
 
     // Query all columns from sys.tables for the test table
     let result = engine_exec(
@@ -160,7 +175,10 @@ fn test_sys_change_tracking_tables_left_join_with_sys_tables() {
 
     assert_eq!(result.rows.len(), 1);
     // Table name should be returned
-    assert_eq!(result.rows[0][0], Value::VarChar("ctt_join_test".to_string()));
+    assert_eq!(
+        result.rows[0][0],
+        Value::VarChar("ctt_join_test".to_string())
+    );
     // ctt_id should be NULL (no change tracking)
     assert!(result.rows[0][1].is_null());
 }
@@ -205,7 +223,10 @@ fn test_sys_fulltext_indexes_left_join_with_sys_tables() {
     .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::VarChar("fti_join_test".to_string()));
+    assert_eq!(
+        result.rows[0][0],
+        Value::VarChar("fti_join_test".to_string())
+    );
     assert!(result.rows[0][1].is_null());
 }
 
@@ -230,7 +251,10 @@ fn test_left_outer_join_column_resolution() {
     .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::VarChar("left_join_test".to_string()));
+    assert_eq!(
+        result.rows[0][0],
+        Value::VarChar("left_join_test".to_string())
+    );
 }
 
 #[test]
@@ -253,7 +277,10 @@ fn test_inner_join_after_left_outer_join() {
     .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::VarChar("multi_join_test".to_string()));
+    assert_eq!(
+        result.rows[0][0],
+        Value::VarChar("multi_join_test".to_string())
+    );
 }
 
 #[test]
@@ -277,7 +304,10 @@ fn test_parenthesized_join_group() {
     .unwrap();
 
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::VarChar("paren_join_test".to_string()));
+    assert_eq!(
+        result.rows[0][0],
+        Value::VarChar("paren_join_test".to_string())
+    );
     assert_eq!(result.rows[0][2], Value::VarChar("PRIMARY".to_string()));
 }
 
@@ -348,9 +378,7 @@ mod sql_server_parity {
         let mut config = Config::new();
         config.host("localhost");
         config.port(11433);
-        config.authentication(tiberius::AuthMethod::sql_server(
-            "sa", "Test@12345",
-        ));
+        config.authentication(tiberius::AuthMethod::sql_server("sa", "Test@12345"));
         config.trust_cert();
         config.encryption(tiberius::EncryptionLevel::NotSupported);
 
@@ -418,10 +446,7 @@ mod sql_server_parity {
             .collect();
 
         if !missing.is_empty() {
-            eprintln!(
-                "\n⚠️  Missing columns in sys.tables: {:?}",
-                missing
-            );
+            eprintln!("\n⚠️  Missing columns in sys.tables: {:?}", missing);
         }
 
         // We don't assert here because it's ok to have some missing columns
@@ -516,8 +541,7 @@ mod sql_server_parity {
         let mut client = get_sqlserver_client().await;
 
         // Iridium
-        let engine_result =
-            engine_exec(&mut engine, "SELECT * FROM sys.fulltext_indexes").unwrap();
+        let engine_result = engine_exec(&mut engine, "SELECT * FROM sys.fulltext_indexes").unwrap();
 
         // SQL Server
         let stream = client
@@ -624,11 +648,7 @@ mod sql_server_parity {
 
         // Iridium
         let engine_result = engine_exec(&mut engine, &query).expect("Iridium query failed");
-        assert_eq!(
-            engine_result.rows.len(),
-            1,
-            "Iridium should return 1 row"
-        );
+        assert_eq!(engine_result.rows.len(), 1, "Iridium should return 1 row");
 
         // SQL Server
         let stream = client

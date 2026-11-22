@@ -26,9 +26,18 @@ CREATE TABLE dbo.MyTable (
 fn edit_data_create_and_fetch_top_n_rows() {
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')");
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (2, 'b')");
-    let r = query(&mut engine, "SELECT TOP (200) * FROM dbo.MyTable ORDER BY id");
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')",
+    );
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (2, 'b')",
+    );
+    let r = query(
+        &mut engine,
+        "SELECT TOP (200) * FROM dbo.MyTable ORDER BY id",
+    );
     assert_eq!(r.rows.len(), 2);
     assert!(matches!(&r.rows[0][0], Value::Int(1)));
     assert!(matches!(&r.rows[1][0], Value::Int(2)));
@@ -38,8 +47,14 @@ fn edit_data_create_and_fetch_top_n_rows() {
 fn edit_data_update_cell_by_primary_key() {
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')");
-    exec(&mut engine, "UPDATE dbo.MyTable SET col1 = 'z' WHERE id = 1");
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')",
+    );
+    exec(
+        &mut engine,
+        "UPDATE dbo.MyTable SET col1 = 'z' WHERE id = 1",
+    );
     let r = query(&mut engine, "SELECT col1 FROM dbo.MyTable WHERE id = 1");
     assert_eq!(r.rows.len(), 1);
     match &r.rows[0][0] {
@@ -52,8 +67,14 @@ fn edit_data_update_cell_by_primary_key() {
 fn edit_data_delete_row_by_primary_key() {
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')");
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (2, 'b')");
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'a')",
+    );
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (2, 'b')",
+    );
     exec(&mut engine, "DELETE FROM dbo.MyTable WHERE id = 1");
     let r = query(&mut engine, "SELECT id FROM dbo.MyTable ORDER BY id");
     assert_eq!(r.rows.len(), 1);
@@ -74,9 +95,15 @@ fn edit_data_insert_row_with_default_applied() {
 fn edit_data_revert_rereads_after_rollback() {
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
-    exec(&mut engine, "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'orig')");
+    exec(
+        &mut engine,
+        "INSERT INTO dbo.MyTable (id, col1) VALUES (1, 'orig')",
+    );
     exec(&mut engine, "BEGIN TRANSACTION");
-    exec(&mut engine, "UPDATE dbo.MyTable SET col1 = 'temp' WHERE id = 1");
+    exec(
+        &mut engine,
+        "UPDATE dbo.MyTable SET col1 = 'temp' WHERE id = 1",
+    );
     exec(&mut engine, "ROLLBACK");
     let r = query(&mut engine, "SELECT col1 FROM dbo.MyTable WHERE id = 1");
     match &r.rows[0][0] {

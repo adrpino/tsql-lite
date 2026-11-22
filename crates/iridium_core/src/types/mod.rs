@@ -479,7 +479,12 @@ pub fn format_money_varchar(raw: i128) -> String {
     let cents = (abs + 50) / 100;
     let whole = cents / 100;
     let frac = cents % 100;
-    format!("{}{}.{:02}", if negative && cents > 0 { "-" } else { "" }, whole, frac)
+    format!(
+        "{}{}.{:02}",
+        if negative && cents > 0 { "-" } else { "" },
+        whole,
+        frac
+    )
 }
 
 pub fn format_binary(data: &[u8]) -> String {

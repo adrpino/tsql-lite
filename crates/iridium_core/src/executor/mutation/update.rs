@@ -208,8 +208,8 @@ impl<'a> MutationExecutor<'a> {
             })
         });
         let has_outgoing_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
-        let has_checks = !table.check_constraints.is_empty()
-            || table.columns.iter().any(|c| c.check.is_some());
+        let has_checks =
+            !table.check_constraints.is_empty() || table.columns.iter().any(|c| c.check.is_some());
         let has_unique = table.columns.iter().any(|c| c.unique)
             || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
         let table_indexes: Vec<u32> = self

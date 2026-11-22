@@ -195,8 +195,7 @@ fn like_token_matches_char(tok: &LikeToken, ch: char) -> bool {
             singles,
             ranges,
         } => {
-            let hit = singles.contains(&ch)
-                || ranges.iter().any(|&(lo, hi)| ch >= lo && ch <= hi);
+            let hit = singles.contains(&ch) || ranges.iter().any(|&(lo, hi)| ch >= lo && ch <= hi);
             if *negated {
                 !hit
             } else {
@@ -219,9 +218,13 @@ fn like_match(s: &str, pattern: &str, escape: Option<&str>, case_sensitive: bool
         pattern.to_ascii_uppercase().chars().collect()
     };
     let esc_char = escape.and_then(|e| {
-        e.chars()
-            .next()
-            .map(|c| if case_sensitive { c } else { c.to_ascii_uppercase() })
+        e.chars().next().map(|c| {
+            if case_sensitive {
+                c
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
     });
 
     let mut tokens: Vec<LikeToken> = Vec::with_capacity(p_raw.len());

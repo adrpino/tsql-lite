@@ -71,7 +71,11 @@ impl VirtualTable for SysPolicySystemHealthState {
         virtual_table_def(
             "syspolicy_system_health_state",
             vec![
-                ("target_query_expression_with_id", DataType::NVarChar { max_len: 4000 }, false),
+                (
+                    "target_query_expression_with_id",
+                    DataType::NVarChar { max_len: 4000 },
+                    false,
+                ),
                 ("policy_id", DataType::Int, false),
                 ("policy_health_state", DataType::TinyInt, false),
                 ("last_run_date", DataType::DateTime, false),

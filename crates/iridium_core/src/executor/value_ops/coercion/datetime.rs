@@ -65,7 +65,10 @@ pub(crate) fn coerce_time_value(v: chrono::NaiveTime, ty: &DataType) -> Result<V
     }
 }
 
-pub(crate) fn coerce_datetime_value(v: chrono::NaiveDateTime, ty: &DataType) -> Result<Value, DbError> {
+pub(crate) fn coerce_datetime_value(
+    v: chrono::NaiveDateTime,
+    ty: &DataType,
+) -> Result<Value, DbError> {
     match ty {
         DataType::Char { .. } | DataType::VarChar { .. } => {
             Ok(Value::VarChar(v.format("%Y-%m-%d %H:%M:%S%.f").to_string()))

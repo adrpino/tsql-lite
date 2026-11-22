@@ -47,6 +47,7 @@ pub enum DdlStatement {
     CreateIndex(CreateIndexStmt),
     CreateType(CreateTypeStmt),
     CreateSchema(CreateSchemaStmt),
+    AlterSchemaTransfer(AlterSchemaTransferStmt),
     DropTable(DropTableStmt),
     DropView(DropViewStmt),
     DropProcedure(DropProcedureStmt),

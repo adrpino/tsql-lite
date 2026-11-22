@@ -19,6 +19,7 @@ pub fn statement_kind(stmt: &Statement) -> &'static str {
             crate::ast::DdlStatement::AlterTable(_) => "ALTER_TABLE",
             crate::ast::DdlStatement::DropTable(_) => "DROP_TABLE",
             crate::ast::DdlStatement::CreateSchema(_) => "CREATE_SCHEMA",
+            crate::ast::DdlStatement::AlterSchemaTransfer(_) => "ALTER_SCHEMA",
             crate::ast::DdlStatement::DropSchema(_) => "DROP_SCHEMA",
             crate::ast::DdlStatement::CreateIndex(_) => "CREATE_INDEX",
             crate::ast::DdlStatement::DropIndex(_) => "DROP_INDEX",

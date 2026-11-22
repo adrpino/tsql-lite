@@ -132,6 +132,13 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
         Statement::Ddl(DdlStatement::DropSchema(s)) => {
             out.insert(format!("__SCHEMA__:{}", normalize_identifier(&s.name)));
         }
+        Statement::Ddl(DdlStatement::AlterSchemaTransfer(s)) => {
+            out.insert(format!(
+                "__SCHEMA__:{}",
+                normalize_identifier(&s.target_schema)
+            ));
+            out.insert(normalize_table_name(&s.source));
+        }
         Statement::Ddl(DdlStatement::CreateType(s)) => {
             out.insert(format!(
                 "__TYPE__:{}.{}",

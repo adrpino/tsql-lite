@@ -41,9 +41,7 @@ impl<'a> ScriptExecutor<'a> {
             crate::types::Value::SmallInt(v) => v as i32,
             crate::types::Value::Int(v) => v,
             crate::types::Value::BigInt(v) => v as i32,
-            crate::types::Value::Decimal(raw, scale) => {
-                (raw / 10i128.pow(scale as u32)) as i32
-            }
+            crate::types::Value::Decimal(raw, scale) => (raw / 10i128.pow(scale as u32)) as i32,
             _ => 16,
         };
 

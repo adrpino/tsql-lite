@@ -1,10 +1,10 @@
+use super::datetime::parse_date_string;
+use super::numeric::{parse_decimal_string, parse_money_string};
 use crate::error::DbError;
-use crate::types::{DataType, Value, parse_vector_literal};
 use crate::executor::value_helpers::{pad_binary_right, pad_right};
 use crate::executor::value_ops::formatting::parse_datetime_string;
-use super::numeric::{parse_money_string, parse_decimal_string};
+use crate::types::{parse_vector_literal, DataType, Value};
 use uuid::Uuid;
-use super::datetime::parse_date_string;
 
 pub(crate) fn coerce_string(v: &str, ty: &DataType, dateformat: &str) -> Result<Value, DbError> {
     match ty {

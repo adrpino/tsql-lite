@@ -2,15 +2,15 @@ use crate::error::DbError;
 use crate::types::{DataType, Value};
 
 use super::super::value_helpers::pad_right;
+pub mod binary;
+pub mod datetime;
 pub mod numeric;
 pub mod string;
-pub mod datetime;
-pub mod binary;
 
+use binary::*;
+use datetime::*;
 use numeric::*;
 use string::*;
-use datetime::*;
-use binary::*;
 
 pub fn coerce_value_to_type(value: Value, ty: &DataType) -> Result<Value, DbError> {
     coerce_value_to_type_with_dateformat(value, ty, "mdy")
@@ -108,11 +108,6 @@ fn coerce_bit(v: bool, ty: &DataType) -> Result<Value, DbError> {
         DataType::Xml => Ok(Value::VarChar(int_val.to_string())),
     }
 }
-
-
-
-
-
 
 fn coerce_vector(value: Value, ty: &DataType) -> Result<Value, DbError> {
     match (value, ty) {

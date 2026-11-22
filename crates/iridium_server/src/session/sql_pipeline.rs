@@ -23,8 +23,8 @@ pub(crate) async fn handle_sql_batch<W: AsyncWriteExt + Unpin>(
         Ok(s) => s,
         Err(e) => {
             let err = iridium_core::error::DbError::Parse(e.to_string());
-                    let err_resp = build_error_response(&err);
-                    let _ = packet::write_packet(writer, TABULAR_RESULT, &err_resp.data).await;
+            let err_resp = build_error_response(&err);
+            let _ = packet::write_packet(writer, TABULAR_RESULT, &err_resp.data).await;
             return Ok(true);
         }
     };

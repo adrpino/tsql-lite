@@ -1,4 +1,4 @@
-use super::types::{RpcProc, CursorOp, RpcProcSelector};
+use super::types::{CursorOp, RpcProc, RpcProcSelector};
 
 impl RpcProc {
     pub(crate) fn from_id(id: u16) -> Option<Self> {

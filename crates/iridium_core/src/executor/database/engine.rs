@@ -166,6 +166,22 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
             .execute_session_batch_sql(session_id, sql)
     }
 
+    pub fn execute_on_session(
+        &self,
+        session_id: SessionId,
+        stmts: Vec<Statement>,
+    ) -> Result<Option<QueryResult>, DbError> {
+        self.db.executor().execute_session_batch(session_id, stmts)
+    }
+
+    pub fn execute_on_session_all_results(
+        &self,
+        session_id: SessionId,
+        stmts: Vec<Statement>,
+    ) -> Result<Vec<QueryResult>, DbError> {
+        self.db.execute_session_batch_all_results(session_id, stmts)
+    }
+
     pub fn set_journal(&self, journal: Box<dyn Journal>) {
         let _ = self
             .db

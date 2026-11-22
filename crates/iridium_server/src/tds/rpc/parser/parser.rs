@@ -1,9 +1,9 @@
-use crate::tds::packet::PacketReader;
-use std::io;
 use super::super::decode;
 use super::super::types::RpcParam;
 use super::types::*;
 use super::utils::*;
+use crate::tds::packet::PacketReader;
+use std::io;
 
 pub struct RpcFrameParser<'a> {
     reader: PacketReader<'a>,
@@ -75,9 +75,7 @@ impl<'a> RpcFrameParser<'a> {
             RpcProc::SpPkeys => self.parse_catalog_rpc(CatalogProc::PrimaryKeys),
             RpcProc::SpDescribeCursor => self.parse_catalog_rpc(CatalogProc::DescribeCursor),
             RpcProc::SpDescribeFirstResultSet => self.parse_sp_describe_first_result_set(),
-            RpcProc::SpDescribeUndeclaredParameters => {
-                self.parse_sp_describe_first_result_set()
-            }
+            RpcProc::SpDescribeUndeclaredParameters => self.parse_sp_describe_first_result_set(),
             _ => Ok(None),
         }
     }

@@ -13,9 +13,7 @@ mod discovery {
         let mut config = Config::new();
         config.host("localhost");
         config.port(11433);
-        config.authentication(tiberius::AuthMethod::sql_server(
-            "sa", "Test@12345",
-        ));
+        config.authentication(tiberius::AuthMethod::sql_server("sa", "Test@12345"));
         config.trust_cert();
         config.encryption(tiberius::EncryptionLevel::NotSupported);
 
@@ -185,10 +183,8 @@ mod discovery {
 
             let ss_names: std::collections::HashSet<_> =
                 ss_cols.iter().map(|(n, _)| n.to_lowercase()).collect();
-            let iridium_names: std::collections::HashSet<_> = iridium_cols
-                .iter()
-                .map(|(n, _)| n.to_lowercase())
-                .collect();
+            let iridium_names: std::collections::HashSet<_> =
+                iridium_cols.iter().map(|(n, _)| n.to_lowercase()).collect();
 
             let missing: Vec<_> = ss_names.difference(&iridium_names).collect();
             let extra: Vec<_> = iridium_names.difference(&ss_names).collect();
@@ -280,33 +276,11 @@ mod discovery {
             ),
             (
                 "change_tracking_tables",
-                vec![
-                    "object_id",
-                    "is_track_columns_updated_on",
-                ],
+                vec!["object_id", "is_track_columns_updated_on"],
             ),
-            (
-                "data_spaces",
-                vec![
-                    "data_space_id",
-                    "name",
-                    "type",
-                ],
-            ),
-            (
-                "fulltext_indexes",
-                vec![
-                    "object_id",
-                    "fulltext_catalog_id",
-                ],
-            ),
-            (
-                "fulltext_catalogs",
-                vec![
-                    "fulltext_catalog_id",
-                    "name",
-                ],
-            ),
+            ("data_spaces", vec!["data_space_id", "name", "type"]),
+            ("fulltext_indexes", vec!["object_id", "fulltext_catalog_id"]),
+            ("fulltext_catalogs", vec!["fulltext_catalog_id", "name"]),
             (
                 "indexes",
                 vec![
@@ -345,6 +319,9 @@ mod discovery {
 
         println!("\n{:=<80}\n", "");
 
-        assert!(all_pass, "Some SSMS Design Mode columns are missing in SQL Server");
+        assert!(
+            all_pass,
+            "Some SSMS Design Mode columns are missing in SQL Server"
+        );
     }
 }

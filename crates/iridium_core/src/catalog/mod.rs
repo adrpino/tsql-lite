@@ -255,6 +255,13 @@ pub trait SchemaRegistry {
     fn get_schema_id(&self, name: &str) -> Option<u32>;
     fn create_schema(&mut self, name: &str) -> Result<(), DbError>;
     fn drop_schema(&mut self, name: &str) -> Result<(), DbError>;
+    fn transfer_object(
+        &mut self,
+        target_schema: &str,
+        entity_type: Option<&str>,
+        source_schema: &str,
+        source_name: &str,
+    ) -> Result<(), DbError>;
 }
 
 pub trait TableRegistry {

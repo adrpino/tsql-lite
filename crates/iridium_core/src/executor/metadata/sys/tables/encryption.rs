@@ -1,5 +1,5 @@
-use super::super::super::VirtualTable;
 use super::super::super::virtual_table_def;
+use super::super::super::VirtualTable;
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
 use crate::storage::StoredRow;
@@ -37,7 +37,11 @@ impl VirtualTable for SysColumnMasterKeys {
                 ("column_master_key_id", DataType::Int, false),
                 ("create_date", DataType::DateTime, false),
                 ("modify_date", DataType::DateTime, false),
-                ("key_store_provider_name", DataType::VarChar { max_len: 128 }, false),
+                (
+                    "key_store_provider_name",
+                    DataType::VarChar { max_len: 128 },
+                    false,
+                ),
                 ("key_path", DataType::VarChar { max_len: 512 }, false),
                 ("allow_enclave_computations", DataType::Bit, false),
                 ("signature", DataType::VarBinary { max_len: 8000 }, true),
@@ -58,8 +62,16 @@ impl VirtualTable for SysColumnEncryptionKeyValues {
             vec![
                 ("column_encryption_key_id", DataType::Int, false),
                 ("column_master_key_id", DataType::Int, false),
-                ("encrypted_value", DataType::VarBinary { max_len: 8000 }, false),
-                ("encryption_algorithm_name", DataType::VarChar { max_len: 128 }, false),
+                (
+                    "encrypted_value",
+                    DataType::VarBinary { max_len: 8000 },
+                    false,
+                ),
+                (
+                    "encryption_algorithm_name",
+                    DataType::VarChar { max_len: 128 },
+                    false,
+                ),
             ],
         )
     }

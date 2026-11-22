@@ -65,6 +65,10 @@ impl<'a> ScriptExecutor<'a> {
                 ignore_missing_if_exists(self.schema(ctx).drop_schema(stmt), if_exists)?;
                 Ok(None)
             }
+            DdlStatement::AlterSchemaTransfer(stmt) => {
+                self.schema(ctx).alter_schema_transfer(stmt)?;
+                Ok(None)
+            }
             DdlStatement::DropProcedure(stmt) => {
                 let schema = stmt.name.schema_or_dbo().to_string();
                 ignore_missing_if_exists(

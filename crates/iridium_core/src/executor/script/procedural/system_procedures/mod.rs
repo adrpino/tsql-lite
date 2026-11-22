@@ -276,28 +276,26 @@ fn execute_extended_property_proc(
     if let Some((class, class_desc, major_id, minor_id)) = resolved {
         match op {
             ExtendedPropOp::Add => {
-                exec.catalog.add_extended_property(
-                    crate::catalog::ExtendedPropertyDef {
+                exec.catalog
+                    .add_extended_property(crate::catalog::ExtendedPropertyDef {
                         class,
                         class_desc: class_desc.to_string(),
                         major_id,
                         minor_id,
                         name: prop_name,
                         value: prop_value,
-                    },
-                )?;
+                    })?;
             }
             ExtendedPropOp::Update => {
-                exec.catalog.update_extended_property(
-                    crate::catalog::ExtendedPropertyDef {
+                exec.catalog
+                    .update_extended_property(crate::catalog::ExtendedPropertyDef {
                         class,
                         class_desc: class_desc.to_string(),
                         major_id,
                         minor_id,
                         name: prop_name,
                         value: prop_value,
-                    },
-                )?;
+                    })?;
             }
             ExtendedPropOp::Drop => {
                 exec.catalog

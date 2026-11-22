@@ -205,6 +205,14 @@ pub(crate) fn eval_object_id(
         return Ok(Value::Int(2147483001));
     }
 
+    if name.starts_with('#') {
+        if let Some(physical) = ctx.resolve_table_name(name) {
+            if let Some(id) = catalog.object_id("dbo", &physical) {
+                return Ok(Value::Int(id));
+            }
+        }
+    }
+
     if let Some(id) = catalog.object_id(schema, name) {
         return Ok(Value::Int(id));
     }
@@ -219,7 +227,9 @@ pub(crate) fn eval_object_id(
     }
 
     // Check virtual tables (system views)
-    if let Some((_table, _)) = crate::executor::metadata::resolve_virtual_table(schema, name, catalog, ctx) {
+    if let Some((_table, _)) =
+        crate::executor::metadata::resolve_virtual_table(schema, name, catalog, ctx)
+    {
         // Assign a stable but fake ID for system objects if needed, or use a hashing scheme.
         // For now, let's use a simple deterministic hash of the name for virtual tables.
         let mut hasher = std::collections::hash_map::DefaultHasher::new();

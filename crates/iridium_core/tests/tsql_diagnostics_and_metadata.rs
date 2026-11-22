@@ -63,7 +63,10 @@ fn projection_column_nullabilities_reflect_columns_and_expressions() {
         &e,
         "SELECT Id, Label, 123 AS Lit, NULL AS N, ISNULL(Label, N'fallback') AS NonNull FROM dbo.NullCheck",
     );
-    assert_eq!(r.column_nullabilities, vec![false, true, false, true, false]);
+    assert_eq!(
+        r.column_nullabilities,
+        vec![false, true, false, true, false]
+    );
 
     let r_star = query(&e, "SELECT * FROM dbo.NullCheck");
     assert_eq!(r_star.column_nullabilities, vec![false, true]);
@@ -73,10 +76,17 @@ fn projection_column_nullabilities_reflect_columns_and_expressions() {
 fn take_print_output_drains_printed_and_informational_messages() {
     let e = Engine::new();
     e.clear_print_output();
-    exec(&e, "PRINT 'alpha'; RAISERROR('info %d', 0, 1, 7); PRINT 'beta';");
+    exec(
+        &e,
+        "PRINT 'alpha'; RAISERROR('info %d', 0, 1, 7); PRINT 'beta';",
+    );
     assert_eq!(
         e.take_print_output(),
-        vec!["alpha".to_string(), "info 7".to_string(), "beta".to_string()]
+        vec![
+            "alpha".to_string(),
+            "info 7".to_string(),
+            "beta".to_string()
+        ]
     );
     assert!(e.print_output().is_empty());
 }

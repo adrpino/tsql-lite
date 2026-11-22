@@ -29,32 +29,35 @@ impl<'a> ScriptExecutor<'a> {
             .resolve_table_name(target_object.name.as_str())
             .unwrap_or_else(|| target_object.name.clone());
         let target_schema = target_object.schema_or_dbo();
-        let (target_table, cte_row_filter) =
-            if let Some(t) = self.catalog.find_table(target_schema, &target_name).cloned() {
-                (t, None)
-            } else if target_schema.eq_ignore_ascii_case("dbo") {
-                if let Some(cte) = ctx.row.ctes.get(&target_name).cloned() {
-                    let base = cte.base_targets.first().cloned().ok_or_else(|| {
-                        DbError::Execution(format!(
-                            "CTE '{}' is not updatable for MERGE: no underlying base table found",
-                            target_name
-                        ))
-                    })?;
-                    let idxs: std::collections::HashSet<usize> =
-                        base.row_indices.into_iter().flatten().collect();
-                    (base.table_def, Some(idxs))
-                } else {
-                    return Err(DbError::Semantic(format!(
-                        "table '{}.{}' not found",
-                        target_schema, target_name
-                    )));
-                }
+        let (target_table, cte_row_filter) = if let Some(t) = self
+            .catalog
+            .find_table(target_schema, &target_name)
+            .cloned()
+        {
+            (t, None)
+        } else if target_schema.eq_ignore_ascii_case("dbo") {
+            if let Some(cte) = ctx.row.ctes.get(&target_name).cloned() {
+                let base = cte.base_targets.first().cloned().ok_or_else(|| {
+                    DbError::Execution(format!(
+                        "CTE '{}' is not updatable for MERGE: no underlying base table found",
+                        target_name
+                    ))
+                })?;
+                let idxs: std::collections::HashSet<usize> =
+                    base.row_indices.into_iter().flatten().collect();
+                (base.table_def, Some(idxs))
             } else {
                 return Err(DbError::Semantic(format!(
                     "table '{}.{}' not found",
                     target_schema, target_name
                 )));
-            };
+            }
+        } else {
+            return Err(DbError::Semantic(format!(
+                "table '{}.{}' not found",
+                target_schema, target_name
+            )));
+        };
 
         // Execute source query
         let qe = QueryExecutor {

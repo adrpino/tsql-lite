@@ -706,6 +706,13 @@ pub(crate) fn format_statement(stmt: &Statement) -> String {
         Statement::Ddl(crate::ast::DdlStatement::DropSchema(stmt)) => {
             format!("DROP SCHEMA {}", stmt.name)
         }
+        Statement::Ddl(crate::ast::DdlStatement::AlterSchemaTransfer(stmt)) => {
+            format!(
+                "ALTER SCHEMA {} TRANSFER {}",
+                stmt.target_schema,
+                format_object_name(&stmt.source)
+            )
+        }
         Statement::Ddl(crate::ast::DdlStatement::CreateIndex(stmt)) => {
             format!(
                 "CREATE INDEX {} ON {}",

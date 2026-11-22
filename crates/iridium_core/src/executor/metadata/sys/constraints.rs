@@ -164,7 +164,11 @@ impl VirtualTable for SysKeyConstraints {
             let pk_index_id = indexes
                 .iter()
                 .find(|idx| idx.table_id == table.id && idx.is_clustered)
-                .or_else(|| indexes.iter().find(|idx| idx.table_id == table.id && idx.is_unique))
+                .or_else(|| {
+                    indexes
+                        .iter()
+                        .find(|idx| idx.table_id == table.id && idx.is_unique)
+                })
                 .map(|idx| idx.id as i32)
                 .unwrap_or(1);
             for col in &table.columns {

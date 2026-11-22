@@ -38,7 +38,9 @@ fn convert_date_to_string(d: NaiveDate, ty: &DataType, style: i32) -> Result<Val
     let formatted = format_date(&d, style);
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
+        DataType::VarChar { max_len } => {
+            Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
         DataType::NVarChar { max_len } => {
             Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))
@@ -53,7 +55,9 @@ fn convert_time_to_string(t: NaiveTime, ty: &DataType, style: i32) -> Result<Val
     let formatted = format_time(&t, style);
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
+        DataType::VarChar { max_len } => {
+            Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
         DataType::NVarChar { max_len } => {
             Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))
@@ -73,7 +77,9 @@ fn convert_datetime_to_string(
 
     match ty {
         DataType::Char { len } => Ok(Value::Char(pad_right(&formatted, *len as usize))),
-        DataType::VarChar { max_len } => Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len))),
+        DataType::VarChar { max_len } => {
+            Ok(Value::VarChar(truncate_to_max_len(formatted, *max_len)))
+        }
         DataType::NChar { len } => Ok(Value::NChar(pad_right(&formatted, *len as usize))),
         DataType::NVarChar { max_len } => {
             Ok(Value::NVarChar(truncate_to_max_len(formatted, *max_len)))

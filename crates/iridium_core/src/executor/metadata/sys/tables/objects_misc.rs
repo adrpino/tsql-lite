@@ -152,7 +152,11 @@ impl VirtualTable for SysMaskedColumns {
                 ("object_id", DataType::Int, false),
                 ("column_id", DataType::Int, false),
                 ("is_masked", DataType::Bit, false),
-                ("masking_function", DataType::NVarChar { max_len: 4000 }, true),
+                (
+                    "masking_function",
+                    DataType::NVarChar { max_len: 4000 },
+                    true,
+                ),
             ],
         )
     }
@@ -590,7 +594,11 @@ impl VirtualTable for SysStats {
                 ("user_created", DataType::Bit, false),
                 ("no_recompute", DataType::Bit, false),
                 ("has_filter", DataType::Bit, false),
-                ("filter_definition", DataType::NVarChar { max_len: 4000 }, true),
+                (
+                    "filter_definition",
+                    DataType::NVarChar { max_len: 4000 },
+                    true,
+                ),
                 ("is_temporary", DataType::Bit, false),
                 ("is_incremental", DataType::Bit, false),
                 ("is_ms_shipped", DataType::Bit, false),

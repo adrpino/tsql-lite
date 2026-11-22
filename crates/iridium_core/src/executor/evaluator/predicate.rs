@@ -4,9 +4,7 @@ use crate::error::DbError;
 use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
 use crate::executor::model::ContextTable;
-use crate::executor::predicates::{
-    eval_between, eval_case, eval_in_list, eval_like,
-};
+use crate::executor::predicates::{eval_between, eval_case, eval_in_list, eval_like};
 use crate::storage::Storage;
 use crate::types::Value;
 

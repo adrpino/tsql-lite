@@ -1,13 +1,13 @@
 #![allow(dead_code, unused_imports)]
 
 use crate::ast::{
-    AlterTableStmt, CreateIndexStmt, CreateSchemaStmt, CreateTableStmt,
+    AlterSchemaTransferStmt, AlterTableStmt, CreateIndexStmt, CreateSchemaStmt, CreateTableStmt,
     CreateTypeStmt, DropIndexStmt, DropSchemaStmt, DropTableStmt, DropTypeStmt,
 };
 use crate::error::DbError;
 
-use super::tooling::SessionOptions;
 use super::schema_parts;
+use super::tooling::SessionOptions;
 
 pub(crate) struct SchemaExecutor<'a> {
     pub(crate) catalog: &'a mut dyn crate::catalog::Catalog,
@@ -38,6 +38,13 @@ impl<'a> SchemaExecutor<'a> {
 
     pub(crate) fn drop_schema(&mut self, stmt: DropSchemaStmt) -> Result<(), DbError> {
         schema_parts::drop_schema(self, stmt)
+    }
+
+    pub(crate) fn alter_schema_transfer(
+        &mut self,
+        stmt: AlterSchemaTransferStmt,
+    ) -> Result<(), DbError> {
+        schema_parts::alter_schema_transfer(self, stmt)
     }
 
     pub(crate) fn create_view(&mut self, stmt: crate::ast::CreateViewStmt) -> Result<(), DbError> {

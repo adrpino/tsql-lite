@@ -362,7 +362,8 @@ pub(crate) fn register_write_intent<C, S>(
             (WriteIntentKind::Ddl, Some(s.table.name.clone()))
         }
         Statement::Ddl(DdlStatement::CreateSchema(_))
-        | Statement::Ddl(DdlStatement::DropSchema(_)) => (WriteIntentKind::Ddl, None),
+        | Statement::Ddl(DdlStatement::DropSchema(_))
+        | Statement::Ddl(DdlStatement::AlterSchemaTransfer(_)) => (WriteIntentKind::Ddl, None),
         _ => return,
     };
 

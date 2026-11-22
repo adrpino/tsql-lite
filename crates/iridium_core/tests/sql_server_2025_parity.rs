@@ -24,7 +24,11 @@ fn test_new_keywords_lexing() {
     // Since our parser is becoming more robust, let's just check that it's an error.
     // In this specific engine version, reserved keywords fail during binding as ColumnNotFound
     // because they are not being treated as identifiers.
-    assert!(err_msg.contains("ColumnNotFound"), "Expected ColumnNotFound, got: {}", err_msg);
+    assert!(
+        err_msg.contains("ColumnNotFound"),
+        "Expected ColumnNotFound, got: {}",
+        err_msg
+    );
 }
 
 #[test]
@@ -55,23 +59,33 @@ fn test_system_procedures_2025() {
 #[test]
 fn test_identity_insert_and_col() {
     let engine = Engine::new();
-    engine.exec("CREATE TABLE IdTest (Id INT IDENTITY(1,1), Val VARCHAR(10))").unwrap();
+    engine
+        .exec("CREATE TABLE IdTest (Id INT IDENTITY(1,1), Val VARCHAR(10))")
+        .unwrap();
 
     // Normal insert
-    engine.exec("INSERT INTO IdTest (Val) VALUES ('a')").unwrap();
+    engine
+        .exec("INSERT INTO IdTest (Val) VALUES ('a')")
+        .unwrap();
     let res = engine.query("SELECT IDENTITYCOL, Val FROM IdTest").unwrap();
     assert_eq!(res.rows[0][0].to_string_value(), "1");
     assert_eq!(res.rows[0][1].to_string_value(), "a");
 
     // SET IDENTITY_INSERT ON
     engine.exec("SET IDENTITY_INSERT IdTest ON").unwrap();
-    engine.exec("INSERT INTO IdTest (Id, Val) VALUES (10, 'b')").unwrap();
+    engine
+        .exec("INSERT INTO IdTest (Id, Val) VALUES (10, 'b')")
+        .unwrap();
 
-    let res = engine.query("SELECT Id, Val FROM IdTest WHERE Id = 10").unwrap();
+    let res = engine
+        .query("SELECT Id, Val FROM IdTest WHERE Id = 10")
+        .unwrap();
     assert_eq!(res.rows[0][0].to_string_value(), "10");
 
     // Verify qualified IDENTITYCOL
-    let res = engine.query("SELECT T.IDENTITYCOL FROM IdTest T WHERE T.Id = 10").unwrap();
+    let res = engine
+        .query("SELECT T.IDENTITYCOL FROM IdTest T WHERE T.Id = 10")
+        .unwrap();
     assert_eq!(res.rows[0][0].to_string_value(), "10");
 
     // SET IDENTITY_INSERT OFF
@@ -83,7 +97,9 @@ fn test_identity_insert_and_col() {
 #[test]
 fn test_logic_functions_parity() {
     let engine = Engine::new();
-    let res = engine.query("SELECT COALESCE(NULL, 1, 2), NULLIF(1, 1), NULLIF(1, 2)").unwrap();
+    let res = engine
+        .query("SELECT COALESCE(NULL, 1, 2), NULLIF(1, 1), NULLIF(1, 2)")
+        .unwrap();
     assert_eq!(res.rows[0][0].to_string_value(), "1");
     assert!(res.rows[0][1].is_null());
     assert_eq!(res.rows[0][2].to_string_value(), "1");
@@ -92,10 +108,16 @@ fn test_logic_functions_parity() {
 #[test]
 fn test_like_escape_parity() {
     let engine = Engine::new();
-    engine.exec("CREATE TABLE LikeTest (Pat VARCHAR(10))").unwrap();
-    engine.exec("INSERT INTO LikeTest VALUES ('10%'), ('100')").unwrap();
+    engine
+        .exec("CREATE TABLE LikeTest (Pat VARCHAR(10))")
+        .unwrap();
+    engine
+        .exec("INSERT INTO LikeTest VALUES ('10%'), ('100')")
+        .unwrap();
 
-    let res = engine.query("SELECT Pat FROM LikeTest WHERE Pat LIKE '10!%' ESCAPE '!'").unwrap();
+    let res = engine
+        .query("SELECT Pat FROM LikeTest WHERE Pat LIKE '10!%' ESCAPE '!'")
+        .unwrap();
     assert_eq!(res.rows.len(), 1);
     assert_eq!(res.rows[0][0].to_string_value(), "10%");
 }
@@ -121,17 +143,26 @@ fn test_new_system_procedures_2025_extended() {
     // sp_helpsrvrole
     let res = engine.query("EXEC sp_helpsrvrole").unwrap();
     assert_eq!(res.columns[0], "ServerRole");
-    assert!(res.rows.iter().any(|r| r[0].to_string_value() == "sysadmin"));
+    assert!(res
+        .rows
+        .iter()
+        .any(|r| r[0].to_string_value() == "sysadmin"));
 
     // sp_helpsrvrolemember
     let res = engine.query("EXEC sp_helpsrvrolemember").unwrap();
     assert_eq!(res.columns[0], "ServerRole");
-    assert!(res.rows.iter().any(|r| r[0].to_string_value() == "sysadmin" && r[1].to_string_value() == "sa"));
+    assert!(res
+        .rows
+        .iter()
+        .any(|r| r[0].to_string_value() == "sysadmin" && r[1].to_string_value() == "sa"));
 
     // sp_helpfile
     let res = engine.query("EXEC sp_helpfile").unwrap();
     assert_eq!(res.columns[0], "name");
-    assert!(res.rows.iter().any(|r| r[0].to_string_value() == "iridium_sql"));
+    assert!(res
+        .rows
+        .iter()
+        .any(|r| r[0].to_string_value() == "iridium_sql"));
 
     // sp_helpfilegroup
     let res = engine.query("EXEC sp_helpfilegroup").unwrap();

@@ -22,7 +22,11 @@ impl VirtualTable for SysFullTextIndexes {
                 ("has_columnstore", DataType::Bit, false),
                 ("stoplist_id", DataType::Int, true),
                 ("change_tracking_state", DataType::TinyInt, true),
-                ("change_tracking_state_desc", DataType::VarChar { max_len: 60 }, true),
+                (
+                    "change_tracking_state_desc",
+                    DataType::VarChar { max_len: 60 },
+                    true,
+                ),
                 ("has_active_crawl", DataType::Bit, true),
                 ("cached_column_count", DataType::Int, true),
                 ("incremental_timestamp", DataType::BigInt, true),

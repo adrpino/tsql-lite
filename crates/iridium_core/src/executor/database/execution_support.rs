@@ -9,8 +9,8 @@ use super::super::result::QueryResult;
 use super::super::session::{SessionRuntime, SharedState};
 use super::super::table_util::is_transaction_statement;
 use super::super::transaction_exec;
-use super::{EngineCatalog, EngineStorage};
 use super::dispatch::execute_non_transaction_statement;
+use super::{EngineCatalog, EngineStorage};
 
 pub(crate) fn with_session<C, S, R, F>(
     state: &SharedState<C, S>,

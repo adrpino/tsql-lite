@@ -36,7 +36,8 @@ pub(crate) fn eval_conversion_expr(
         Expr::TryCast { expr, target } => {
             let value = eval_expr(expr, row, ctx, catalog, storage, clock)?;
             let runtime_ty = data_type_spec_to_runtime(target);
-            match coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat) {
+            match coerce_value_to_type_with_dateformat(value, &runtime_ty, &ctx.options.dateformat)
+            {
                 Ok(v) => Ok(truncate_cast_string(v, &runtime_ty)),
                 Err(_) => Ok(Value::Null),
             }

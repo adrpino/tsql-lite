@@ -202,7 +202,11 @@ pub(super) fn resolve_object<'a>(
                 "sp_msgetversion",
             ]
         } else if schema == "dbo" {
-            vec!["syspolicy_configuration", "syspolicy_system_health_state", "spt_values"]
+            vec![
+                "syspolicy_configuration",
+                "syspolicy_system_health_state",
+                "spt_values",
+            ]
         } else {
             vec!["TABLES", "COLUMNS", "VIEWS", "ROUTINES"]
         };

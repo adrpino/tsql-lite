@@ -53,10 +53,7 @@ pub(crate) fn eval_coalesce(
     Ok(chosen)
 }
 
-fn highest_numeric_arg_type(
-    args: &[Expr],
-    row: &[ContextTable],
-) -> Option<crate::types::DataType> {
+fn highest_numeric_arg_type(args: &[Expr], row: &[ContextTable]) -> Option<crate::types::DataType> {
     let mut best: Option<crate::types::DataType> = None;
     for arg in args {
         let col_ty = match arg {

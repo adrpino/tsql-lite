@@ -84,7 +84,10 @@ fn for_json_path_and_auto() {
     assert_eq!(parsed4, serde_json::json!({"id": 2, "label": "Beta"}));
 
     // 5. Empty result set: 0 rows without ROOT, empty array with ROOT
-    let r5_empty = query(&mut e, "SELECT id FROM dbo.items WHERE id = 999 FOR JSON PATH");
+    let r5_empty = query(
+        &mut e,
+        "SELECT id FROM dbo.items WHERE id = 999 FOR JSON PATH",
+    );
     assert!(r5_empty.rows.is_empty());
 
     let r5_root = query(
@@ -215,7 +218,9 @@ fn goto_labels_forward_backward_and_nested() {
 
     // 3. Undefined label produces an error
     let stmts = iridium_core::parse_batch("GOTO MissingLabel;").expect("should parse");
-    let err = e.execute_batch(stmts).expect_err("undefined label must fail");
+    let err = e
+        .execute_batch(stmts)
+        .expect_err("undefined label must fail");
     assert!(
         err.to_string().to_lowercase().contains("missinglabel")
             || err.to_string().to_lowercase().contains("label"),
@@ -339,14 +344,23 @@ fn at_time_zone_dst_switchoffset_and_todatetimeoffset() {
         "SELECT TODATETIMEOFFSET(CAST('2025-03-01 10:30:00' AS DATETIME2), '-05:00'),
                 TODATETIMEOFFSET(CAST('2025-03-01 10:30:00' AS DATETIME2), 120)",
     );
-    assert_eq!(r_to.rows[0][0].to_string_value(), "2025-03-01 10:30:00 -05:00");
-    assert_eq!(r_to.rows[0][1].to_string_value(), "2025-03-01 10:30:00 +02:00");
+    assert_eq!(
+        r_to.rows[0][0].to_string_value(),
+        "2025-03-01 10:30:00 -05:00"
+    );
+    assert_eq!(
+        r_to.rows[0][1].to_string_value(),
+        "2025-03-01 10:30:00 +02:00"
+    );
 
     let r_sw = query(
         &mut e,
         "SELECT SWITCHOFFSET(TODATETIMEOFFSET(CAST('2025-03-01 10:30:00' AS DATETIME2), '-05:00'), '+02:00')",
     );
-    assert_eq!(r_sw.rows[0][0].to_string_value(), "2025-03-01 17:30:00 +02:00");
+    assert_eq!(
+        r_sw.rows[0][0].to_string_value(),
+        "2025-03-01 17:30:00 +02:00"
+    );
 }
 
 #[test]
@@ -700,7 +714,10 @@ fn conditional_commit_and_rollback_inside_if_persist_across_sessions() {
     .expect("session 2 rollback batch must succeed");
 
     let res2 = db
-        .execute_session_batch_sql(s2, "SELECT COUNT(*) AS cnt, @@TRANCOUNT AS tc FROM dbo.TxPersist")
+        .execute_session_batch_sql(
+            s2,
+            "SELECT COUNT(*) AS cnt, @@TRANCOUNT AS tc FROM dbo.TxPersist",
+        )
         .expect("session 2 count after rollback")
         .expect("result");
     assert_eq!(res2.rows[0][0].to_integer_i64(), Some(1));
@@ -797,8 +814,11 @@ fn concurrent_disjoint_ddl_and_dml_transactions_merge_without_clobbering() {
         .expect("create schema analytics");
     let s4 = db.create_session();
     let s5 = db.create_session();
-    db.execute_session_batch_sql_multi(s4, "BEGIN TRANSACTION; CREATE TABLE dbo.SharedName (Id INT);")
-        .expect("s4 dbo.SharedName");
+    db.execute_session_batch_sql_multi(
+        s4,
+        "BEGIN TRANSACTION; CREATE TABLE dbo.SharedName (Id INT);",
+    )
+    .expect("s4 dbo.SharedName");
     db.execute_session_batch_sql_multi(
         s5,
         "BEGIN TRANSACTION; CREATE TABLE analytics.SharedName (Id INT);",
@@ -1027,13 +1047,25 @@ fn catalog_metadata_columns_and_variant_property_functions() {
          );",
     );
 
-    let kc = query(&mut e, "SELECT name, unique_index_id, is_system_named FROM sys.key_constraints");
+    let kc = query(
+        &mut e,
+        "SELECT name, unique_index_id, is_system_named FROM sys.key_constraints",
+    );
     assert!(kc.rows.len() >= 2);
-    let dc = query(&mut e, "SELECT name, is_system_named FROM sys.default_constraints");
+    let dc = query(
+        &mut e,
+        "SELECT name, is_system_named FROM sys.default_constraints",
+    );
     assert_eq!(dc.rows.len(), 1);
-    let cc = query(&mut e, "SELECT name, is_system_named FROM sys.check_constraints");
+    let cc = query(
+        &mut e,
+        "SELECT name, is_system_named FROM sys.check_constraints",
+    );
     assert_eq!(cc.rows.len(), 1);
-    let fk = query(&mut e, "SELECT name, is_not_for_replication FROM sys.foreign_keys");
+    let fk = query(
+        &mut e,
+        "SELECT name, is_not_for_replication FROM sys.foreign_keys",
+    );
     assert_eq!(fk.rows.len(), 1);
     let ty = query(
         &mut e,
@@ -1041,7 +1073,10 @@ fn catalog_metadata_columns_and_variant_property_functions() {
     );
     assert!(!ty.rows.is_empty());
     let _ = query(&mut e, "SELECT secondary_type_desc FROM sys.xml_indexes");
-    let _ = query(&mut e, "SELECT is_accent_sensitivity_on FROM sys.fulltext_catalogs");
+    let _ = query(
+        &mut e,
+        "SELECT is_accent_sensitivity_on FROM sys.fulltext_catalogs",
+    );
     let _ = query(&mut e, "SELECT user_type_id FROM sys.partition_parameters");
 
     let sv = query(

@@ -1,5 +1,7 @@
 use super::super::super::VirtualTable;
-use super::super::super::{system_type_id, type_max_length, virtual_table_def};
+use super::super::super::{
+    column_collation_name_val, system_type_id, type_max_length, virtual_table_def,
+};
 use crate::ast::{DmlStatement, Expr, SelectItem, Statement};
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
@@ -68,12 +70,28 @@ fn column_table_def(name: &str) -> crate::catalog::TableDef {
         ("is_sparse", DataType::Bit, false),
         ("is_column_set", DataType::Bit, false),
         ("generated_always_type", DataType::TinyInt, false),
-        ("generated_always_type_desc", DataType::NVarChar { max_len: 60 }, true),
+        (
+            "generated_always_type_desc",
+            DataType::NVarChar { max_len: 60 },
+            true,
+        ),
         ("encryption_type", DataType::Int, true),
-        ("encryption_type_desc", DataType::NVarChar { max_len: 64 }, true),
-        ("encryption_algorithm_name", DataType::NVarChar { max_len: 128 }, true),
+        (
+            "encryption_type_desc",
+            DataType::NVarChar { max_len: 64 },
+            true,
+        ),
+        (
+            "encryption_algorithm_name",
+            DataType::NVarChar { max_len: 128 },
+            true,
+        ),
         ("column_encryption_key_id", DataType::Int, true),
-        ("column_encryption_key_database_name", DataType::NVarChar { max_len: 128 }, true),
+        (
+            "column_encryption_key_database_name",
+            DataType::NVarChar { max_len: 128 },
+            true,
+        ),
         ("is_hidden", DataType::Bit, false),
         ("is_masked", DataType::Bit, false),
         ("graph_type", DataType::Int, true),
@@ -132,7 +150,7 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
                 Value::SmallInt(type_max_length(&c.data_type)),
                 Value::TinyInt(precision),
                 Value::TinyInt(scale),
-                Value::VarChar("SQL_Latin1_General_CP1_CI_AS".to_string()),
+                column_collation_name_val(&c.data_type, c.collation.as_deref()),
                 Value::Bit(c.nullable),
                 Value::Bit(true),  // is_ansi_padded
                 Value::Bit(false), // is_rowguidcol
@@ -156,11 +174,11 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
                 Value::Bit(false), // is_column_set
                 Value::TinyInt(0), // generated_always_type
                 Value::NVarChar("NOT_APPLICABLE".to_string()),
-                Value::Null, // encryption_type
-                Value::Null, // encryption_type_desc
-                Value::Null, // encryption_algorithm_name
-                Value::Null, // column_encryption_key_id
-                Value::Null, // column_encryption_key_database_name
+                Value::Null,       // encryption_type
+                Value::Null,       // encryption_type_desc
+                Value::Null,       // encryption_algorithm_name
+                Value::Null,       // column_encryption_key_id
+                Value::Null,       // column_encryption_key_database_name
                 Value::Bit(false), // is_hidden
                 Value::Bit(false), // is_masked
                 Value::Null,       // graph_type
@@ -191,7 +209,7 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
                 Value::SmallInt(type_max_length(&dt)),
                 Value::TinyInt(precision),
                 Value::TinyInt(scale),
-                Value::VarChar("SQL_Latin1_General_CP1_CI_AS".to_string()),
+                column_collation_name_val(&dt, c.collation.as_deref()),
                 Value::Bit(c.nullable),
                 Value::Bit(true),  // is_ansi_padded
                 Value::Bit(false), // is_rowguidcol
@@ -210,11 +228,11 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
                 Value::Bit(false), // is_column_set
                 Value::TinyInt(0), // generated_always_type
                 Value::NVarChar("NOT_APPLICABLE".to_string()),
-                Value::Null, // encryption_type
-                Value::Null, // encryption_type_desc
-                Value::Null, // encryption_algorithm_name
-                Value::Null, // column_encryption_key_id
-                Value::Null, // column_encryption_key_database_name
+                Value::Null,       // encryption_type
+                Value::Null,       // encryption_type_desc
+                Value::Null,       // encryption_algorithm_name
+                Value::Null,       // column_encryption_key_id
+                Value::Null,       // column_encryption_key_database_name
                 Value::Bit(false), // is_hidden
                 Value::Bit(false), // is_masked
                 Value::Null,       // graph_type
@@ -251,7 +269,11 @@ fn view_column_table_def() -> crate::catalog::TableDef {
             ("is_column_set", DataType::Bit, false),
             ("xml_collection_id", DataType::Int, true),
             ("generated_always_type", DataType::TinyInt, false),
-            ("generated_always_type_desc", DataType::NVarChar { max_len: 60 }, true),
+            (
+                "generated_always_type_desc",
+                DataType::NVarChar { max_len: 60 },
+                true,
+            ),
             ("graph_type", DataType::Int, true),
             ("graph_type_desc", DataType::NVarChar { max_len: 60 }, true),
             ("default_object_id", DataType::Int, false),
@@ -293,18 +315,17 @@ fn view_column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
                     Value::Bit(true),   // is_nullable - true by default
                     Value::Bit(false),  // is_computed
                     Value::Bit(false),  // is_xml_document
-                    Value::Bit(false), // is_column_set
+                    Value::Bit(false),  // is_column_set
                     Value::Null,        // xml_collection_id
                     Value::TinyInt(0),  // generated_always_type
                     Value::NVarChar("NOT_APPLICABLE".to_string()),
-                    Value::Null,        // graph_type
-                    Value::Null,        // graph_type_desc
-                    Value::Int(0),      // default_object_id
-                    Value::Bit(false),  // is_dropped_ledger_column
-                    Value::Null,        // vector_dimensions
-
-                    Value::Null,        // vector_base_type
-                    Value::Null,        // vector_base_type_desc
+                    Value::Null,       // graph_type
+                    Value::Null,       // graph_type_desc
+                    Value::Int(0),     // default_object_id
+                    Value::Bit(false), // is_dropped_ledger_column
+                    Value::Null,       // vector_dimensions
+                    Value::Null,       // vector_base_type
+                    Value::Null,       // vector_base_type_desc
                 ],
                 deleted: false,
             });

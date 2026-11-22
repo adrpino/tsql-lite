@@ -7,8 +7,8 @@ use std::sync::Arc;
 use iridium_core::SessionId;
 
 use super::pool::SessionPool;
-use crate::ServerDatabase;
 use super::ServerConfig;
+use crate::ServerDatabase;
 
 pub mod compat;
 pub mod execution;
@@ -18,7 +18,10 @@ mod sql_pipeline;
 
 use crate::tds::packet;
 
-pub(crate) trait AsyncReadWrite: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
+pub(crate) trait AsyncReadWrite:
+    tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin
+{
+}
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin> AsyncReadWrite for T {}
 
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
@@ -121,7 +124,12 @@ pub(crate) fn truncate_for_log(text: &str, max_chars: usize) -> String {
     preview
 }
 
-pub(crate) fn log_packet(connection_id: u64, stage: &str, header: &packet::PacketHeader, data: &[u8]) {
+pub(crate) fn log_packet(
+    connection_id: u64,
+    stage: &str,
+    header: &packet::PacketHeader,
+    data: &[u8],
+) {
     let preview_len = data.len().min(96);
     log::debug!(
         "[conn={}] {} packet type=0x{:02X} len={} preview={:02X?}",

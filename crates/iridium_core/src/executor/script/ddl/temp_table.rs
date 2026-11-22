@@ -4,10 +4,7 @@ use crate::executor::string_norm::normalize_identifier;
 
 /// Maps a `#temp` table name to its physical name and registers it in the
 /// session temp_map. Called before CREATE TABLE for temp tables.
-pub(crate) fn map_create_temp_table(
-    stmt: &mut CreateTableStmt,
-    ctx: &mut ExecutionContext<'_>,
-) {
+pub(crate) fn map_create_temp_table(stmt: &mut CreateTableStmt, ctx: &mut ExecutionContext<'_>) {
     if !stmt.name.name.starts_with('#') {
         return;
     }

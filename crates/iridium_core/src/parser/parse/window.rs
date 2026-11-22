@@ -6,7 +6,11 @@ use crate::parser::token::Keyword;
 use super::common::parse_comma_list;
 use super::parse_expr;
 
-pub(crate) fn parse_window_over(parser: &mut Parser, name: String, args: Vec<Expr>) -> ParseResult<Expr> {
+pub(crate) fn parse_window_over(
+    parser: &mut Parser,
+    name: String,
+    args: Vec<Expr>,
+) -> ParseResult<Expr> {
     parser.expect_keyword(Keyword::Over)?;
     parser.expect_lparen()?;
 

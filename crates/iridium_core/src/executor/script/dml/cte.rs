@@ -159,11 +159,7 @@ impl<'a> ScriptExecutor<'a> {
                     iteration += 1;
 
                     let mut iteration_ctes = ctx.row.ctes.clone();
-                    iteration_ctes.insert(
-                        &cte_def.name,
-                        table_def_inner.clone(),
-                        working_set,
-                    );
+                    iteration_ctes.insert(&cte_def.name, table_def_inner.clone(), working_set);
                     let prev_ctes = std::mem::replace(&mut ctx.row.ctes, iteration_ctes);
                     let saved_sink = ctx.frame.result_set_sink.take();
                     let saved_last = ctx.frame.last_proc_result.take();

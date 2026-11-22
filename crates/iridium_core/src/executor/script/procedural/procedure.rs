@@ -461,9 +461,7 @@ impl<'a> ScriptExecutor<'a> {
                         label
                     )));
                 }
-                Ok(crate::error::StmtOutcome::Ok(r)) => {
-                    (r.or(captured_proc_result), Value::Int(0))
-                }
+                Ok(crate::error::StmtOutcome::Ok(r)) => (r.or(captured_proc_result), Value::Int(0)),
                 Err(e) => return Err(e),
             };
             self.assign_exec_return_value(&stmt.return_variable, return_value.clone(), ctx)?;

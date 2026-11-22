@@ -90,7 +90,10 @@ fn test_fn_my_permissions_returns_rows() {
 #[test]
 fn test_fn_my_permissions_contains_connect_sql() {
     let mut engine = Engine::new();
-    let r = query(&mut engine, "SELECT permission_name FROM fn_my_permissions()");
+    let r = query(
+        &mut engine,
+        "SELECT permission_name FROM fn_my_permissions()",
+    );
     let has_connect = r.rows.iter().any(|row| match &row[0] {
         Value::NVarChar(s) => s == "CONNECT SQL",
         _ => false,
@@ -101,7 +104,10 @@ fn test_fn_my_permissions_contains_connect_sql() {
 #[test]
 fn test_fn_my_permissions_contains_view_server_state() {
     let mut engine = Engine::new();
-    let r = query(&mut engine, "SELECT permission_name FROM fn_my_permissions()");
+    let r = query(
+        &mut engine,
+        "SELECT permission_name FROM fn_my_permissions()",
+    );
     let has = r.rows.iter().any(|row| match &row[0] {
         Value::NVarChar(s) => s == "VIEW SERVER STATE",
         _ => false,
@@ -112,7 +118,10 @@ fn test_fn_my_permissions_contains_view_server_state() {
 #[test]
 fn test_fn_my_permissions_with_alias() {
     let mut engine = Engine::new();
-    let r = query(&mut engine, "SELECT permission_name FROM fn_my_permissions() p");
+    let r = query(
+        &mut engine,
+        "SELECT permission_name FROM fn_my_permissions() p",
+    );
     assert!(r.rows.len() > 0);
 }
 

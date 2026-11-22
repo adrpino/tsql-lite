@@ -39,7 +39,8 @@ pub(crate) fn execute_from_stage(
                 Some(where_expr),
             ) = (&from_clause, query.filter.selection.as_ref())
             {
-                let mut left_eval = from_tree::execute_from_clause(executor, (**left).clone(), ctx)?;
+                let mut left_eval =
+                    from_tree::execute_from_clause(executor, (**left).clone(), ctx)?;
                 let mut right_eval =
                     from_tree::execute_from_clause(executor, (**right).clone(), ctx)?;
                 let mut conjuncts = Vec::new();

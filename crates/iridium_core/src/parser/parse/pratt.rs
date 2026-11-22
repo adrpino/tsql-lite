@@ -11,7 +11,7 @@ pub fn parse_expr(parser: &mut Parser) -> ParseResult<Expr> {
 }
 
 pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<Expr> {
-    parser.enter_recursion()?; 
+    parser.enter_recursion()?;
     let res = (|| {
         let mut left = parse_primary(parser)?;
 
@@ -46,9 +46,9 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                         Some(Token::Identifier(id)) => id.clone(),
                         Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
                         _ => {
-                            return parser.backtrack(
-                                crate::parser::error::Expected::Description("collation name"),
-                            )
+                            return parser.backtrack(crate::parser::error::Expected::Description(
+                                "collation name",
+                            ))
                         }
                     };
                     left = Expr::FunctionCall {

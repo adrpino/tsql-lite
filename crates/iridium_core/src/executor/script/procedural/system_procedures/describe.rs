@@ -37,9 +37,7 @@ pub(crate) fn execute_sp_describe_first_result_set(
                 let system_type_name = type_name(&dt);
                 let max_length = type_max_length(&dt) as i16;
                 let (precision, scale) = match &dt {
-                    DataType::Decimal { precision, scale } => {
-                        (*precision as i8, *scale as i8)
-                    }
+                    DataType::Decimal { precision, scale } => (*precision as i8, *scale as i8),
                     _ => (0i8, 0i8),
                 };
                 let collation_name = match &dt {

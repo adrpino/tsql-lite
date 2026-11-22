@@ -252,7 +252,10 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
-    pub fn with_outer_row(&mut self, row: crate::executor::model::JoinedRow) -> ExecutionContext<'_> {
+    pub fn with_outer_row(
+        &mut self,
+        row: crate::executor::model::JoinedRow,
+    ) -> ExecutionContext<'_> {
         let mut sub = self.subquery();
         sub.row.outer_stack.push(row);
         sub

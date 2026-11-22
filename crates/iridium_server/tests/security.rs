@@ -115,11 +115,8 @@ fn temp_cert_paths(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let pid = std::process::id();
     let cert = dir.join(format!("iridium_test_{}_{}.crt", tag, pid));
     let key = dir.join(format!("iridium_test_{}_{}.key", tag, pid));
-    iridium_server::tls::generate_self_signed_cert(
-        cert.to_str().unwrap(),
-        key.to_str().unwrap(),
-    )
-    .expect("generate self-signed cert");
+    iridium_server::tls::generate_self_signed_cert(cert.to_str().unwrap(), key.to_str().unwrap())
+        .expect("generate self-signed cert");
     (cert, key)
 }
 
@@ -139,13 +136,11 @@ async fn test_no_tls_replies_encrypt_not_sup_for_client_encrypt_off() {
         .expect("Failed to write PRELOGIN");
     tcp.flush().await.expect("Failed to flush PRELOGIN");
 
-    let (header, resp) = tokio::time::timeout(
-        Duration::from_secs(5),
-        packet::read_message(&mut tcp),
-    )
-    .await
-    .expect("Timed out reading PRELOGIN response")
-    .expect("Failed to read PRELOGIN response");
+    let (header, resp) =
+        tokio::time::timeout(Duration::from_secs(5), packet::read_message(&mut tcp))
+            .await
+            .expect("Timed out reading PRELOGIN response")
+            .expect("Failed to read PRELOGIN response");
 
     assert_eq!(
         header.packet_type, TABULAR_RESULT,
@@ -325,8 +320,8 @@ async fn test_large_nvarchar_max_for_json_streams_without_truncation() {
         "expected > 15,000 chars JSON payload, got {} chars",
         json_text.len()
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(json_text).expect("large FOR JSON payload must parse without truncation");
+    let parsed: serde_json::Value = serde_json::from_str(json_text)
+        .expect("large FOR JSON payload must parse without truncation");
     let arr = parsed.as_array().expect("JSON array");
     assert_eq!(arr.len(), 200);
     assert_eq!(arr[0]["id"], 1);

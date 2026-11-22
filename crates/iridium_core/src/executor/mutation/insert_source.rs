@@ -161,8 +161,8 @@ impl<'a> MutationExecutor<'a> {
         let has_unique = table.columns.iter().any(|c| c.unique)
             || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
         let has_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
-        let has_checks = !table.check_constraints.is_empty()
-            || table.columns.iter().any(|c| c.check.is_some());
+        let has_checks =
+            !table.check_constraints.is_empty() || table.columns.iter().any(|c| c.check.is_some());
         let has_dirty = ctx.session.dirty_buffer.is_some();
         let table_indexes: Vec<u32> = self
             .catalog
@@ -171,16 +171,15 @@ impl<'a> MutationExecutor<'a> {
             .filter(|i| i.table_id == table_id)
             .map(|i| i.id)
             .collect();
-        let mut next_row_index = if !table_indexes.is_empty()
-            && self.storage.as_index_storage_mut().is_some()
-        {
-            self.storage
-                .get_rows(table_id)
-                .map(|r| r.len())
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let mut next_row_index =
+            if !table_indexes.is_empty() && self.storage.as_index_storage_mut().is_some() {
+                self.storage
+                    .get_rows(table_id)
+                    .map(|r| r.len())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
         for row in rows {
             if has_unique {

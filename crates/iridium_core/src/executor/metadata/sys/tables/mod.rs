@@ -13,12 +13,11 @@ pub(crate) use encryption::{
 };
 pub(crate) use identity_columns::SysIdentityColumns;
 pub(crate) use objects_misc::{
-    SysAssemblyModules, SysDataSpaces, SysEdgeConstraints, SysExtendedProperties,
+    SysAllSqlModules, SysAssemblyModules, SysDataSpaces, SysEdgeConstraints, SysExtendedProperties,
     SysForeignKeyColumns, SysIndexColumns, SysInternalTables, SysMaskedColumns, SysPeriods,
-    SysSequences,
-    SysServerPrincipals, SysServerRoleMembers, SysSqlExpressionDependencies, SysSqlModules, SysAllSqlModules, SysStats, SysStatsColumns,
-    SysSynonyms, SysSystemSqlModules, SysTriggerEvents, SysTriggers, SysXmlIndexes,
-    SysXmlSchemaCollections,
+    SysSequences, SysServerPrincipals, SysServerRoleMembers, SysSqlExpressionDependencies,
+    SysSqlModules, SysStats, SysStatsColumns, SysSynonyms, SysSystemSqlModules, SysTriggerEvents,
+    SysTriggers, SysXmlIndexes, SysXmlSchemaCollections,
 };
 pub(crate) use tables::{SysFileTables, SysTables};
 pub(crate) use types::{SysAssemblyTypes, SysTableTypes, SysTypes};

@@ -1,8 +1,8 @@
 use super::VirtualTable;
 use super::{
-    char_max_length, char_octet_length, charset_name, collation_name_val, datetime_precision_val,
-    numeric_precision, numeric_precision_radix, numeric_scale_val, schema_name_by_id, type_name,
-    virtual_table_def, DB_CATALOG,
+    char_max_length, char_octet_length, charset_name, column_collation_name_val,
+    datetime_precision_val, numeric_precision, numeric_precision_radix, numeric_scale_val,
+    schema_name_by_id, type_name, virtual_table_def, DB_CATALOG,
 };
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
@@ -98,7 +98,7 @@ impl VirtualTable for Columns {
                         charset_name(&c.data_type),
                         Value::Null,
                         Value::Null,
-                        collation_name_val(&c.data_type),
+                        column_collation_name_val(&c.data_type, c.collation.as_deref()),
                         Value::Null,
                         Value::Null,
                         Value::Null,

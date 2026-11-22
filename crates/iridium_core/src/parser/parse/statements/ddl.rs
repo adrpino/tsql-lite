@@ -305,7 +305,10 @@ pub fn parse_table_body(
             // PERIOD FOR SYSTEM_TIME (start_col, end_col)
             let _ = parser.next(); // PERIOD
             let _ = parser.next(); // FOR
-            if matches!(parser.peek(), Some(Token::Identifier(_)) | Some(Token::Keyword(_))) {
+            if matches!(
+                parser.peek(),
+                Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+            ) {
                 let _ = parser.next(); // SYSTEM_TIME
             }
             if matches!(parser.peek(), Some(Token::LParen)) {

@@ -1,9 +1,6 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
-use iridium_core::error::DbError;
-use super::{TdsSession, AsyncReadWrite};
+use super::PreparedStatement;
+use super::{AsyncReadWrite, TdsSession};
+use crate::pool::CheckoutError;
 use crate::tds::batch::build_error_response;
 use crate::tds::bulk::parse_bulk_load_data;
 use crate::tds::login::parse_login7;
@@ -15,18 +12,16 @@ use crate::tds::prelogin::{
     build_prelogin_response, parse_prelogin, ENCRYPT_NOT_SUP, ENCRYPT_OFF, ENCRYPT_ON,
     ENCRYPT_REQUIRED,
 };
-use crate::tds::rpc::{
-    parse_param_decl, parse_rpc,
-    CatalogProc, RpcRequest, CursorOp
-};
-use crate::tds::rpc::{
-    build_param_preamble, build_param_preamble_with_decls
-};
+use crate::tds::rpc::{build_param_preamble, build_param_preamble_with_decls};
+use crate::tds::rpc::{parse_param_decl, parse_rpc, CatalogProc, CursorOp, RpcRequest};
 use crate::tds::tokens;
 use crate::tds_tls_io::TdsTlsIo;
 use crate::tls;
-use crate::pool::CheckoutError;
-use super::PreparedStatement;
+use iridium_core::error::DbError;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 
 /// Negotiates the `[MS-TDS] §2.2.6.5` PRELOGIN encryption byte and whether the
 /// connection upgrades to full-session TLS immediately after PRELOGIN.
@@ -296,353 +291,19 @@ impl TdsSession {
                             }
                         },
                         RPC => match parse_rpc(&data) {
-                            Ok(Some(rpc)) => {
-                                match rpc {
-                                    RpcRequest::Sql(sql_req) => {
-                                        let preamble = build_param_preamble(&sql_req.params);
-                                        let full_sql = if preamble.is_empty() {
-                                            sql_req.sql
-                                        } else {
-                                            format!("{}{}", preamble, sql_req.sql)
-                                        };
-                                        match self.execute_sql(full_sql.trim(), &mut writer).await {
-                                            Ok(_) => {}
-                                            Err(e) => {
-                                                log::error!("RPC SQL error: {}", e);
-                                                let err_resp = build_error_response(&e);
-                                                let _ = packet::write_packet(
-                                                    &mut writer,
-                                                    TABULAR_RESULT,
-                                                    &err_resp.data,
-                                                )
-                                                .await;
-                                            }
-                                        }
-                                    }
-                                    RpcRequest::Cursor(cursor_req) => {
-                                        log::debug!(
-                                            "[conn={}] Cursor RPC: {:?}",
-                                            self.connection_id,
-                                            cursor_req.cursor_op
-                                        );
-                                        if let Some(session_id) = self.session_id {
-                                            match cursor_req.cursor_op {
-                                                CursorOp::Open => {
-                                                    let sql = cursor_req.sql.unwrap_or_default();
-                                                    let scroll_opt =
-                                                        cursor_req.scroll_opt.unwrap_or(0);
-                                                    match self.db.cursor_rpc_open(
-                                                        session_id, &sql, scroll_opt,
-                                                    ) {
-                                                        Ok((handle, _result)) => {
-                                                            let mut buf = PacketBuilder::new();
-                                                            tokens::write_output_int(
-                                                                &mut buf, "@cursor", handle,
-                                                            );
-                                                            tokens::write_done(
-                                                                &mut buf,
-                                                                tokens::DONE_FINAL,
-                                                                0,
-                                                                0,
-                                                            );
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                buf.as_bytes(),
-                                                            )
-                                                            .await;
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Fetch => {
-                                                    let handle =
-                                                        cursor_req.cursor_handle.unwrap_or(0);
-                                                    let fetch_type =
-                                                        cursor_req.fetch_type.unwrap_or(2);
-                                                    let row_num = cursor_req.row_num.unwrap_or(0);
-                                                    let n_rows = cursor_req.n_rows.unwrap_or(1);
-                                                    match self.db.cursor_rpc_fetch(
-                                                        session_id, handle, fetch_type, row_num,
-                                                        n_rows,
-                                                    ) {
-                                                        Ok(fetch_result) => {
-                                                            if fetch_result.rows.is_empty() {
-                                                                let mut buf = PacketBuilder::new();
-                                                                tokens::write_done(
-                                                                    &mut buf,
-                                                                    tokens::DONE_FINAL,
-                                                                    0,
-                                                                    0,
-                                                                );
-                                                                let _ = packet::write_packet(
-                                                                    &mut writer,
-                                                                    TABULAR_RESULT,
-                                                                    buf.as_bytes(),
-                                                                )
-                                                                .await;
-                                                            } else {
-                                                                let mut buf = PacketBuilder::new();
-                                                                let col_types: Vec<_> = fetch_result.column_types.iter()
-                                                                    .map(crate::tds::type_mapping::runtime_type_to_tds)
-                                                                    .collect();
-                                                                tokens::write_colmetadata(
-                                                                    &mut buf,
-                                                                    &fetch_result.columns,
-                                                                    &col_types,
-                                                                );
-                                                                for row in &fetch_result.rows {
-                                                                    tokens::write_row(
-                                                                        &mut buf, row, &col_types,
-                                                                        0,
-                                                                    );
-                                                                }
-                                                                tokens::write_done(
-                                                                    &mut buf,
-                                                                    tokens::DONE_FINAL
-                                                                        | tokens::DONE_COUNT,
-                                                                    0,
-                                                                    fetch_result.rows.len() as u64,
-                                                                );
-                                                                let _ = packet::write_packet(
-                                                                    &mut writer,
-                                                                    TABULAR_RESULT,
-                                                                    buf.as_bytes(),
-                                                                )
-                                                                .await;
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Close => {
-                                                    let handle =
-                                                        cursor_req.cursor_handle.unwrap_or(0);
-                                                    match self
-                                                        .db
-                                                        .cursor_rpc_close(session_id, handle)
-                                                    {
-                                                        Ok(()) => {
-                                                            let mut buf = PacketBuilder::new();
-                                                            tokens::write_done(
-                                                                &mut buf,
-                                                                tokens::DONE_FINAL,
-                                                                0,
-                                                                0,
-                                                            );
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                buf.as_bytes(),
-                                                            )
-                                                            .await;
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Unprepare => {
-                                                    let handle =
-                                                        cursor_req.cursor_handle.unwrap_or(0);
-                                                    match self
-                                                        .db
-                                                        .cursor_rpc_deallocate(session_id, handle)
-                                                    {
-                                                        Ok(()) => {
-                                                            let mut buf = PacketBuilder::new();
-                                                            tokens::write_done(
-                                                                &mut buf,
-                                                                tokens::DONE_FINAL,
-                                                                0,
-                                                                0,
-                                                            );
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                buf.as_bytes(),
-                                                            )
-                                                            .await;
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Prepare
-                                                | CursorOp::PrepExec => {
-                                                    let sql = match cursor_req.sql {
-                                                        Some(ref s) if !s.is_empty() => s.clone(),
-                                                        _ => {
-                                                            let err = DbError::Execution("cursor prepare requires SQL statement".into());
-                                                            let err_resp =
-                                                                build_error_response(&err);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                            continue;
-                                                        }
-                                                    };
-                                                    let scroll_opt =
-                                                        cursor_req.scroll_opt.unwrap_or(0);
-                                                    match self.db.cursor_rpc_open(
-                                                        session_id, &sql, scroll_opt,
-                                                    ) {
-                                                        Ok((handle, _result)) => {
-                                                            let mut buf = PacketBuilder::new();
-                                                            tokens::write_output_int(
-                                                                &mut buf, "@cursor", handle,
-                                                            );
-                                                            tokens::write_done(
-                                                                &mut buf,
-                                                                tokens::DONE_FINAL,
-                                                                0,
-                                                                0,
-                                                            );
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                buf.as_bytes(),
-                                                            )
-                                                            .await;
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Execute => {
-                                                    let handle =
-                                                        cursor_req.cursor_handle.unwrap_or(0);
-                                                    let scroll_opt =
-                                                        cursor_req.scroll_opt.unwrap_or(0);
-                                                    let n_rows = cursor_req.n_rows.unwrap_or(1);
-                                                    match self.db.cursor_rpc_fetch(
-                                                        session_id, handle, 2, 0, n_rows,
-                                                    ) {
-                                                        Ok(fetch_result) => {
-                                                            let _ = scroll_opt;
-                                                            if fetch_result.rows.is_empty() {
-                                                                let mut buf = PacketBuilder::new();
-                                                                tokens::write_output_int(
-                                                                    &mut buf, "@cursor", handle,
-                                                                );
-                                                                tokens::write_done(
-                                                                    &mut buf,
-                                                                    tokens::DONE_FINAL,
-                                                                    0,
-                                                                    0,
-                                                                );
-                                                                let _ = packet::write_packet(
-                                                                    &mut writer,
-                                                                    TABULAR_RESULT,
-                                                                    buf.as_bytes(),
-                                                                )
-                                                                .await;
-                                                            } else {
-                                                                let mut buf = PacketBuilder::new();
-                                                                let col_types: Vec<_> = fetch_result.column_types.iter()
-                                                                    .map(crate::tds::type_mapping::runtime_type_to_tds)
-                                                                    .collect();
-                                                                tokens::write_output_int(
-                                                                    &mut buf, "@cursor", handle,
-                                                                );
-                                                                tokens::write_colmetadata(
-                                                                    &mut buf,
-                                                                    &fetch_result.columns,
-                                                                    &col_types,
-                                                                );
-                                                                for row in &fetch_result.rows {
-                                                                    tokens::write_row(
-                                                                        &mut buf, row, &col_types,
-                                                                        0,
-                                                                    );
-                                                                }
-                                                                tokens::write_done(
-                                                                    &mut buf,
-                                                                    tokens::DONE_FINAL
-                                                                        | tokens::DONE_COUNT,
-                                                                    0,
-                                                                    fetch_result.rows.len() as u64,
-                                                                );
-                                                                let _ = packet::write_packet(
-                                                                    &mut writer,
-                                                                    TABULAR_RESULT,
-                                                                    buf.as_bytes(),
-                                                                )
-                                                                .await;
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
-                                                            let _ = packet::write_packet(
-                                                                &mut writer,
-                                                                TABULAR_RESULT,
-                                                                &err_resp.data,
-                                                            )
-                                                            .await;
-                                                        }
-                                                    }
-                                                }
-                                                CursorOp::Option => {
-                                                    let _ = cursor_req;
-                                                    let mut buf = PacketBuilder::new();
-                                                    tokens::write_done(
-                                                        &mut buf,
-                                                        tokens::DONE_FINAL,
-                                                        0,
-                                                        0,
-                                                    );
-                                                    let _ = packet::write_packet(
-                                                        &mut writer,
-                                                        TABULAR_RESULT,
-                                                        buf.as_bytes(),
-                                                    )
-                                                    .await;
-                                                }
-                                            }
-                                        } else {
-                                            let err = DbError::Execution(
-                                                "no session for cursor operation".into(),
-                                            );
-                                            let err_resp = build_error_response(&err);
+                            Ok(Some(rpc)) => match rpc {
+                                RpcRequest::Sql(sql_req) => {
+                                    let preamble = build_param_preamble(&sql_req.params);
+                                    let full_sql = if preamble.is_empty() {
+                                        sql_req.sql
+                                    } else {
+                                        format!("{}{}", preamble, sql_req.sql)
+                                    };
+                                    match self.execute_sql(full_sql.trim(), &mut writer).await {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            log::error!("RPC SQL error: {}", e);
+                                            let err_resp = build_error_response(&e);
                                             let _ = packet::write_packet(
                                                 &mut writer,
                                                 TABULAR_RESULT,
@@ -651,239 +312,95 @@ impl TdsSession {
                                             .await;
                                         }
                                     }
-                                    RpcRequest::Prepare(req) => {
-                                        let handle = self.prepared_stmts.len() as u32 + 1;
-                                        let param_decls = parse_param_decl(&req.param_decl);
-                                        let stmt = PreparedStatement {
-                                            sql: req.sql.clone(),
-                                            param_decls: param_decls.clone(),
-                                        };
-                                        self.prepared_stmts.insert(handle, stmt);
-                                        let mut buf = PacketBuilder::new();
-                                        tokens::write_output_int(
-                                            &mut buf,
-                                            "@handle",
-                                            handle as i32,
-                                        );
-                                        tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
-                                        let _ = packet::write_packet(
-                                            &mut writer,
-                                            TABULAR_RESULT,
-                                            buf.as_bytes(),
-                                        )
-                                        .await;
-                                    }
-                                    RpcRequest::Execute(req) => {
-                                        let handle = req.stmt_handle as u32;
-                                        if let Some(stmt) = self.prepared_stmts.get(&handle) {
-                                            let param_decls = &stmt.param_decls;
-                                            let preamble = build_param_preamble_with_decls(
-                                                &req.params,
-                                                param_decls,
-                                            );
-                                            let full_sql = if preamble.is_empty() {
-                                                stmt.sql.clone()
-                                            } else {
-                                                format!("{}{}", preamble, stmt.sql)
-                                            };
-                                            match self
-                                                .execute_sql(full_sql.trim(), &mut writer)
-                                                .await
-                                            {
-                                                Ok(_) => {}
-                                                Err(e) => {
-                                                    log::error!("sp_execute error: {}", e);
-                                                    let err_resp = build_error_response(&e);
-                                                    let _ = packet::write_packet(
-                                                        &mut writer,
-                                                        TABULAR_RESULT,
-                                                        &err_resp.data,
-                                                    )
-                                                    .await;
+                                }
+                                RpcRequest::Cursor(cursor_req) => {
+                                    log::debug!(
+                                        "[conn={}] Cursor RPC: {:?}",
+                                        self.connection_id,
+                                        cursor_req.cursor_op
+                                    );
+                                    if let Some(session_id) = self.session_id {
+                                        match cursor_req.cursor_op {
+                                            CursorOp::Open => {
+                                                let sql = cursor_req.sql.unwrap_or_default();
+                                                let scroll_opt = cursor_req.scroll_opt.unwrap_or(0);
+                                                match self
+                                                    .db
+                                                    .cursor_rpc_open(session_id, &sql, scroll_opt)
+                                                {
+                                                    Ok((handle, _result)) => {
+                                                        let mut buf = PacketBuilder::new();
+                                                        tokens::write_output_int(
+                                                            &mut buf, "@cursor", handle,
+                                                        );
+                                                        tokens::write_done(
+                                                            &mut buf,
+                                                            tokens::DONE_FINAL,
+                                                            0,
+                                                            0,
+                                                        );
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            buf.as_bytes(),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
                                                 }
                                             }
-                                        } else {
-                                            let err = DbError::Execution(format!(
-                                                "Invalid statement handle: {}",
-                                                req.stmt_handle
-                                            ));
-                                            let err_resp = build_error_response(&err);
-                                            let _ = packet::write_packet(
-                                                &mut writer,
-                                                TABULAR_RESULT,
-                                                &err_resp.data,
-                                            )
-                                            .await;
-                                        }
-                                    }
-                                    RpcRequest::Unprepare(req) => {
-                                        let handle = req.stmt_handle as u32;
-                                        self.prepared_stmts.remove(&handle);
-                                        let mut buf = PacketBuilder::new();
-                                        tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
-                                        let _ = packet::write_packet(
-                                            &mut writer,
-                                            TABULAR_RESULT,
-                                            buf.as_bytes(),
-                                        )
-                                        .await;
-                                    }
-                                    RpcRequest::PrepExec(req) => {
-                                        let handle = self.prepared_stmts.len() as u32 + 1;
-                                        let param_decls = parse_param_decl(&req.param_decl);
-                                        let stmt = PreparedStatement {
-                                            sql: req.sql.clone(),
-                                            param_decls: param_decls.clone(),
-                                        };
-                                        self.prepared_stmts.insert(handle, stmt);
-                                        let preamble = build_param_preamble_with_decls(
-                                            &req.params,
-                                            &param_decls,
-                                        );
-                                        let full_sql = if preamble.is_empty() {
-                                            req.sql.clone()
-                                        } else {
-                                            format!("{}{}", preamble, req.sql)
-                                        };
-                                        match self.execute_sql(full_sql.trim(), &mut writer).await {
-                                            Ok(_) => {}
-                                            Err(e) => {
-                                                log::error!("sp_prepexec error: {}", e);
-                                                let err_resp = build_error_response(&e);
-                                                let _ = packet::write_packet(
-                                                    &mut writer,
-                                                    TABULAR_RESULT,
-                                                    &err_resp.data,
-                                                )
-                                                .await;
-                                            }
-                                        }
-                                    }
-                                    RpcRequest::ResetConnection => {
-                                        self.prepared_stmts.clear();
-                                        let mut buf = PacketBuilder::new();
-                                        tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
-                                        let _ = packet::write_packet(
-                                            &mut writer,
-                                            TABULAR_RESULT,
-                                            buf.as_bytes(),
-                                        )
-                                        .await;
-                                    }
-                                    RpcRequest::Catalog(cat_req) => {
-                                        let sql = match cat_req.proc {
-                                            CatalogProc::Tables => {
-                                                let table_name = cat_req
-                                                    .params.first()
-                                                    .map(|p| p.value_sql.trim_matches('\''))
-                                                    .unwrap_or("%");
-                                                let table_owner = cat_req
-                                                    .params
-                                                    .get(1)
-                                                    .map(|p| p.value_sql.trim_matches('\''))
-                                                    .unwrap_or("%");
-                                                format!(
-                                                    "SELECT DB_NAME() AS TABLE_QUALIFIER, s.name AS TABLE_OWNER, t.name AS TABLE_NAME, 'TABLE' AS TABLE_TYPE, NULL AS REMARKS FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.id WHERE t.name LIKE '{}' AND s.name LIKE '{}'",
-                                                    table_name, table_owner
-                                                )
-                                            }
-                                            CatalogProc::Columns => {
-                                                let table_name = cat_req
-                                                    .params.first()
-                                                    .map(|p| p.value_sql.trim_matches('\''))
-                                                    .unwrap_or("%");
-                                                format!(
-                                                    "SELECT s.name AS TABLE_OWNER, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, c.column_id AS ORDINAL_POSITION, ty.name AS TYPE_NAME FROM sys.columns c JOIN sys.tables t ON c.object_id = t.object_id JOIN sys.schemas s ON t.schema_id = s.id JOIN sys.types ty ON c.user_type_id = ty.user_type_id WHERE t.name LIKE '{}' ORDER BY t.name, c.column_id",
-                                                    table_name
-                                                )
-                                            }
-                                            CatalogProc::SprocColumns => {
-                                                let proc_name = cat_req
-                                                    .params.first()
-                                                    .map(|p| p.value_sql.trim_matches('\''))
-                                                    .unwrap_or("%");
-                                                format!(
-                                                    "SELECT s.name AS PROCEDURE_OWNER, r.name AS PROCEDURE_NAME, p.name AS COLUMN_NAME, p.parameter_id AS ORDINAL_POSITION, ty.name AS TYPE_NAME FROM sys.parameters p JOIN sys.routines r ON p.object_id = r.object_id JOIN sys.schemas s ON r.schema_id = s.id JOIN sys.types ty ON p.user_type_id = ty.user_type_id WHERE r.name LIKE '{}' ORDER BY r.name, p.parameter_id",
-                                                    proc_name
-                                                )
-                                            }
-                                            CatalogProc::PrimaryKeys => {
-                                                let table_name = cat_req
-                                                    .params.first()
-                                                    .map(|p| p.value_sql.trim_matches('\''))
-                                                    .unwrap_or("%");
-                                                format!(
-                                                    "SELECT s.name AS TABLE_OWNER, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, c.column_id AS KEY_SEQ, pk.name AS PK_NAME FROM sys.columns c JOIN sys.tables t ON c.object_id = t.object_id JOIN sys.schemas s ON t.schema_id = s.id JOIN (SELECT ic.object_id, ic.column_id, i.name FROM sys.index_columns ic JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id WHERE i.is_primary_key = 1) pk ON c.object_id = pk.object_id AND c.column_id = pk.column_id WHERE t.name LIKE '{}' ORDER BY t.name, c.column_id",
-                                                    table_name
-                                                )
-                                            }
-                                            CatalogProc::DescribeCursor => {
-                                                let cursor_handle = cat_req
-                                                    .params
-                                                    .get(2)
-                                                    .and_then(|p| p.value_sql.parse::<i32>().ok())
-                                                    .unwrap_or(0);
-                                                if let Some(session_id) = self.session_id {
-                                                    match self.db.cursor_rpc_fetch(
-                                                        session_id,
-                                                        cursor_handle,
-                                                        2,
-                                                        0,
-                                                        1,
-                                                    ) {
-                                                        Ok(fetch_result) => {
+                                            CursorOp::Fetch => {
+                                                let handle = cursor_req.cursor_handle.unwrap_or(0);
+                                                let fetch_type = cursor_req.fetch_type.unwrap_or(2);
+                                                let row_num = cursor_req.row_num.unwrap_or(0);
+                                                let n_rows = cursor_req.n_rows.unwrap_or(1);
+                                                match self.db.cursor_rpc_fetch(
+                                                    session_id, handle, fetch_type, row_num, n_rows,
+                                                ) {
+                                                    Ok(fetch_result) => {
+                                                        if fetch_result.rows.is_empty() {
                                                             let mut buf = PacketBuilder::new();
-                                                            let col_names = vec![
-                                                                "reference_name".to_string(),
-                                                                "cursor_name".to_string(),
-                                                                "cursor_scope".to_string(),
-                                                                "status".to_string(),
-                                                                "model".to_string(),
-                                                                "concurrency".to_string(),
-                                                                "scrollable".to_string(),
-                                                                "open_status".to_string(),
-                                                                "cursor_rows".to_string(),
-                                                                "fetch_status".to_string(),
-                                                                "column_count".to_string(),
-                                                                "row_count".to_string(),
-                                                                "last_operation".to_string(),
-                                                                "cursor_handle".to_string(),
-                                                            ];
-                                                            let col_types: Vec<_> = col_names.iter()
-                                                                .map(|_| crate::tds::type_mapping::runtime_type_to_tds(&iridium_core::types::DataType::Int))
-                                                                .collect();
-                                                            let cursor_name = format!(
-                                                                "#rpc_cursor_{}",
-                                                                cursor_handle
+                                                            tokens::write_done(
+                                                                &mut buf,
+                                                                tokens::DONE_FINAL,
+                                                                0,
+                                                                0,
                                                             );
-                                                            let row = vec![
-                                                                iridium_core::types::Value::NVarChar(cursor_name.clone()),
-                                                                iridium_core::types::Value::NVarChar(cursor_name),
-                                                                iridium_core::types::Value::Int(1),
-                                                                iridium_core::types::Value::Int(0),
-                                                                iridium_core::types::Value::Int(0),
-                                                                iridium_core::types::Value::Int(1),
-                                                                iridium_core::types::Value::Int(1),
-                                                                iridium_core::types::Value::Int(if fetch_result.rows.is_empty() { 0 } else { 1 }),
-                                                                iridium_core::types::Value::Int(fetch_result.rows.len() as i32),
-                                                                iridium_core::types::Value::Int(fetch_result.fetch_status),
-                                                                iridium_core::types::Value::Int(fetch_result.columns.len() as i32),
-                                                                iridium_core::types::Value::Int(fetch_result.rows.len() as i32),
-                                                                iridium_core::types::Value::Int(0),
-                                                                iridium_core::types::Value::Int(cursor_handle),
-                                                            ];
+                                                            let _ = packet::write_packet(
+                                                                &mut writer,
+                                                                TABULAR_RESULT,
+                                                                buf.as_bytes(),
+                                                            )
+                                                            .await;
+                                                        } else {
+                                                            let mut buf = PacketBuilder::new();
+                                                            let col_types: Vec<_> = fetch_result.column_types.iter()
+                                                                    .map(crate::tds::type_mapping::runtime_type_to_tds)
+                                                                    .collect();
                                                             tokens::write_colmetadata(
-                                                                &mut buf, &col_names, &col_types,
+                                                                &mut buf,
+                                                                &fetch_result.columns,
+                                                                &col_types,
                                                             );
-                                                            tokens::write_row(
-                                                                &mut buf, &row, &col_types, 0,
-                                                            );
+                                                            for row in &fetch_result.rows {
+                                                                tokens::write_row(
+                                                                    &mut buf, row, &col_types, 0,
+                                                                );
+                                                            }
                                                             tokens::write_done(
                                                                 &mut buf,
                                                                 tokens::DONE_FINAL
                                                                     | tokens::DONE_COUNT,
                                                                 0,
-                                                                1,
+                                                                fetch_result.rows.len() as u64,
                                                             );
                                                             let _ = packet::write_packet(
                                                                 &mut writer,
@@ -892,49 +409,528 @@ impl TdsSession {
                                                             )
                                                             .await;
                                                         }
-                                                        Err(e) => {
-                                                            let err_resp = build_error_response(&e);
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                            }
+                                            CursorOp::Close => {
+                                                let handle = cursor_req.cursor_handle.unwrap_or(0);
+                                                match self.db.cursor_rpc_close(session_id, handle) {
+                                                    Ok(()) => {
+                                                        let mut buf = PacketBuilder::new();
+                                                        tokens::write_done(
+                                                            &mut buf,
+                                                            tokens::DONE_FINAL,
+                                                            0,
+                                                            0,
+                                                        );
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            buf.as_bytes(),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                            }
+                                            CursorOp::Unprepare => {
+                                                let handle = cursor_req.cursor_handle.unwrap_or(0);
+                                                match self
+                                                    .db
+                                                    .cursor_rpc_deallocate(session_id, handle)
+                                                {
+                                                    Ok(()) => {
+                                                        let mut buf = PacketBuilder::new();
+                                                        tokens::write_done(
+                                                            &mut buf,
+                                                            tokens::DONE_FINAL,
+                                                            0,
+                                                            0,
+                                                        );
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            buf.as_bytes(),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                            }
+                                            CursorOp::Prepare | CursorOp::PrepExec => {
+                                                let sql = match cursor_req.sql {
+                                                    Some(ref s) if !s.is_empty() => s.clone(),
+                                                    _ => {
+                                                        let err = DbError::Execution(
+                                                            "cursor prepare requires SQL statement"
+                                                                .into(),
+                                                        );
+                                                        let err_resp = build_error_response(&err);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                        continue;
+                                                    }
+                                                };
+                                                let scroll_opt = cursor_req.scroll_opt.unwrap_or(0);
+                                                match self
+                                                    .db
+                                                    .cursor_rpc_open(session_id, &sql, scroll_opt)
+                                                {
+                                                    Ok((handle, _result)) => {
+                                                        let mut buf = PacketBuilder::new();
+                                                        tokens::write_output_int(
+                                                            &mut buf, "@cursor", handle,
+                                                        );
+                                                        tokens::write_done(
+                                                            &mut buf,
+                                                            tokens::DONE_FINAL,
+                                                            0,
+                                                            0,
+                                                        );
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            buf.as_bytes(),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
+                                                }
+                                            }
+                                            CursorOp::Execute => {
+                                                let handle = cursor_req.cursor_handle.unwrap_or(0);
+                                                let scroll_opt = cursor_req.scroll_opt.unwrap_or(0);
+                                                let n_rows = cursor_req.n_rows.unwrap_or(1);
+                                                match self.db.cursor_rpc_fetch(
+                                                    session_id, handle, 2, 0, n_rows,
+                                                ) {
+                                                    Ok(fetch_result) => {
+                                                        let _ = scroll_opt;
+                                                        if fetch_result.rows.is_empty() {
+                                                            let mut buf = PacketBuilder::new();
+                                                            tokens::write_output_int(
+                                                                &mut buf, "@cursor", handle,
+                                                            );
+                                                            tokens::write_done(
+                                                                &mut buf,
+                                                                tokens::DONE_FINAL,
+                                                                0,
+                                                                0,
+                                                            );
                                                             let _ = packet::write_packet(
                                                                 &mut writer,
                                                                 TABULAR_RESULT,
-                                                                &err_resp.data,
+                                                                buf.as_bytes(),
+                                                            )
+                                                            .await;
+                                                        } else {
+                                                            let mut buf = PacketBuilder::new();
+                                                            let col_types: Vec<_> = fetch_result.column_types.iter()
+                                                                    .map(crate::tds::type_mapping::runtime_type_to_tds)
+                                                                    .collect();
+                                                            tokens::write_output_int(
+                                                                &mut buf, "@cursor", handle,
+                                                            );
+                                                            tokens::write_colmetadata(
+                                                                &mut buf,
+                                                                &fetch_result.columns,
+                                                                &col_types,
+                                                            );
+                                                            for row in &fetch_result.rows {
+                                                                tokens::write_row(
+                                                                    &mut buf, row, &col_types, 0,
+                                                                );
+                                                            }
+                                                            tokens::write_done(
+                                                                &mut buf,
+                                                                tokens::DONE_FINAL
+                                                                    | tokens::DONE_COUNT,
+                                                                0,
+                                                                fetch_result.rows.len() as u64,
+                                                            );
+                                                            let _ = packet::write_packet(
+                                                                &mut writer,
+                                                                TABULAR_RESULT,
+                                                                buf.as_bytes(),
                                                             )
                                                             .await;
                                                         }
                                                     }
-                                                } else {
-                                                    let err = DbError::Execution(
-                                                        "no session for cursor operation".into(),
-                                                    );
-                                                    let err_resp = build_error_response(&err);
-                                                    let _ = packet::write_packet(
-                                                        &mut writer,
-                                                        TABULAR_RESULT,
-                                                        &err_resp.data,
-                                                    )
-                                                    .await;
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
                                                 }
-                                                String::new()
                                             }
+                                            CursorOp::Option => {
+                                                let _ = cursor_req;
+                                                let mut buf = PacketBuilder::new();
+                                                tokens::write_done(
+                                                    &mut buf,
+                                                    tokens::DONE_FINAL,
+                                                    0,
+                                                    0,
+                                                );
+                                                let _ = packet::write_packet(
+                                                    &mut writer,
+                                                    TABULAR_RESULT,
+                                                    buf.as_bytes(),
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                    } else {
+                                        let err = DbError::Execution(
+                                            "no session for cursor operation".into(),
+                                        );
+                                        let err_resp = build_error_response(&err);
+                                        let _ = packet::write_packet(
+                                            &mut writer,
+                                            TABULAR_RESULT,
+                                            &err_resp.data,
+                                        )
+                                        .await;
+                                    }
+                                }
+                                RpcRequest::Prepare(req) => {
+                                    let handle = self.prepared_stmts.len() as u32 + 1;
+                                    let param_decls = parse_param_decl(&req.param_decl);
+                                    let stmt = PreparedStatement {
+                                        sql: req.sql.clone(),
+                                        param_decls: param_decls.clone(),
+                                    };
+                                    self.prepared_stmts.insert(handle, stmt);
+                                    let mut buf = PacketBuilder::new();
+                                    tokens::write_output_int(&mut buf, "@handle", handle as i32);
+                                    tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
+                                    let _ = packet::write_packet(
+                                        &mut writer,
+                                        TABULAR_RESULT,
+                                        buf.as_bytes(),
+                                    )
+                                    .await;
+                                }
+                                RpcRequest::Execute(req) => {
+                                    let handle = req.stmt_handle as u32;
+                                    if let Some(stmt) = self.prepared_stmts.get(&handle) {
+                                        let param_decls = &stmt.param_decls;
+                                        let preamble = build_param_preamble_with_decls(
+                                            &req.params,
+                                            param_decls,
+                                        );
+                                        let full_sql = if preamble.is_empty() {
+                                            stmt.sql.clone()
+                                        } else {
+                                            format!("{}{}", preamble, stmt.sql)
                                         };
-                                        if !sql.is_empty() {
-                                            match self.execute_sql(&sql, &mut writer).await {
-                                                Ok(_) => {}
-                                                Err(e) => {
-                                                    log::error!("Catalog RPC error: {}", e);
-                                                    let err_resp = build_error_response(&e);
-                                                    let _ = packet::write_packet(
-                                                        &mut writer,
-                                                        TABULAR_RESULT,
-                                                        &err_resp.data,
-                                                    )
-                                                    .await;
+                                        match self.execute_sql(full_sql.trim(), &mut writer).await {
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::error!("sp_execute error: {}", e);
+                                                let err_resp = build_error_response(&e);
+                                                let _ = packet::write_packet(
+                                                    &mut writer,
+                                                    TABULAR_RESULT,
+                                                    &err_resp.data,
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                    } else {
+                                        let err = DbError::Execution(format!(
+                                            "Invalid statement handle: {}",
+                                            req.stmt_handle
+                                        ));
+                                        let err_resp = build_error_response(&err);
+                                        let _ = packet::write_packet(
+                                            &mut writer,
+                                            TABULAR_RESULT,
+                                            &err_resp.data,
+                                        )
+                                        .await;
+                                    }
+                                }
+                                RpcRequest::Unprepare(req) => {
+                                    let handle = req.stmt_handle as u32;
+                                    self.prepared_stmts.remove(&handle);
+                                    let mut buf = PacketBuilder::new();
+                                    tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
+                                    let _ = packet::write_packet(
+                                        &mut writer,
+                                        TABULAR_RESULT,
+                                        buf.as_bytes(),
+                                    )
+                                    .await;
+                                }
+                                RpcRequest::PrepExec(req) => {
+                                    let handle = self.prepared_stmts.len() as u32 + 1;
+                                    let param_decls = parse_param_decl(&req.param_decl);
+                                    let stmt = PreparedStatement {
+                                        sql: req.sql.clone(),
+                                        param_decls: param_decls.clone(),
+                                    };
+                                    self.prepared_stmts.insert(handle, stmt);
+                                    let preamble =
+                                        build_param_preamble_with_decls(&req.params, &param_decls);
+                                    let full_sql = if preamble.is_empty() {
+                                        req.sql.clone()
+                                    } else {
+                                        format!("{}{}", preamble, req.sql)
+                                    };
+                                    match self.execute_sql(full_sql.trim(), &mut writer).await {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            log::error!("sp_prepexec error: {}", e);
+                                            let err_resp = build_error_response(&e);
+                                            let _ = packet::write_packet(
+                                                &mut writer,
+                                                TABULAR_RESULT,
+                                                &err_resp.data,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                RpcRequest::ResetConnection => {
+                                    self.prepared_stmts.clear();
+                                    let mut buf = PacketBuilder::new();
+                                    tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
+                                    let _ = packet::write_packet(
+                                        &mut writer,
+                                        TABULAR_RESULT,
+                                        buf.as_bytes(),
+                                    )
+                                    .await;
+                                }
+                                RpcRequest::Catalog(cat_req) => {
+                                    let sql = match cat_req.proc {
+                                        CatalogProc::Tables => {
+                                            let table_name = cat_req
+                                                .params
+                                                .first()
+                                                .map(|p| p.value_sql.trim_matches('\''))
+                                                .unwrap_or("%");
+                                            let table_owner = cat_req
+                                                .params
+                                                .get(1)
+                                                .map(|p| p.value_sql.trim_matches('\''))
+                                                .unwrap_or("%");
+                                            format!(
+                                                    "SELECT DB_NAME() AS TABLE_QUALIFIER, s.name AS TABLE_OWNER, t.name AS TABLE_NAME, 'TABLE' AS TABLE_TYPE, NULL AS REMARKS FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.id WHERE t.name LIKE '{}' AND s.name LIKE '{}'",
+                                                    table_name, table_owner
+                                                )
+                                        }
+                                        CatalogProc::Columns => {
+                                            let table_name = cat_req
+                                                .params
+                                                .first()
+                                                .map(|p| p.value_sql.trim_matches('\''))
+                                                .unwrap_or("%");
+                                            format!(
+                                                    "SELECT s.name AS TABLE_OWNER, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, c.column_id AS ORDINAL_POSITION, ty.name AS TYPE_NAME FROM sys.columns c JOIN sys.tables t ON c.object_id = t.object_id JOIN sys.schemas s ON t.schema_id = s.id JOIN sys.types ty ON c.user_type_id = ty.user_type_id WHERE t.name LIKE '{}' ORDER BY t.name, c.column_id",
+                                                    table_name
+                                                )
+                                        }
+                                        CatalogProc::SprocColumns => {
+                                            let proc_name = cat_req
+                                                .params
+                                                .first()
+                                                .map(|p| p.value_sql.trim_matches('\''))
+                                                .unwrap_or("%");
+                                            format!(
+                                                    "SELECT s.name AS PROCEDURE_OWNER, r.name AS PROCEDURE_NAME, p.name AS COLUMN_NAME, p.parameter_id AS ORDINAL_POSITION, ty.name AS TYPE_NAME FROM sys.parameters p JOIN sys.routines r ON p.object_id = r.object_id JOIN sys.schemas s ON r.schema_id = s.id JOIN sys.types ty ON p.user_type_id = ty.user_type_id WHERE r.name LIKE '{}' ORDER BY r.name, p.parameter_id",
+                                                    proc_name
+                                                )
+                                        }
+                                        CatalogProc::PrimaryKeys => {
+                                            let table_name = cat_req
+                                                .params
+                                                .first()
+                                                .map(|p| p.value_sql.trim_matches('\''))
+                                                .unwrap_or("%");
+                                            format!(
+                                                    "SELECT s.name AS TABLE_OWNER, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, c.column_id AS KEY_SEQ, pk.name AS PK_NAME FROM sys.columns c JOIN sys.tables t ON c.object_id = t.object_id JOIN sys.schemas s ON t.schema_id = s.id JOIN (SELECT ic.object_id, ic.column_id, i.name FROM sys.index_columns ic JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id WHERE i.is_primary_key = 1) pk ON c.object_id = pk.object_id AND c.column_id = pk.column_id WHERE t.name LIKE '{}' ORDER BY t.name, c.column_id",
+                                                    table_name
+                                                )
+                                        }
+                                        CatalogProc::DescribeCursor => {
+                                            let cursor_handle = cat_req
+                                                .params
+                                                .get(2)
+                                                .and_then(|p| p.value_sql.parse::<i32>().ok())
+                                                .unwrap_or(0);
+                                            if let Some(session_id) = self.session_id {
+                                                match self.db.cursor_rpc_fetch(
+                                                    session_id,
+                                                    cursor_handle,
+                                                    2,
+                                                    0,
+                                                    1,
+                                                ) {
+                                                    Ok(fetch_result) => {
+                                                        let mut buf = PacketBuilder::new();
+                                                        let col_names = vec![
+                                                            "reference_name".to_string(),
+                                                            "cursor_name".to_string(),
+                                                            "cursor_scope".to_string(),
+                                                            "status".to_string(),
+                                                            "model".to_string(),
+                                                            "concurrency".to_string(),
+                                                            "scrollable".to_string(),
+                                                            "open_status".to_string(),
+                                                            "cursor_rows".to_string(),
+                                                            "fetch_status".to_string(),
+                                                            "column_count".to_string(),
+                                                            "row_count".to_string(),
+                                                            "last_operation".to_string(),
+                                                            "cursor_handle".to_string(),
+                                                        ];
+                                                        let col_types: Vec<_> = col_names.iter()
+                                                                .map(|_| crate::tds::type_mapping::runtime_type_to_tds(&iridium_core::types::DataType::Int))
+                                                                .collect();
+                                                        let cursor_name = format!(
+                                                            "#rpc_cursor_{}",
+                                                            cursor_handle
+                                                        );
+                                                        let row = vec![
+                                                            iridium_core::types::Value::NVarChar(
+                                                                cursor_name.clone(),
+                                                            ),
+                                                            iridium_core::types::Value::NVarChar(
+                                                                cursor_name,
+                                                            ),
+                                                            iridium_core::types::Value::Int(1),
+                                                            iridium_core::types::Value::Int(0),
+                                                            iridium_core::types::Value::Int(0),
+                                                            iridium_core::types::Value::Int(1),
+                                                            iridium_core::types::Value::Int(1),
+                                                            iridium_core::types::Value::Int(
+                                                                if fetch_result.rows.is_empty() {
+                                                                    0
+                                                                } else {
+                                                                    1
+                                                                },
+                                                            ),
+                                                            iridium_core::types::Value::Int(
+                                                                fetch_result.rows.len() as i32,
+                                                            ),
+                                                            iridium_core::types::Value::Int(
+                                                                fetch_result.fetch_status,
+                                                            ),
+                                                            iridium_core::types::Value::Int(
+                                                                fetch_result.columns.len() as i32,
+                                                            ),
+                                                            iridium_core::types::Value::Int(
+                                                                fetch_result.rows.len() as i32,
+                                                            ),
+                                                            iridium_core::types::Value::Int(0),
+                                                            iridium_core::types::Value::Int(
+                                                                cursor_handle,
+                                                            ),
+                                                        ];
+                                                        tokens::write_colmetadata(
+                                                            &mut buf, &col_names, &col_types,
+                                                        );
+                                                        tokens::write_row(
+                                                            &mut buf, &row, &col_types, 0,
+                                                        );
+                                                        tokens::write_done(
+                                                            &mut buf,
+                                                            tokens::DONE_FINAL | tokens::DONE_COUNT,
+                                                            0,
+                                                            1,
+                                                        );
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            buf.as_bytes(),
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        let err_resp = build_error_response(&e);
+                                                        let _ = packet::write_packet(
+                                                            &mut writer,
+                                                            TABULAR_RESULT,
+                                                            &err_resp.data,
+                                                        )
+                                                        .await;
+                                                    }
                                                 }
+                                            } else {
+                                                let err = DbError::Execution(
+                                                    "no session for cursor operation".into(),
+                                                );
+                                                let err_resp = build_error_response(&err);
+                                                let _ = packet::write_packet(
+                                                    &mut writer,
+                                                    TABULAR_RESULT,
+                                                    &err_resp.data,
+                                                )
+                                                .await;
+                                            }
+                                            String::new()
+                                        }
+                                    };
+                                    if !sql.is_empty() {
+                                        match self.execute_sql(&sql, &mut writer).await {
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                log::error!("Catalog RPC error: {}", e);
+                                                let err_resp = build_error_response(&e);
+                                                let _ = packet::write_packet(
+                                                    &mut writer,
+                                                    TABULAR_RESULT,
+                                                    &err_resp.data,
+                                                )
+                                                .await;
                                             }
                                         }
                                     }
                                 }
-                            }
+                            },
                             Ok(None) => {
                                 let preview_len = data.len().min(96);
                                 log::warn!(

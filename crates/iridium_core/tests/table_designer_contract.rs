@@ -84,12 +84,11 @@ fn table_designer_publish_add_column_via_alter_table() {
         &mut engine,
         "SELECT c.name FROM sys.columns c WHERE c.object_id = OBJECT_ID('dbo.MyTable') ORDER BY c.column_id",
     );
-    let col_names: Vec<String> = r
-        .rows
-        .into_iter()
-        .map(|r| str_value(&r[0]))
-        .collect();
-    assert!(col_names.contains(&"newcol".to_string()), "newcol present: {col_names:?}");
+    let col_names: Vec<String> = r.rows.into_iter().map(|r| str_value(&r[0])).collect();
+    assert!(
+        col_names.contains(&"newcol".to_string()),
+        "newcol present: {col_names:?}"
+    );
 }
 
 #[test]
@@ -101,25 +100,30 @@ fn table_designer_publish_drop_column_via_alter_table() {
         &mut engine,
         "SELECT c.name FROM sys.columns c WHERE c.object_id = OBJECT_ID('dbo.MyTable') ORDER BY c.column_id",
     );
-    let col_names: Vec<String> = r
-        .rows
-        .into_iter()
-        .map(|r| str_value(&r[0]))
-        .collect();
-    assert!(!col_names.contains(&"col1".to_string()), "col1 gone: {col_names:?}");
+    let col_names: Vec<String> = r.rows.into_iter().map(|r| str_value(&r[0])).collect();
+    assert!(
+        !col_names.contains(&"col1".to_string()),
+        "col1 gone: {col_names:?}"
+    );
 }
 
 #[test]
 fn table_designer_publish_alter_column_nullability() {
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
-    exec(&mut engine, "ALTER TABLE dbo.MyTable ALTER COLUMN col1 VARCHAR(100) NOT NULL");
+    exec(
+        &mut engine,
+        "ALTER TABLE dbo.MyTable ALTER COLUMN col1 VARCHAR(100) NOT NULL",
+    );
     let r = query(
         &mut engine,
         "SELECT is_nullable FROM sys.columns WHERE object_id = OBJECT_ID('dbo.MyTable') AND name = 'col1'",
     );
     assert_eq!(r.rows.len(), 1);
-    assert!(matches!(&r.rows[0][0], Value::Bit(false)), "col1 is now NOT NULL");
+    assert!(
+        matches!(&r.rows[0][0], Value::Bit(false)),
+        "col1 is now NOT NULL"
+    );
 }
 
 #[test]

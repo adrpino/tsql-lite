@@ -187,7 +187,9 @@ fn bind_xml_nodes(
         .ok_or_else(|| DbError::Parse("XML .nodes() requires (xpath)".into()))?;
     let parts = crate::parser::utils::split_csv_top_level(inner);
     if parts.len() < 2 {
-        return Err(DbError::Parse("XML .nodes() requires receiver and xpath".into()));
+        return Err(DbError::Parse(
+            "XML .nodes() requires receiver and xpath".into(),
+        ));
     }
 
     let recv_expr = parse_expr_subquery_aware(&parts[0])?;
@@ -521,8 +523,8 @@ fn split_openjson_call_and_with(name: &str) -> Result<(String, Option<String>), 
         }
         i += 1;
     }
-    let close_idx = close_idx
-        .ok_or_else(|| DbError::Parse("OPENJSON requires (json_expr[, path])".into()))?;
+    let close_idx =
+        close_idx.ok_or_else(|| DbError::Parse("OPENJSON requires (json_expr[, path])".into()))?;
     let inner = name[start + 1..close_idx].to_string();
     let tail = name[close_idx + 1..].trim();
     if tail.is_empty() {
@@ -531,7 +533,10 @@ fn split_openjson_call_and_with(name: &str) -> Result<(String, Option<String>), 
     let upper_tail = tail.to_ascii_uppercase();
     if upper_tail.starts_with("WITH") {
         let after_with = tail[4..].trim();
-        if let Some(schema_inner) = after_with.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        if let Some(schema_inner) = after_with
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+        {
             return Ok((inner, Some(schema_inner.to_string())));
         }
     }
@@ -550,7 +555,11 @@ fn parse_openjson_with_schema(
         let col_name = match parser.next() {
             Some(crate::parser::ast::Token::Identifier(id)) => id.clone(),
             Some(crate::parser::ast::Token::Keyword(kw)) => kw.as_ref().to_string(),
-            _ => return Err(DbError::Parse("Expected column name in OPENJSON WITH".into())),
+            _ => {
+                return Err(DbError::Parse(
+                    "Expected column name in OPENJSON WITH".into(),
+                ))
+            }
         };
         let ast_dt = crate::parser::parse::expressions::parse_data_type(&mut parser)
             .map_err(|e| DbError::Parse(format!("{e}")))?;
@@ -1016,7 +1025,10 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
     let rows: Vec<StoredRow> = permissions
         .iter()
         .map(|perm| StoredRow {
-            values: vec![Value::NVarChar(String::new()), Value::NVarChar(perm.to_string())],
+            values: vec![
+                Value::NVarChar(String::new()),
+                Value::NVarChar(perm.to_string()),
+            ],
             deleted: false,
         })
         .collect();
@@ -1033,7 +1045,10 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref.alias.clone().unwrap_or_else(|| "fn_my_permissions".into()),
+        alias: tref
+            .alias
+            .clone()
+            .unwrap_or_else(|| "fn_my_permissions".into()),
         virtual_rows: Some(rows),
     }))
 }

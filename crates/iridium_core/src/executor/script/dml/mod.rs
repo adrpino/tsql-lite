@@ -13,9 +13,7 @@ use crate::executor::query::QueryExecutor;
 use crate::executor::result::QueryResult;
 use crate::storage::{Storage, StoredRow};
 
-fn take_leftmost_into_table(
-    stmt: &mut crate::ast::Statement,
-) -> Option<crate::ast::ObjectName> {
+fn take_leftmost_into_table(stmt: &mut crate::ast::Statement) -> Option<crate::ast::ObjectName> {
     match stmt {
         crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => s.into_table.take(),
         crate::ast::Statement::Dml(crate::ast::DmlStatement::SetOp(op)) => {

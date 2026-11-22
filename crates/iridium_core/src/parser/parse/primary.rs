@@ -217,7 +217,8 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
                 && matches!(
                     parser.peek_at(1),
                     Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("VALUE")
-                ) || (matches!(parser.peek(), Some(Token::Dot))
+                )
+                || (matches!(parser.peek(), Some(Token::Dot))
                     && matches!(
                         parser.peek_at(1),
                         Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("VALUE")

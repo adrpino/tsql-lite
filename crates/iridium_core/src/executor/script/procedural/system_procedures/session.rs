@@ -1,10 +1,10 @@
+use crate::ast::statements::procedural::ExecProcedureStmt;
 use crate::error::DbError;
 use crate::executor::context::ExecutionContext;
+use crate::executor::evaluator::eval_expr;
 use crate::executor::result::QueryResult;
 use crate::executor::script::ScriptExecutor;
 use crate::types::{DataType, Value};
-use crate::ast::statements::procedural::ExecProcedureStmt;
-use crate::executor::evaluator::eval_expr;
 
 pub(crate) fn execute_sp_who(ctx: &ExecutionContext<'_>) -> Result<QueryResult, DbError> {
     let rows = vec![vec![
@@ -70,7 +70,11 @@ pub(crate) fn execute_sp_databases() -> Result<QueryResult, DbError> {
         ]);
     }
     Ok(QueryResult {
-        columns: vec!["DATABASE_NAME".into(), "DATABASE_SIZE".into(), "REMARKS".into()],
+        columns: vec![
+            "DATABASE_NAME".into(),
+            "DATABASE_SIZE".into(),
+            "REMARKS".into(),
+        ],
         column_types: vec![
             DataType::VarChar { max_len: 128 },
             DataType::Int,
@@ -288,7 +292,10 @@ pub(crate) fn execute_sp_releaseapplock(
     for (idx, arg) in stmt.args.iter().enumerate() {
         let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
         if let Some(ref name) = arg.name {
-            if name.trim_start_matches('@').eq_ignore_ascii_case("resource") {
+            if name
+                .trim_start_matches('@')
+                .eq_ignore_ascii_case("resource")
+            {
                 resource = Some(val.to_string_value());
             }
         } else if idx == 0 && resource.is_none() {

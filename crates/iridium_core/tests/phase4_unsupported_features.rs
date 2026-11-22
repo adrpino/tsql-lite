@@ -47,7 +47,10 @@ fn test_restore_database_fails() {
 #[test]
 fn test_sys_server_principals_queryable() {
     let mut engine = Engine::new();
-    let r = query(&mut engine, "SELECT name, type_desc FROM sys.server_principals");
+    let r = query(
+        &mut engine,
+        "SELECT name, type_desc FROM sys.server_principals",
+    );
     assert!(!r.rows.is_empty(), "sys.server_principals must have rows");
 }
 
@@ -58,10 +61,7 @@ fn test_sys_database_principals_returns_rows() {
         &mut engine,
         "SELECT name, type_desc FROM sys.database_principals",
     );
-    assert!(
-        !r.rows.is_empty(),
-        "sys.database_principals must have rows"
-    );
+    assert!(!r.rows.is_empty(), "sys.database_principals must have rows");
     let names: Vec<String> = r
         .rows
         .iter()
@@ -241,7 +241,10 @@ fn test_create_message_type_unsupported() {
 fn test_create_certificate_accepted() {
     let mut engine = Engine::new();
     assert!(
-        !try_exec(&mut engine, "CREATE CERTIFICATE my_cert FROM FILE = 'cert.cer'"),
+        !try_exec(
+            &mut engine,
+            "CREATE CERTIFICATE my_cert FROM FILE = 'cert.cer'"
+        ),
         "CREATE CERTIFICATE should be accepted"
     );
 }
@@ -253,10 +256,7 @@ fn test_create_certificate_accepted() {
 fn test_alter_authorization_unsupported() {
     let mut engine = Engine::new();
     assert!(
-        try_exec(
-            &mut engine,
-            "ALTER AUTHORIZATION ON DATABASE::master TO sa"
-        ),
+        try_exec(&mut engine, "ALTER AUTHORIZATION ON DATABASE::master TO sa"),
         "ALTER AUTHORIZATION should fail"
     );
 }

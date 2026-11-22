@@ -607,7 +607,7 @@ fn is_to_token(tok: Option<&Token>) -> bool {
 
 fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
     let _ = parser.next(); // GRANT | REVOKE | DENY
-    // Consume optional GRANT OPTION FOR (on REVOKE) and permission list until ON / TO / FROM
+                           // Consume optional GRANT OPTION FOR (on REVOKE) and permission list until ON / TO / FROM
     while !parser.is_empty()
         && !matches!(parser.peek(), Some(Token::Semicolon) | Some(Token::Go))
         && !parser.at_keyword(Keyword::On)
@@ -633,7 +633,10 @@ fn parse_dcl_permission_stmt(parser: &mut Parser) -> ParseResult<Statement> {
     if parser.at_keyword(Keyword::On) {
         let _ = parser.next();
         // Consume optional securable class prefix (e.g. OBJECT::, SCHEMA::, TYPE::)
-        if matches!(parser.peek(), Some(Token::Identifier(_)) | Some(Token::Keyword(_))) {
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+        ) {
             let saved = parser.save();
             let _ = parser.next();
             if matches!(parser.peek(), Some(Token::Operator(op)) if op == "::") {

@@ -11,7 +11,9 @@ pub(crate) fn execute_sp_helpuser(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helpuser query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helpuser query".into(),
+        )),
     }
 }
 
@@ -23,7 +25,9 @@ pub(crate) fn execute_sp_helprole(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helprole query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helprole query".into(),
+        )),
     }
 }
 
@@ -35,7 +39,9 @@ pub(crate) fn execute_sp_helprolemember(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helprolemember query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helprolemember query".into(),
+        )),
     }
 }
 
@@ -47,7 +53,9 @@ pub(crate) fn execute_sp_helpsrvrole(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helpsrvrole query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helpsrvrole query".into(),
+        )),
     }
 }
 
@@ -59,6 +67,8 @@ pub(crate) fn execute_sp_helpsrvrolemember(
     let batch = crate::parser::parse_batch(sql)?;
     match exec.execute_batch(&batch, ctx)? {
         crate::error::StmtOutcome::Ok(Some(res)) => Ok(res),
-        _ => Err(DbError::Execution("Failed to execute sp_helpsrvrolemember query".into())),
+        _ => Err(DbError::Execution(
+            "Failed to execute sp_helpsrvrolemember query".into(),
+        )),
     }
 }

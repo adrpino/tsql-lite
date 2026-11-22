@@ -127,7 +127,11 @@ fn parse_for_xml_clause(parser: &mut Parser) -> ParseResult<Option<ForXmlClause>
     let mode = match parser.next() {
         Some(Token::Identifier(id)) => id.to_ascii_uppercase(),
         Some(Token::Keyword(k)) => k.as_sql().to_ascii_uppercase(),
-        _ => return parser.backtrack(Expected::Description("XML mode (PATH, RAW, AUTO, EXPLICIT)")),
+        _ => {
+            return parser.backtrack(Expected::Description(
+                "XML mode (PATH, RAW, AUTO, EXPLICIT)",
+            ))
+        }
     };
 
     let mut path = None;
@@ -463,7 +467,10 @@ fn starts_with_select_inside_parens(parser: &Parser) -> bool {
     while matches!(parser.peek_at(offset), Some(Token::LParen)) {
         offset += 1;
     }
-    matches!(parser.peek_at(offset), Some(Token::Keyword(Keyword::Select)))
+    matches!(
+        parser.peek_at(offset),
+        Some(Token::Keyword(Keyword::Select))
+    )
 }
 
 fn parse_group_by_items(parser: &mut Parser) -> ParseResult<(Vec<Expr>, Vec<Vec<Expr>>)> {
@@ -723,8 +730,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                                 Some(Token::Keyword(kw)) => kw.as_ref().to_string(),
                                 _ => return p.backtrack(Expected::Description("column name")),
                             };
-                            let data_type =
-                                crate::parser::parse::expressions::parse_data_type(p)?;
+                            let data_type = crate::parser::parse::expressions::parse_data_type(p)?;
                             let path = match p.peek() {
                                 Some(Token::String(s)) | Some(Token::NString(s)) => {
                                     let s = s.clone();
@@ -867,19 +873,19 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     ),
                     Some(Token::Keyword(
                         Keyword::Nolock
-                            | Keyword::Rowlock
-                            | Keyword::Tablock
-                            | Keyword::Holdlock
-                            | Keyword::Updlock
-                            | Keyword::Xlock
-                            | Keyword::Readuncommitted
-                            | Keyword::Readcommitted
-                            | Keyword::Readpast
-                            | Keyword::Index
-                            | Keyword::Read
-                            | Keyword::Serializable
-                            | Keyword::Repeatable
-                            | Keyword::Snapshot,
+                        | Keyword::Rowlock
+                        | Keyword::Tablock
+                        | Keyword::Holdlock
+                        | Keyword::Updlock
+                        | Keyword::Xlock
+                        | Keyword::Readuncommitted
+                        | Keyword::Readcommitted
+                        | Keyword::Readpast
+                        | Keyword::Index
+                        | Keyword::Read
+                        | Keyword::Serializable
+                        | Keyword::Repeatable
+                        | Keyword::Snapshot,
                     )) => true,
                     _ => false,
                 };

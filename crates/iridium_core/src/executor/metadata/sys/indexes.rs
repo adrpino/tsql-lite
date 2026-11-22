@@ -29,7 +29,11 @@ impl VirtualTable for SysIndexes {
                 ("allow_row_locks", DataType::Bit, false),
                 ("allow_page_locks", DataType::Bit, false),
                 ("has_filter", DataType::Bit, false),
-                ("filter_definition", DataType::NVarChar { max_len: 4000 }, true),
+                (
+                    "filter_definition",
+                    DataType::NVarChar { max_len: 4000 },
+                    true,
+                ),
                 ("is_ms_shipped", DataType::Bit, false),
                 ("is_published", DataType::Bit, false),
             ],
@@ -112,9 +116,9 @@ impl VirtualTable for SysIndexes {
                 rows.push(StoredRow {
                     values: vec![
                         Value::Int(table.id as i32),
-                        Value::Int(0),                  // heap
-                        Value::Null,                    // no name for heap
-                        Value::TinyInt(0),              // HEAP
+                        Value::Int(0),     // heap
+                        Value::Null,       // no name for heap
+                        Value::TinyInt(0), // HEAP
                         Value::VarChar("HEAP".to_string()),
                         Value::Bit(false),
                         Value::Int(1),

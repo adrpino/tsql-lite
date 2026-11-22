@@ -546,9 +546,9 @@ fn expr_matches_grouping(a: &Expr, b: &Expr) -> bool {
                     .all(|(x, y)| x.eq_ignore_ascii_case(y))
         }
         (Expr::QualifiedIdentifier(xs), Expr::Identifier(y))
-        | (Expr::Identifier(y), Expr::QualifiedIdentifier(xs)) => xs
-            .last()
-            .is_some_and(|last| last.eq_ignore_ascii_case(y)),
+        | (Expr::Identifier(y), Expr::QualifiedIdentifier(xs)) => {
+            xs.last().is_some_and(|last| last.eq_ignore_ascii_case(y))
+        }
         _ => false,
     }
 }

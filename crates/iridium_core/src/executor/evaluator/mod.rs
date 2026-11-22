@@ -175,10 +175,9 @@ fn eval_expr_inner(
                     if xpath_val.is_null() || sql_ty_val.is_null() {
                         return Ok(Value::Null);
                     }
-                    let Some(extracted) = eval_xml_value(
-                        &xml_val.to_string_value(),
-                        &xpath_val.to_string_value(),
-                    ) else {
+                    let Some(extracted) =
+                        eval_xml_value(&xml_val.to_string_value(), &xpath_val.to_string_value())
+                    else {
                         return Ok(Value::Null);
                     };
                     let target_ty = parse_xml_value_target_type(&sql_ty_val.to_string_value());
@@ -204,10 +203,8 @@ fn eval_expr_inner(
                     if xpath_val.is_null() {
                         return Ok(Value::Null);
                     }
-                    let exists = eval_xml_exist(
-                        &xml_val.to_string_value(),
-                        &xpath_val.to_string_value(),
-                    );
+                    let exists =
+                        eval_xml_exist(&xml_val.to_string_value(), &xpath_val.to_string_value());
                     return Ok(Value::Bit(exists));
                 }
                 if args.len() == 1 && method.eq_ignore_ascii_case("query") {
@@ -226,10 +223,8 @@ fn eval_expr_inner(
                     if xpath_val.is_null() {
                         return Ok(Value::Null);
                     }
-                    let fragment = eval_xml_query(
-                        &xml_val.to_string_value(),
-                        &xpath_val.to_string_value(),
-                    );
+                    let fragment =
+                        eval_xml_query(&xml_val.to_string_value(), &xpath_val.to_string_value());
                     return Ok(Value::NVarChar(fragment));
                 }
             }
@@ -424,9 +419,7 @@ fn resolve_timezone_spec(tz_name: &str) -> Option<(i64, DstRule)> {
         }
         "new zealand standard time" | "pacific/auckland" => Some((720, DstRule::Nz)),
         "e. south america standard time" | "america/sao_paulo" => Some((-180, DstRule::None)),
-        "argentina standard time" | "america/argentina/buenos_aires" => {
-            Some((-180, DstRule::None))
-        }
+        "argentina standard time" | "america/argentina/buenos_aires" => Some((-180, DstRule::None)),
         "sa pacific standard time" | "america/bogota" | "america/lima" => {
             Some((-300, DstRule::None))
         }
@@ -588,7 +581,11 @@ pub(crate) fn eval_todatetimeoffset(
             )?;
             match coerced {
                 Value::DateTime2(dt) | Value::DateTime(dt) => dt,
-                _ => return Err(DbError::Execution("TODATETIMEOFFSET expects a datetime".into())),
+                _ => {
+                    return Err(DbError::Execution(
+                        "TODATETIMEOFFSET expects a datetime".into(),
+                    ))
+                }
             }
         }
     };
@@ -952,11 +949,7 @@ fn match_xml_predicate(open_tag: &str, inner: &str, pred: &str) -> bool {
     }
     if let Some((lhs, rhs)) = p.split_once('=') {
         let lhs = lhs.trim();
-        let rhs_clean = rhs
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .to_string();
+        let rhs_clean = rhs.trim().trim_matches('"').trim_matches('\'').to_string();
         if let Some(attr) = lhs.strip_prefix('@') {
             return extract_xml_attr(open_tag, attr).is_some_and(|v| v == rhs_clean);
         }
@@ -1063,7 +1056,10 @@ pub(crate) fn eval_xml_nodes(xml: &str, xpath: &str) -> Vec<String> {
         }
     }
 
-    current.into_iter().map(|(full, _, _)| full.to_string()).collect()
+    current
+        .into_iter()
+        .map(|(full, _, _)| full.to_string())
+        .collect()
 }
 
 pub(crate) fn eval_xml_exist(xml: &str, xpath: &str) -> bool {
@@ -1106,7 +1102,11 @@ fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
     // Parse optional trailing `[N]` 1-based ordinal index and outer parens.
     let (path_body, ordinal) = if let Some(lb) = trimmed.rfind('[') {
         if let Some(rb) = trimmed[lb..].find(']') {
-            let idx = trimmed[lb + 1..lb + rb].trim().parse::<usize>().ok().unwrap_or(1);
+            let idx = trimmed[lb + 1..lb + rb]
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .unwrap_or(1);
             (&trimmed[..lb], idx.max(1))
         } else {
             (trimmed, 1)

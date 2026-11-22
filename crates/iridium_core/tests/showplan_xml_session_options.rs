@@ -1,5 +1,5 @@
-use iridium_core::{parse_batch, types::Value, Engine, QueryResult};
 use iridium_core::ast::Statement;
+use iridium_core::{parse_batch, types::Value, Engine, QueryResult};
 
 fn exec_then_select(set_sql: &str) -> QueryResult {
     let engine = Engine::new();
@@ -88,8 +88,8 @@ fn test_statistics_xml_space_syntax_accepted() {
 
 #[test]
 fn test_combined_batch_showplan_xml_returns_xml_and_no_row_data() {
-    let stmts: Vec<Statement> = parse_batch("SET SHOWPLAN_XML ON; SELECT 1 AS x")
-        .expect("parse failed");
+    let stmts: Vec<Statement> =
+        parse_batch("SET SHOWPLAN_XML ON; SELECT 1 AS x").expect("parse failed");
     let engine = Engine::new();
     let r = engine
         .execute_batch(stmts)

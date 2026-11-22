@@ -183,10 +183,7 @@ impl<'a> MutationExecutor<'a> {
             deleted: false,
         };
         let needs_defaults_or_computed = table.columns.iter().any(|c| {
-            c.identity.is_some()
-                || c.default.is_some()
-                || !c.nullable
-                || c.computed_expr.is_some()
+            c.identity.is_some() || c.default.is_some() || !c.nullable || c.computed_expr.is_some()
         });
         if needs_defaults_or_computed {
             self.apply_missing_values(table, &mut temp_row.values, ctx)?;

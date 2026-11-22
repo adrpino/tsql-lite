@@ -166,14 +166,14 @@ pub fn lower_select(
                     })
                     .collect::<Result<Vec<_>, DbError>>()?;
                 Ok::<_, DbError>(Box::new(executor_ast::statements::query::SelectExtra {
-                    for_xml: ex.for_xml.map(|fx| {
-                        executor_ast::statements::query::ForXmlClause {
+                    for_xml: ex
+                        .for_xml
+                        .map(|fx| executor_ast::statements::query::ForXmlClause {
                             mode: fx.mode,
                             path: fx.path,
                             root: fx.root,
                             type_directive: fx.type_directive,
-                        }
-                    }),
+                        }),
                     for_json: ex.for_json.map(|fj| {
                         executor_ast::statements::query::ForJsonClause {
                             mode: fj.mode,
@@ -302,9 +302,7 @@ fn format_tvf_name(
 ) -> Result<String, DbError> {
     let arg_strs: Vec<String> = args
         .into_iter()
-        .map(|a| {
-            lower_expr(a).map(|expr| crate::executor::tooling::formatting::format_expr(&expr))
-        })
+        .map(|a| lower_expr(a).map(|expr| crate::executor::tooling::formatting::format_expr(&expr)))
         .collect::<Result<Vec<_>, _>>()?;
     let mut full_name = format!("{}({})", func_name, arg_strs.join(", "));
     if !with_schema.is_empty() {

@@ -266,6 +266,19 @@ pub(crate) fn drop_schema(
     executor.catalog.drop_schema(&stmt.name)
 }
 
+pub(crate) fn alter_schema_transfer(
+    executor: &mut SchemaExecutor<'_>,
+    stmt: crate::ast::AlterSchemaTransferStmt,
+) -> Result<(), DbError> {
+    let src_schema = stmt.source.schema_or_dbo();
+    executor.catalog.transfer_object(
+        &stmt.target_schema,
+        stmt.entity_type.as_deref(),
+        src_schema,
+        &stmt.source.name,
+    )
+}
+
 pub(crate) fn create_view(
     executor: &mut SchemaExecutor<'_>,
     stmt: crate::ast::CreateViewStmt,
@@ -472,7 +485,10 @@ pub(crate) fn alter_table(
                 .find_table_mut(&schema_name, &stmt.table.name)
                 .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
             for fk in &mut table_mut.foreign_keys {
-                if name.as_ref().is_none_or(|n| fk.name.eq_ignore_ascii_case(n)) {
+                if name
+                    .as_ref()
+                    .is_none_or(|n| fk.name.eq_ignore_ascii_case(n))
+                {
                     fk.enabled = check;
                 }
             }

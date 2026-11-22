@@ -1,10 +1,10 @@
+pub mod parser;
 pub mod types;
 pub mod utils;
-pub mod parser;
 
+pub use parser::*;
 pub use types::*;
 pub use utils::*;
-pub use parser::*;
 
 #[cfg(test)]
 mod tests {

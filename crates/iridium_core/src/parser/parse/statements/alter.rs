@@ -254,7 +254,8 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parser.next();
                 let _ = crate::parser::parse::expressions::parse_expr(parser)?;
             }
-            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TO")) {
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TO"))
+            {
                 let _ = parser.next();
                 let _ = super::parse_multipart_name(parser)?;
                 if parser.at_keyword(Keyword::Partition) {
@@ -390,8 +391,52 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             parser.restore(saved);
             parser.backtrack(Expected::Description("ALTER DATABASE ADD/MODIFY/REMOVE"))
         }
+    } else if parser.at_keyword(Keyword::Schema) {
+        let _ = parser.next();
+        let target_schema = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(k)) => k.as_ref().to_string(),
+            _ => return parser.backtrack(Expected::Description("schema name")),
+        };
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TRANSFER")
+        ) {
+            let _ = parser.next();
+            let entity_type = if matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "::")
+            {
+                let cls = match parser.next() {
+                    Some(Token::Identifier(id)) => id.clone(),
+                    Some(Token::Keyword(k)) => k.as_ref().to_string(),
+                    _ => String::new(),
+                };
+                let _ = parser.next(); // '::'
+                Some(cls)
+            } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("XML"))
+                && matches!(parser.peek_at(1), Some(Token::Keyword(Keyword::Schema)))
+                && matches!(parser.peek_at(2), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("COLLECTION"))
+                && matches!(parser.peek_at(3), Some(Token::Operator(op)) if op == "::")
+            {
+                for _ in 0..4 {
+                    let _ = parser.next();
+                }
+                Some("XML SCHEMA COLLECTION".to_string())
+            } else {
+                None
+            };
+            let source = super::parse_multipart_name(parser)?;
+            Ok(Statement::Ddl(DdlStatement::AlterSchemaTransfer {
+                target_schema,
+                entity_type,
+                source,
+            }))
+        } else {
+            skip_ddl_tail(parser);
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
+        }
     } else if parser.at_keyword(Keyword::User)
-        || parser.at_keyword(Keyword::Schema)
         || parser.at_keyword(Keyword::Index)
         || matches!(
             parser.peek(),

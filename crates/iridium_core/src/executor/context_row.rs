@@ -1,6 +1,6 @@
 use crate::executor::context::RowContext;
-use crate::types::Value;
 use crate::executor::model::JoinedRow;
+use crate::types::Value;
 
 impl RowContext {
     pub fn fork(&self) -> Self {

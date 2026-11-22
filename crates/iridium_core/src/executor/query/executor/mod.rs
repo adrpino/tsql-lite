@@ -83,8 +83,7 @@ impl<'a> QueryExecutor<'a> {
         super::from_tree::enforce_query_governor_cost_limit(&query, ctx)?;
         let mut source_eval = source::execute_source(self, &query, ctx)?;
         let source_shape = source_eval.shape.clone();
-        let source_rows =
-            source_eval.materialize(ctx, self.catalog, self.storage, self.clock)?;
+        let source_rows = source_eval.materialize(ctx, self.catalog, self.storage, self.clock)?;
 
         // Collect base-table storage indices aligned 1:1 with source_rows before projection.
         let mut base_targets: Vec<crate::executor::cte::CteBaseTarget> = Vec::new();
@@ -165,8 +164,7 @@ fn format_for_xml_result(
                 item.alias.is_none()
                     && !matches!(
                         item.expr,
-                        crate::ast::Expr::Identifier(_)
-                            | crate::ast::Expr::QualifiedIdentifier(_)
+                        crate::ast::Expr::Identifier(_) | crate::ast::Expr::QualifiedIdentifier(_)
                     )
             });
             let col_name = result.columns.get(i).map(String::as_str).unwrap_or("");

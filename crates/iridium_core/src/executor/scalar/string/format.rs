@@ -653,10 +653,7 @@ fn format_custom_numeric(f: f64, fmt: &str) -> String {
     let use_commas = int_spec.contains(',');
     let min_int_digits = int_spec.chars().filter(|&c| c == '0').count();
     let min_frac_digits = frac_spec.chars().filter(|&c| c == '0').count();
-    let max_frac_digits = frac_spec
-        .chars()
-        .filter(|&c| c == '0' || c == '#')
-        .count();
+    let max_frac_digits = frac_spec.chars().filter(|&c| c == '0' || c == '#').count();
 
     let negative = f < 0.0;
     let rounded = format!("{:.*}", max_frac_digits, f.abs());

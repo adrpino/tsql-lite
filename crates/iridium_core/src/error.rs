@@ -35,6 +35,15 @@ pub enum DbError {
         message: String,
     },
 
+    /// A user-raised SQL error (RAISERROR / THROW) preserving exact number, severity, and state.
+    #[error("{message}")]
+    Raised {
+        number: i32,
+        severity: u8,
+        state: u8,
+        message: String,
+    },
+
     // -- Strongly-typed semantic errors --
     #[error("Invalid schema name '{schema}'.")]
     SchemaNotFound { schema: String },
@@ -145,6 +154,7 @@ impl DbError {
             DbError::Execution(_)
             | DbError::Deadlock(_)
             | DbError::Custom { .. }
+            | DbError::Raised { .. }
             | DbError::DivideByZero
             | DbError::ConversionFailed { .. } => ErrorClass::Execution,
             DbError::Storage(_) => ErrorClass::Storage,
@@ -152,11 +162,22 @@ impl DbError {
     }
 
     pub fn class_severity(&self) -> u8 {
-        match self.class() {
-            ErrorClass::Parse => 15,
-            ErrorClass::Semantic => 16,
-            ErrorClass::Execution => 16,
-            ErrorClass::Storage => 17,
+        match self {
+            DbError::Custom { class, .. } => *class,
+            DbError::Raised { severity, .. } => *severity,
+            _ => match self.class() {
+                ErrorClass::Parse => 15,
+                ErrorClass::Semantic => 16,
+                ErrorClass::Execution => 16,
+                ErrorClass::Storage => 17,
+            },
+        }
+    }
+
+    pub fn state(&self) -> u8 {
+        match self {
+            DbError::Raised { state, .. } => *state,
+            _ => 1,
         }
     }
 
@@ -211,6 +232,7 @@ impl DbError {
             }
             DbError::Storage(_) => 50001,
             DbError::Custom { number, .. } => *number,
+            DbError::Raised { number, .. } => *number,
             _ => 50000,
         }
     }
@@ -246,7 +268,7 @@ impl DbError {
             DbError::Execution(_) => "TSQL_EXECUTION_ERROR",
             DbError::Storage(_) => "TSQL_STORAGE_ERROR",
             DbError::Deadlock(_) => "TSQL_DEADLOCK_ERROR",
-            DbError::Custom { .. } => "TSQL_CUSTOM_ERROR",
+            DbError::Custom { .. } | DbError::Raised { .. } => "TSQL_CUSTOM_ERROR",
         }
     }
 

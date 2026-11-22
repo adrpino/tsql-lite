@@ -25,6 +25,7 @@ pub(crate) fn execute_flat_select(
     let projected_rows = project_flat_rows(catalog, storage, clock, &projection, &rows, ctx)?;
 
     let expr_types = expand_projection_types(&projection, schema_row);
+    let expr_nulls = expand_projection_nullabilities(&projection, schema_row);
     let row_types = derive_types_from_rows(&projected_rows, columns.len());
 
     let mut column_types = Vec::with_capacity(columns.len());
@@ -37,7 +38,7 @@ pub(crate) fn execute_flat_select(
                 .or_else(|| row_types.get(i).and_then(|t| t.clone()))
                 .unwrap_or(DataType::VarChar { max_len: 4000 }),
         );
-        column_nullabilities.push(true); // Default to nullable for expressions
+        column_nullabilities.push(expr_nulls.get(i).copied().unwrap_or(true));
     }
 
     Ok(QueryResult {
@@ -304,6 +305,135 @@ fn lookup_qualified_identifier_type(
             .find(|c| c.name.eq_ignore_ascii_case(col_name))
         {
             return Some(col.data_type.clone());
+        }
+    }
+    None
+}
+
+fn expand_projection_nullabilities(
+    projection: &[SelectItem],
+    sample: Option<&JoinedRow>,
+) -> Vec<bool> {
+    let mut out = Vec::new();
+    for item in projection {
+        match &item.expr {
+            Expr::Wildcard => {
+                if let Some(row) = sample {
+                    out.extend(
+                        row.iter()
+                            .flat_map(|b| b.table.columns.iter().map(|c| c.nullable)),
+                    );
+                } else {
+                    out.push(true);
+                }
+            }
+            Expr::QualifiedWildcard(parts) => {
+                if let Some(row) = sample {
+                    if let Some(table_name) = parts.last() {
+                        out.extend(
+                            row.iter()
+                                .filter(|b| {
+                                    b.alias.eq_ignore_ascii_case(table_name)
+                                        || b.table.name.eq_ignore_ascii_case(table_name)
+                                        || b.source_aliases
+                                            .iter()
+                                            .any(|a| a.eq_ignore_ascii_case(table_name))
+                                })
+                                .flat_map(|b| b.table.columns.iter().map(|c| c.nullable)),
+                        );
+                    } else {
+                        out.push(true);
+                    }
+                } else {
+                    out.push(true);
+                }
+            }
+            expr => out.push(infer_expr_nullable(expr, sample)),
+        }
+    }
+    out
+}
+
+fn infer_expr_nullable(expr: &Expr, sample: Option<&JoinedRow>) -> bool {
+    match expr {
+        Expr::Identifier(name) => lookup_identifier_nullable(name, sample).unwrap_or(true),
+        Expr::QualifiedIdentifier(parts) => {
+            lookup_qualified_identifier_nullable(parts, sample).unwrap_or(true)
+        }
+        Expr::Integer(_)
+        | Expr::FloatLiteral(_)
+        | Expr::BinaryLiteral(_)
+        | Expr::String(_)
+        | Expr::UnicodeString(_)
+        | Expr::IsNull(_)
+        | Expr::IsNotNull(_)
+        | Expr::Exists { .. } => false,
+        Expr::Null | Expr::TryCast { .. } | Expr::TryConvert { .. } => true,
+        Expr::Cast { expr: inner, .. } | Expr::Convert { expr: inner, .. } => {
+            infer_expr_nullable(inner, sample)
+        }
+        Expr::Unary { expr: inner, .. } => infer_expr_nullable(inner, sample),
+        Expr::FunctionCall { name, args, .. } => {
+            let upper = name.to_ascii_uppercase();
+            if upper == "ISNULL" && args.len() == 2 {
+                infer_expr_nullable(&args[0], sample) && infer_expr_nullable(&args[1], sample)
+            } else if upper == "COALESCE" && !args.is_empty() {
+                args.iter().all(|a| infer_expr_nullable(a, sample))
+            } else if matches!(upper.as_str(), "COUNT" | "COUNT_BIG") {
+                false
+            } else {
+                true
+            }
+        }
+        _ => true,
+    }
+}
+
+fn lookup_identifier_nullable(name: &str, sample: Option<&JoinedRow>) -> Option<bool> {
+    let row = sample?;
+    for binding in row {
+        if let Some(col) = binding
+            .table
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
+        {
+            return Some(col.nullable);
+        }
+    }
+    None
+}
+
+fn lookup_qualified_identifier_nullable(
+    parts: &[String],
+    sample: Option<&JoinedRow>,
+) -> Option<bool> {
+    let row = sample?;
+    let col_name = parts.last()?;
+    let prefix = if parts.len() > 1 {
+        Some(parts[parts.len() - 2].as_str())
+    } else {
+        None
+    };
+    for binding in row {
+        if let Some(prefix_name) = prefix {
+            let matches_prefix = binding.alias.eq_ignore_ascii_case(prefix_name)
+                || binding.table.name.eq_ignore_ascii_case(prefix_name)
+                || binding
+                    .source_aliases
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(prefix_name));
+            if !matches_prefix {
+                continue;
+            }
+        }
+        if let Some(col) = binding
+            .table
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(col_name))
+        {
+            return Some(col.nullable);
         }
     }
     None

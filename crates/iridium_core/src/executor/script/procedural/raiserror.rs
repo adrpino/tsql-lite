@@ -26,7 +26,7 @@ impl<'a> ScriptExecutor<'a> {
             self.storage,
             self.clock,
         )?;
-        let _state_val = eval_expr(
+        let state_val = eval_expr(
             &stmt.state,
             &[],
             ctx,
@@ -47,6 +47,18 @@ impl<'a> ScriptExecutor<'a> {
             _ => 16,
         };
 
+        let state = match state_val {
+            crate::types::Value::Bit(b) => u8::from(b),
+            crate::types::Value::TinyInt(v) => v,
+            crate::types::Value::SmallInt(v) => v.clamp(0, 255) as u8,
+            crate::types::Value::Int(v) => v.clamp(0, 255) as u8,
+            crate::types::Value::BigInt(v) => v.clamp(0, 255) as u8,
+            crate::types::Value::Decimal(raw, scale) => {
+                ((raw / 10i128.pow(scale as u32)).clamp(0, 255)) as u8
+            }
+            _ => 1,
+        };
+
         let mut formatted_args = Vec::with_capacity(stmt.args.len());
         for arg in &stmt.args {
             let v = eval_expr(arg, &[], ctx, self.catalog, self.storage, self.clock)?;
@@ -61,7 +73,12 @@ impl<'a> ScriptExecutor<'a> {
 
         if severity >= 11 {
             // Severities 11+ are user errors; 0-10 are informational messages.
-            Err(DbError::Execution(msg))
+            Err(DbError::Raised {
+                number: 50000,
+                severity: severity.clamp(11, 25) as u8,
+                state,
+                message: msg,
+            })
         } else {
             // Informational severity prints without aborting execution.
             ctx.session.print_output.push(msg);

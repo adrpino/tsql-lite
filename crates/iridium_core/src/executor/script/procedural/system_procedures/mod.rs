@@ -137,12 +137,15 @@ pub(crate) fn execute_system_procedure(
     } else if name.eq_ignore_ascii_case("sp_refresh_parameter_encryption")
         || name.eq_ignore_ascii_case("sp_refreshsqlmodule")
         || name.eq_ignore_ascii_case("sp_refreshview")
-        || name.eq_ignore_ascii_case("sp_addextendedproperty")
-        || name.eq_ignore_ascii_case("sp_updateextendedproperty")
-        || name.eq_ignore_ascii_case("sp_dropextendedproperty")
         || name.eq_ignore_ascii_case("sp_tableoption")
     {
         QueryResult::default()
+    } else if name.eq_ignore_ascii_case("sp_addextendedproperty") {
+        execute_extended_property_proc(exec, stmt, ctx, ExtendedPropOp::Add)?
+    } else if name.eq_ignore_ascii_case("sp_updateextendedproperty") {
+        execute_extended_property_proc(exec, stmt, ctx, ExtendedPropOp::Update)?
+    } else if name.eq_ignore_ascii_case("sp_dropextendedproperty") {
+        execute_extended_property_proc(exec, stmt, ctx, ExtendedPropOp::Drop)?
     } else if name.eq_ignore_ascii_case("sp_getapplock") {
         execute_sp_getapplock(stmt, ctx, exec)?
     } else if name.eq_ignore_ascii_case("sp_releaseapplock") {
@@ -171,4 +174,137 @@ fn eval_args(
         result.push(val.to_string_value());
     }
     Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum ExtendedPropOp {
+    Add,
+    Update,
+    Drop,
+}
+
+fn execute_extended_property_proc(
+    exec: &mut ScriptExecutor<'_>,
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    op: ExtendedPropOp,
+) -> Result<QueryResult, DbError> {
+    let positional_order: &[&str] = match op {
+        ExtendedPropOp::Add | ExtendedPropOp::Update => &[
+            "name",
+            "value",
+            "level0type",
+            "level0name",
+            "level1type",
+            "level1name",
+            "level2type",
+            "level2name",
+        ],
+        ExtendedPropOp::Drop => &[
+            "name",
+            "level0type",
+            "level0name",
+            "level1type",
+            "level1name",
+            "level2type",
+            "level2name",
+        ],
+    };
+
+    let mut named: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for (idx, arg) in stmt.args.iter().enumerate() {
+        let key = if let Some(ref p) = arg.name {
+            p.trim_start_matches('@').to_ascii_lowercase()
+        } else if let Some(&pos_name) = positional_order.get(idx) {
+            pos_name.to_string()
+        } else {
+            continue;
+        };
+        let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+        let opt = if val.is_null() {
+            None
+        } else {
+            Some(val.to_string_value())
+        };
+        named.insert(key, opt);
+    }
+
+    let Some(prop_name) = named.get("name").and_then(|v| v.clone()) else {
+        return Ok(QueryResult::default());
+    };
+    let prop_value = named.get("value").and_then(|v| v.clone());
+    let l0_type = named.get("level0type").and_then(|v| v.as_deref());
+    let l0_name = named.get("level0name").and_then(|v| v.as_deref());
+    let l1_type = named.get("level1type").and_then(|v| v.as_deref());
+    let l1_name = named.get("level1name").and_then(|v| v.as_deref());
+    let l2_type = named.get("level2type").and_then(|v| v.as_deref());
+    let l2_name = named.get("level2name").and_then(|v| v.as_deref());
+
+    let resolved: Option<(i32, &'static str, i32, i32)> = match (l0_type, l0_name, l1_type, l1_name)
+    {
+        (None, _, _, _) => Some((0, "DATABASE", 0, 0)),
+        (Some(t0), Some(n0), None, _) if t0.eq_ignore_ascii_case("SCHEMA") => exec
+            .catalog
+            .get_schema_id(n0)
+            .map(|sid| (3, "SCHEMA", sid as i32, 0)),
+        (Some(t0), Some(n0), Some(_t1), Some(n1)) if t0.eq_ignore_ascii_case("SCHEMA") => {
+            let major_opt = exec
+                .catalog
+                .object_id(n0, n1)
+                .or_else(|| exec.catalog.find_table_type(n0, n1).map(|tt| tt.object_id));
+            major_opt.map(|major_id| {
+                let minor_id = match (l2_type, l2_name) {
+                    (Some(t2), Some(n2)) if t2.eq_ignore_ascii_case("COLUMN") => exec
+                        .catalog
+                        .find_table(n0, n1)
+                        .and_then(|tbl| {
+                            tbl.columns
+                                .iter()
+                                .find(|c| c.name.eq_ignore_ascii_case(n2))
+                                .map(|c| c.id as i32)
+                        })
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                (1, "OBJECT_OR_COLUMN", major_id, minor_id)
+            })
+        }
+        _ => None,
+    };
+
+    if let Some((class, class_desc, major_id, minor_id)) = resolved {
+        match op {
+            ExtendedPropOp::Add => {
+                exec.catalog.add_extended_property(
+                    crate::catalog::ExtendedPropertyDef {
+                        class,
+                        class_desc: class_desc.to_string(),
+                        major_id,
+                        minor_id,
+                        name: prop_name,
+                        value: prop_value,
+                    },
+                )?;
+            }
+            ExtendedPropOp::Update => {
+                exec.catalog.update_extended_property(
+                    crate::catalog::ExtendedPropertyDef {
+                        class,
+                        class_desc: class_desc.to_string(),
+                        major_id,
+                        minor_id,
+                        name: prop_name,
+                        value: prop_value,
+                    },
+                )?;
+            }
+            ExtendedPropOp::Drop => {
+                exec.catalog
+                    .drop_extended_property(class, major_id, minor_id, &prop_name)?;
+            }
+        }
+    }
+
+    Ok(QueryResult::default())
 }

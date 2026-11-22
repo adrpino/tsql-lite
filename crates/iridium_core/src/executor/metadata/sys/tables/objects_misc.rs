@@ -122,8 +122,25 @@ impl VirtualTable for SysExtendedProperties {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        catalog
+            .get_extended_properties()
+            .iter()
+            .map(|p| StoredRow {
+                values: vec![
+                    Value::Int(p.major_id),
+                    Value::Int(p.minor_id),
+                    Value::Int(p.class),
+                    Value::VarChar(p.class_desc.clone()),
+                    Value::VarChar(p.name.clone()),
+                    match &p.value {
+                        Some(v) => Value::NVarChar(v.clone()),
+                        None => Value::Null,
+                    },
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -417,9 +434,9 @@ impl VirtualTable for SysTriggers {
                         Value::NVarChar("SQL_TRIGGER".to_string()),
                         created.clone(),
                         created.clone(),
-                        Value::Bit(false), // is_ms_shipped
-                        Value::Bit(false), // is_disabled
-                        Value::Bit(false), // is_not_for_replication
+                        Value::Bit(false),      // is_ms_shipped
+                        Value::Bit(!t.enabled), // is_disabled
+                        Value::Bit(false),      // is_not_for_replication
                         Value::Bit(t.is_instead_of),
                     ],
                     deleted: false,

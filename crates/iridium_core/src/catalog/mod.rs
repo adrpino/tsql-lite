@@ -232,6 +232,16 @@ pub struct SequenceDef {
     pub is_cycling: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtendedPropertyDef {
+    pub class: i32,
+    pub class_desc: String,
+    pub major_id: i32,
+    pub minor_id: i32,
+    pub name: String,
+    pub value: Option<String>,
+}
+
 pub trait IdAllocator {
     fn alloc_table_id(&mut self) -> u32;
     fn alloc_object_id(&mut self) -> i32;
@@ -377,6 +387,25 @@ pub trait Catalog:
     + Send
     + Sync
 {
+    fn get_extended_properties(&self) -> &[ExtendedPropertyDef] {
+        &[]
+    }
+    fn add_extended_property(&mut self, _prop: ExtendedPropertyDef) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn update_extended_property(&mut self, _prop: ExtendedPropertyDef) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn drop_extended_property(
+        &mut self,
+        _class: i32,
+        _major_id: i32,
+        _minor_id: i32,
+        _name: &str,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+
     fn clone_boxed(&self) -> Box<dyn Catalog>;
     fn rebuild_maps(&mut self) {}
     /// Merges changes made in `workspace` relative to `base` into `self` during
@@ -470,6 +499,8 @@ pub struct CatalogImpl {
     synonyms: Arc<Vec<SynonymDef>>,
     #[serde(with = "arc_serde")]
     sequences: Arc<Vec<SequenceDef>>,
+    #[serde(default, with = "arc_serde")]
+    extended_properties: Arc<Vec<ExtendedPropertyDef>>,
     #[serde(with = "atomic_u32_serde")]
     next_schema_id: Arc<AtomicU32>,
     #[serde(with = "atomic_u32_serde")]
@@ -615,6 +646,7 @@ impl Default for CatalogImpl {
             triggers: CowRegistry::default(),
             synonyms: Arc::new(Vec::new()),
             sequences: Arc::new(Vec::new()),
+            extended_properties: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
             next_table_id: Arc::new(AtomicU32::new(1234567890)),
             next_column_id: Arc::new(AtomicU32::new(1)),
@@ -705,6 +737,57 @@ where
 }
 
 impl Catalog for CatalogImpl {
+    fn get_extended_properties(&self) -> &[ExtendedPropertyDef] {
+        &self.extended_properties
+    }
+
+    fn add_extended_property(&mut self, prop: ExtendedPropertyDef) -> Result<(), DbError> {
+        let props = Arc::make_mut(&mut self.extended_properties);
+        if let Some(existing) = props.iter_mut().find(|p| {
+            p.class == prop.class
+                && p.major_id == prop.major_id
+                && p.minor_id == prop.minor_id
+                && p.name.eq_ignore_ascii_case(&prop.name)
+        }) {
+            existing.value = prop.value;
+        } else {
+            props.push(prop);
+        }
+        Ok(())
+    }
+
+    fn update_extended_property(&mut self, prop: ExtendedPropertyDef) -> Result<(), DbError> {
+        let props = Arc::make_mut(&mut self.extended_properties);
+        if let Some(existing) = props.iter_mut().find(|p| {
+            p.class == prop.class
+                && p.major_id == prop.major_id
+                && p.minor_id == prop.minor_id
+                && p.name.eq_ignore_ascii_case(&prop.name)
+        }) {
+            existing.value = prop.value;
+        } else {
+            props.push(prop);
+        }
+        Ok(())
+    }
+
+    fn drop_extended_property(
+        &mut self,
+        class: i32,
+        major_id: i32,
+        minor_id: i32,
+        name: &str,
+    ) -> Result<(), DbError> {
+        let props = Arc::make_mut(&mut self.extended_properties);
+        props.retain(|p| {
+            !(p.class == class
+                && p.major_id == major_id
+                && p.minor_id == minor_id
+                && p.name.eq_ignore_ascii_case(name))
+        });
+        Ok(())
+    }
+
     fn clone_boxed(&self) -> Box<dyn Catalog> {
         Box::new(self.clone())
     }
@@ -843,6 +926,19 @@ impl Catalog for CatalogImpl {
                     .collect(),
             );
         }
+        merge_arc_vec(
+            &mut self.extended_properties,
+            &workspace.extended_properties,
+            &base.extended_properties,
+            |p| {
+                (
+                    p.class,
+                    p.major_id,
+                    p.minor_id,
+                    normalize_identifier(&p.name),
+                )
+            },
+        );
 
         // Advance atomic counters defensively if workspace came from a distinct allocator.
         let _ = self.next_schema_id.fetch_max(

@@ -201,6 +201,20 @@ where
             .unwrap_or_default()
     }
 
+    pub fn take_print_output(&self, session_id: SessionId) -> Vec<String> {
+        self.inner
+            .sessions
+            .get(&session_id)
+            .map(|s| std::mem::take(&mut s.lock().diagnostics.print_output))
+            .unwrap_or_default()
+    }
+
+    pub fn clear_print_output(&self, session_id: SessionId) {
+        if let Some(s) = self.inner.sessions.get(&session_id) {
+            s.lock().diagnostics.print_output.clear();
+        }
+    }
+
     pub fn create_session(&self) -> SessionId {
         self.session_manager().create_session()
     }

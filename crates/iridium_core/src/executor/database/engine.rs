@@ -219,6 +219,14 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
     pub fn print_output(&self) -> Vec<String> {
         self.db.print_output(self.default_session)
     }
+
+    pub fn take_print_output(&self) -> Vec<String> {
+        self.db.take_print_output(self.default_session)
+    }
+
+    pub fn clear_print_output(&self) {
+        self.db.clear_print_output(self.default_session);
+    }
 }
 
 impl<C, S> EngineInner<C, S>

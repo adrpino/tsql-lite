@@ -34,7 +34,7 @@ impl<'a> ScriptExecutor<'a> {
             self.storage,
             self.clock,
         )?;
-        let _state = eval_expr(
+        let state_val = eval_expr(
             stmt.state.as_ref().unwrap(),
             &[],
             ctx,
@@ -42,10 +42,12 @@ impl<'a> ScriptExecutor<'a> {
             self.storage,
             self.clock,
         )?;
+        let state = state_val.to_integer_i64().unwrap_or(1).clamp(0, 255) as u8;
         let msg = message.to_string_value().to_string();
-        Err(DbError::Custom {
-            class: 16,
+        Err(DbError::Raised {
             number: error_number.to_integer_i64().unwrap_or(50000) as i32,
+            severity: 16,
+            state,
             message: msg,
         })
     }

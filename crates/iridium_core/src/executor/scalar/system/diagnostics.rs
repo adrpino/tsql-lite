@@ -26,7 +26,7 @@ pub(crate) fn eval_error_severity(ctx: &ExecutionContext) -> Result<Value, DbErr
 
 pub(crate) fn eval_error_state(ctx: &ExecutionContext) -> Result<Value, DbError> {
     Ok(match &ctx.frame.last_error {
-        Some(_) => Value::Int(1), // Default state
+        Some(err) => Value::Int(err.state() as i32),
         None => Value::Null,
     })
 }

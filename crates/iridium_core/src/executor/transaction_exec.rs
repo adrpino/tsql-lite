@@ -343,27 +343,18 @@ pub(crate) fn register_write_intent<C, S>(
         Statement::Dml(DmlStatement::Delete(s)) => {
             (WriteIntentKind::Delete, Some(s.table.name.clone()))
         }
-        Statement::Ddl(DdlStatement::CreateTable(s)) => {
-            (WriteIntentKind::Ddl, Some(s.name.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::DropTable(s)) => {
-            (WriteIntentKind::Ddl, Some(s.name.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::AlterTable(s)) => {
-            (WriteIntentKind::Ddl, Some(s.table.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::TruncateTable(s)) => {
-            (WriteIntentKind::Ddl, Some(s.name.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::CreateIndex(s)) => {
-            (WriteIntentKind::Ddl, Some(s.table.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::DropIndex(s)) => {
-            (WriteIntentKind::Ddl, Some(s.table.name.clone()))
-        }
-        Statement::Ddl(DdlStatement::CreateSchema(_))
-        | Statement::Ddl(DdlStatement::DropSchema(_))
-        | Statement::Ddl(DdlStatement::AlterSchemaTransfer(_)) => (WriteIntentKind::Ddl, None),
+        Statement::Ddl(ddl) => match ddl.as_ref() {
+            DdlStatement::CreateTable(s) => (WriteIntentKind::Ddl, Some(s.name.name.clone())),
+            DdlStatement::DropTable(s) => (WriteIntentKind::Ddl, Some(s.name.name.clone())),
+            DdlStatement::AlterTable(s) => (WriteIntentKind::Ddl, Some(s.table.name.clone())),
+            DdlStatement::TruncateTable(s) => (WriteIntentKind::Ddl, Some(s.name.name.clone())),
+            DdlStatement::CreateIndex(s) => (WriteIntentKind::Ddl, Some(s.table.name.clone())),
+            DdlStatement::DropIndex(s) => (WriteIntentKind::Ddl, Some(s.table.name.clone())),
+            DdlStatement::CreateSchema(_)
+            | DdlStatement::DropSchema(_)
+            | DdlStatement::AlterSchemaTransfer(_) => (WriteIntentKind::Ddl, None),
+            _ => return,
+        },
         _ => return,
     };
 

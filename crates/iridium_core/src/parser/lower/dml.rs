@@ -23,38 +23,38 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                 };
                 let set_op = executor_ast::statements::query::SetOpStmt {
                     left: Box::new(executor_ast::Statement::Dml(
-                        executor_ast::statements::DmlStatement::Select(left),
+                        executor_ast::statements::DmlStatement::Select(Box::new(left)),
                     )),
                     op: kind,
                     right: Box::new(executor_ast::Statement::Dml(
-                        executor_ast::statements::DmlStatement::Select(right),
+                        executor_ast::statements::DmlStatement::Select(Box::new(right)),
                     )),
                 };
                 return Ok(executor_ast::Statement::Dml(
-                    executor_ast::statements::DmlStatement::SetOp(set_op),
+                    executor_ast::statements::DmlStatement::SetOp(Box::new(set_op)),
                 ));
             }
             Ok(executor_ast::Statement::Dml(
-                executor_ast::statements::DmlStatement::Select(lower_select(*s)?),
+                executor_ast::statements::DmlStatement::Select(Box::new(lower_select(*s)?)),
             ))
         }
         ast::DmlStatement::Insert(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::Insert(lower_insert(*s)?),
+            executor_ast::statements::DmlStatement::Insert(Box::new(lower_insert(*s)?)),
         )),
         ast::DmlStatement::Update(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::Update(lower_update(*s)?),
+            executor_ast::statements::DmlStatement::Update(Box::new(lower_update(*s)?)),
         )),
         ast::DmlStatement::Delete(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::Delete(lower_delete(*s)?),
+            executor_ast::statements::DmlStatement::Delete(Box::new(lower_delete(*s)?)),
         )),
         ast::DmlStatement::Merge(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::Merge(lower_merge(*s)?),
+            executor_ast::statements::DmlStatement::Merge(Box::new(lower_merge(*s)?)),
         )),
         ast::DmlStatement::BulkInsert(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::BulkInsert(lower_bulk_insert(*s)?),
+            executor_ast::statements::DmlStatement::BulkInsert(Box::new(lower_bulk_insert(*s)?)),
         )),
         ast::DmlStatement::InsertBulk(s) => Ok(executor_ast::Statement::Dml(
-            executor_ast::statements::DmlStatement::InsertBulk(lower_insert_bulk(*s)?),
+            executor_ast::statements::DmlStatement::InsertBulk(Box::new(lower_insert_bulk(*s)?)),
         )),
         ast::DmlStatement::SelectAssign {
             assignments,
@@ -77,7 +77,7 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                 joins.push(lower_join_clause(j)?);
             }
             Ok(executor_ast::Statement::Dml(
-                executor_ast::statements::DmlStatement::SelectAssign(
+                executor_ast::statements::DmlStatement::SelectAssign(Box::new(
                     executor_ast::statements::procedural::SelectAssignStmt {
                         targets: assignments
                             .into_iter()
@@ -104,7 +104,7 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                             })
                             .transpose()?,
                     },
-                ),
+                )),
             ))
         }
     }
@@ -660,7 +660,7 @@ pub fn lower_insert(
                 args,
             } => executor_ast::statements::dml::InsertSource::Exec(Box::new(
                 executor_ast::Statement::Procedural(
-                    executor_ast::statements::ProceduralStatement::ExecProcedure(
+                    executor_ast::statements::ProceduralStatement::ExecProcedure(Box::new(
                         executor_ast::statements::procedural::ExecProcedureStmt {
                             return_variable,
                             name: lower_object_name(procedure),
@@ -675,7 +675,7 @@ pub fn lower_insert(
                                 })
                                 .collect::<Result<Vec<_>, DbError>>()?,
                         },
-                    ),
+                    )),
                 ),
             )),
             ast::InsertSource::ExecDynamic(sql_expr) => {
@@ -741,7 +741,7 @@ fn lower_apply_clauses(
                     ast::ApplyType::Cross => executor_ast::statements::query::ApplyType::Cross,
                     ast::ApplyType::Outer => executor_ast::statements::query::ApplyType::Outer,
                 },
-                subquery,
+                subquery: Box::new(subquery),
                 alias,
             })
         })

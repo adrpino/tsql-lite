@@ -22,8 +22,8 @@ fn test_sp_describe_first_result_set_simple_select() {
     assert_eq!(r.columns[5], "Scale");
     assert_eq!(r.columns[6], "CollationName");
     assert_eq!(r.rows.len(), 3);
-    // id: INT (result columns report nullable=true from expression binding)
-    assert_eq!(r.rows[0][0], Value::Bit(true));
+    // id: INT NOT NULL
+    assert_eq!(r.rows[0][0], Value::Bit(false));
     // name: NVARCHAR, nullable
     assert_eq!(r.rows[1][0], Value::Bit(true));
     // val: DECIMAL(10,2) — precision/scale may not propagate through result metadata

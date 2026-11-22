@@ -133,35 +133,28 @@ fn eval_objectproperty_common(
             "ISPROCEDURE" => {
                 Value::Int(matches!(&routine.kind, RoutineKind::Procedure { .. }) as i32)
             }
-            "ISSCALARFUNCTION" => Value::Int(
-                (matches!(
-                    &routine.kind,
-                    RoutineKind::Function {
-                        body: crate::ast::FunctionBody::ScalarReturn(_),
-                        ..
-                    }
-                ) || matches!(
-                    &routine.kind,
-                    RoutineKind::Function {
-                        body: crate::ast::FunctionBody::Scalar(_),
-                        ..
-                    }
-                )) as i32,
-            ),
+            "ISSCALARFUNCTION" => Value::Int(matches!(
+                &routine.kind,
+                RoutineKind::Function { body, .. }
+                    if matches!(
+                        body.as_ref(),
+                        crate::ast::FunctionBody::ScalarReturn(_)
+                            | crate::ast::FunctionBody::Scalar(_)
+                    )
+            ) as i32),
             "ISTABLEFUNCTION" => Value::Int(matches!(
                 &routine.kind,
-                RoutineKind::Function {
-                    body: crate::ast::FunctionBody::InlineTable(_)
-                        | crate::ast::FunctionBody::MultiStatementTable { .. },
-                    ..
-                }
+                RoutineKind::Function { body, .. }
+                    if matches!(
+                        body.as_ref(),
+                        crate::ast::FunctionBody::InlineTable(_)
+                            | crate::ast::FunctionBody::MultiStatementTable { .. }
+                    )
             ) as i32),
             "ISINLINEFUNCTION" => Value::Int(matches!(
                 &routine.kind,
-                RoutineKind::Function {
-                    body: crate::ast::FunctionBody::InlineTable(_),
-                    ..
-                }
+                RoutineKind::Function { body, .. }
+                    if matches!(body.as_ref(), crate::ast::FunctionBody::InlineTable(_))
             ) as i32),
             "EXECISANSINULLSON" => Value::Int(1),
             "EXECISQUOTEDIDENTON" => Value::Int(1),

@@ -14,30 +14,28 @@ use crate::ast::statements::procedural::*;
 use crate::ast::statements::query::*;
 use serde::{Deserialize, Serialize};
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Statement {
     Dml(DmlStatement),
-    Ddl(DdlStatement),
+    Ddl(Box<DdlStatement>),
     Procedural(ProceduralStatement),
     Transaction(TransactionStatement),
     Cursor(CursorStatement),
     Session(SessionStatement),
-    WithCte(WithCteStmt),
+    WithCte(Box<WithCteStmt>),
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DmlStatement {
-    Select(SelectStmt),
-    Insert(InsertStmt),
-    Update(UpdateStmt),
-    Delete(DeleteStmt),
-    Merge(MergeStmt),
-    SetOp(SetOpStmt),
-    SelectAssign(SelectAssignStmt),
-    BulkInsert(BulkInsertStmt),
-    InsertBulk(InsertBulkStmt),
+    Select(Box<SelectStmt>),
+    Insert(Box<InsertStmt>),
+    Update(Box<UpdateStmt>),
+    Delete(Box<DeleteStmt>),
+    Merge(Box<MergeStmt>),
+    SetOp(Box<SetOpStmt>),
+    SelectAssign(Box<SelectAssignStmt>),
+    BulkInsert(Box<BulkInsertStmt>),
+    InsertBulk(Box<InsertBulkStmt>),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -66,30 +64,30 @@ pub enum DdlStatement {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProceduralStatement {
-    Declare(DeclareStmt),
-    Set(SetStmt),
+    Declare(Box<DeclareStmt>),
+    Set(Box<SetStmt>),
     SetOption(SetOptionStmt),
-    If(IfStmt),
+    If(Box<IfStmt>),
     BeginEnd(Vec<Statement>),
-    While(WhileStmt),
+    While(Box<WhileStmt>),
     Break,
     Continue,
     Goto(String),
     Label(String),
     Return(Option<Expr>),
     ExecDynamic(ExecStmt),
-    ExecProcedure(ExecProcedureStmt),
-    SpExecuteSql(SpExecuteSqlStmt),
+    ExecProcedure(Box<ExecProcedureStmt>),
+    SpExecuteSql(Box<SpExecuteSqlStmt>),
     Print(Expr),
-    DeclareTableVar(DeclareTableVarStmt),
-    DeclareCursor(DeclareCursorStmt),
-    CreateProcedure(CreateProcedureStmt),
-    CreateFunction(CreateFunctionStmt),
-    CreateView(CreateViewStmt),
-    CreateTrigger(CreateTriggerStmt),
-    Raiserror(RaiserrorStmt),
-    Throw(ThrowStmt),
-    TryCatch(TryCatchStmt),
+    DeclareTableVar(Box<DeclareTableVarStmt>),
+    DeclareCursor(Box<DeclareCursorStmt>),
+    CreateProcedure(Box<CreateProcedureStmt>),
+    CreateFunction(Box<CreateFunctionStmt>),
+    CreateView(Box<CreateViewStmt>),
+    CreateTrigger(Box<CreateTriggerStmt>),
+    Raiserror(Box<RaiserrorStmt>),
+    Throw(Box<ThrowStmt>),
+    TryCatch(Box<TryCatchStmt>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +101,7 @@ pub enum TransactionStatement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CursorStatement {
     OpenCursor(String),
-    FetchCursor(FetchCursorStmt),
+    FetchCursor(Box<FetchCursorStmt>),
     CloseCursor(String),
     DeallocateCursor(String),
 }
@@ -113,7 +111,7 @@ pub enum SessionStatement {
     SetTransactionIsolationLevel(IsolationLevel),
     UseDatabase(String),
     SetOption(SetOptionStmt),
-    SetIdentityInsert(SetIdentityInsertStmt),
+    SetIdentityInsert(Box<SetIdentityInsertStmt>),
     SetContextInfo(Expr),
 }
 

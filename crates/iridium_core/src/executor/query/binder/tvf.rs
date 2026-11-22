@@ -295,7 +295,7 @@ pub(super) fn bind_inline_tvf(
         return Ok(None);
     };
     if !matches!(
-        body,
+        body.as_ref(),
         crate::ast::FunctionBody::InlineTable(_)
             | crate::ast::FunctionBody::InlineTableWithCte(_)
             | crate::ast::FunctionBody::MultiStatementTable { .. }
@@ -396,9 +396,9 @@ pub(super) fn bind_inline_tvf(
             }
         }
 
-        let res = match body {
+        let res = match *body {
             crate::ast::FunctionBody::InlineTable(query) => {
-                executor.execute_select(query.into(), ctx)?
+                executor.execute_select((*query).into(), ctx)?
             }
             crate::ast::FunctionBody::InlineTableWithCte(with_cte) => {
                 let mut scratch_catalog = catalog.clone_boxed();
@@ -408,7 +408,7 @@ pub(super) fn bind_inline_tvf(
                     storage: scratch_storage.as_mut(),
                     clock,
                 };
-                match script_exec.execute(crate::ast::Statement::WithCte(*with_cte), ctx)? {
+                match script_exec.execute(crate::ast::Statement::WithCte(with_cte), ctx)? {
                     crate::error::StmtOutcome::Ok(Some(res)) => res,
                     _ => {
                         return Err(DbError::Execution(
@@ -431,13 +431,13 @@ pub(super) fn bind_inline_tvf(
                     clock,
                 };
                 let decl_stmt = crate::ast::Statement::Procedural(
-                    crate::ast::ProceduralStatement::DeclareTableVar(
+                    crate::ast::ProceduralStatement::DeclareTableVar(Box::new(
                         crate::ast::DeclareTableVarStmt {
                             name: table_var.clone(),
                             columns,
                             table_constraints: constraints,
                         },
-                    ),
+                    )),
                 );
                 let _ = script_exec.execute(decl_stmt, ctx)?;
                 let _ = script_exec.execute_batch(&stmts, ctx)?;

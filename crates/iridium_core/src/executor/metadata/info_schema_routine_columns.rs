@@ -30,11 +30,10 @@ impl VirtualTable for RoutineColumns {
     fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let mut rows = Vec::new();
         for routine in catalog.get_routines() {
-            let RoutineKind::Function {
-                body: crate::ast::FunctionBody::InlineTable(select),
-                ..
-            } = &routine.kind
-            else {
+            let RoutineKind::Function { body, .. } = &routine.kind else {
+                continue;
+            };
+            let crate::ast::FunctionBody::InlineTable(select) = body.as_ref() else {
                 continue;
             };
 

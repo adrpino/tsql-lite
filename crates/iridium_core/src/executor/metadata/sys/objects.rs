@@ -246,13 +246,14 @@ impl VirtualTable for SysObjects {
                 crate::catalog::RoutineKind::Procedure { .. } => {
                     ("P ".to_string(), "SQL_STORED_PROCEDURE".to_string())
                 }
-                crate::catalog::RoutineKind::Function {
-                    body: crate::ast::FunctionBody::InlineTable(_),
-                    ..
-                } => (
-                    "IF".to_string(),
-                    "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
-                ),
+                crate::catalog::RoutineKind::Function { body, .. }
+                    if matches!(body.as_ref(), crate::ast::FunctionBody::InlineTable(_)) =>
+                {
+                    (
+                        "IF".to_string(),
+                        "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
+                    )
+                }
                 crate::catalog::RoutineKind::Function { .. } => {
                     ("FN".to_string(), "SQL_SCALAR_FUNCTION".to_string())
                 }

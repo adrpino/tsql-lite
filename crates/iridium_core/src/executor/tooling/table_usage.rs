@@ -86,21 +86,24 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
         Statement::Dml(DmlStatement::Delete(s)) => {
             out.insert(normalize_object_name(&s.table));
         }
-        Statement::Ddl(DdlStatement::CreateTable(s)) => {
-            out.insert(normalize_object_name(&s.name));
-        }
-        Statement::Ddl(DdlStatement::DropTable(s)) => {
-            out.insert(normalize_object_name(&s.name));
-        }
-        Statement::Ddl(DdlStatement::DropView(s)) => {
-            out.insert(normalize_object_name(&s.name));
-        }
-        Statement::Ddl(DdlStatement::AlterTable(s)) => {
-            out.insert(normalize_object_name(&s.table));
-        }
-        Statement::Ddl(DdlStatement::TruncateTable(s)) => {
-            out.insert(normalize_object_name(&s.name));
-        }
+        Statement::Ddl(ddl) => match ddl.as_ref() {
+            DdlStatement::CreateTable(s) => {
+                out.insert(normalize_object_name(&s.name));
+            }
+            DdlStatement::DropTable(s) => {
+                out.insert(normalize_object_name(&s.name));
+            }
+            DdlStatement::DropView(s) => {
+                out.insert(normalize_object_name(&s.name));
+            }
+            DdlStatement::AlterTable(s) => {
+                out.insert(normalize_object_name(&s.table));
+            }
+            DdlStatement::TruncateTable(s) => {
+                out.insert(normalize_object_name(&s.name));
+            }
+            _ => {}
+        },
         _ => {}
     }
     out

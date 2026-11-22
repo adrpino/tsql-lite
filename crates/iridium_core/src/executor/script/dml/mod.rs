@@ -32,19 +32,19 @@ impl<'a> ScriptExecutor<'a> {
         use crate::ast::DmlStatement;
         use crate::error::StmtOutcome;
         match dml {
-            DmlStatement::Insert(stmt) => self.execute_insert(stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Select(stmt) => self.execute_select_into(stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Update(stmt) => self.execute_update(stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Delete(stmt) => self.execute_delete(stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Merge(stmt) => self.execute_merge(stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Insert(stmt) => self.execute_insert(*stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Select(stmt) => self.execute_select_into(*stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Update(stmt) => self.execute_update(*stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Delete(stmt) => self.execute_delete(*stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Merge(stmt) => self.execute_merge(*stmt, ctx).map(StmtOutcome::Ok),
             DmlStatement::SelectAssign(stmt) => {
-                self.execute_select_assign(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_select_assign(*stmt, ctx).map(StmtOutcome::Ok)
             }
             DmlStatement::BulkInsert(stmt) => {
-                self.execute_bulk_insert(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_bulk_insert(*stmt, ctx).map(StmtOutcome::Ok)
             }
             DmlStatement::InsertBulk(stmt) => {
-                self.execute_insert_bulk(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_insert_bulk(*stmt, ctx).map(StmtOutcome::Ok)
             }
             DmlStatement::SetOp(mut stmt) => {
                 // In T-SQL, `SELECT ... INTO #tbl FROM a UNION [ALL] SELECT ... FROM b`

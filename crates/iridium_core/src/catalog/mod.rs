@@ -146,7 +146,7 @@ pub enum RoutineKind {
     },
     Function {
         returns: Option<DataTypeSpec>,
-        body: FunctionBody,
+        body: Box<FunctionBody>,
     },
 }
 

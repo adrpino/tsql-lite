@@ -99,7 +99,7 @@ pub enum JoinType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ApplyClause {
     pub apply_type: ApplyType,
-    pub subquery: SelectStmt,
+    pub subquery: Box<SelectStmt>,
     pub alias: String,
 }
 

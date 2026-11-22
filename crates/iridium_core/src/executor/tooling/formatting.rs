@@ -55,8 +55,8 @@ pub(crate) fn format_expr(expr: &Expr) -> String {
         } => {
             let args_str: Vec<String> = args.iter().map(format_expr).collect();
             let mut out = format!("{}({})", name, args_str.join(", "));
-            if !within_group.is_empty() {
-                let order_by = within_group
+            if let Some(wg) = within_group.as_deref().filter(|v| !v.is_empty()) {
+                let order_by = wg
                     .iter()
                     .map(|oe| {
                         let dir = if oe.asc { "" } else { " DESC" };
@@ -231,13 +231,14 @@ pub(crate) fn format_expr(expr: &Expr) -> String {
             let not = if *negated { "NOT " } else { "" };
             format!("{} {}IN (...)", format_expr(expr), not)
         }
-        Expr::WindowFunction {
-            func,
-            partition_by,
-            order_by,
-            frame: _,
-            ..
-        } => {
+        Expr::WindowFunction(wf) => {
+            let crate::ast::WindowFunctionExpr {
+                func,
+                partition_by,
+                order_by,
+                frame: _,
+                ..
+            } = wf.as_ref();
             let func_name_owned: String;
             let func_name = match func {
                 crate::ast::WindowFunc::RowNumber => "ROW_NUMBER()",
@@ -596,9 +597,6 @@ pub(crate) fn format_statement(stmt: &Statement) -> String {
         Statement::Cursor(crate::ast::CursorStatement::DeallocateCursor(name)) => {
             format!("DEALLOCATE {}", name)
         }
-        Statement::Ddl(crate::ast::DdlStatement::CreateTable(stmt)) => {
-            format!("CREATE TABLE {}", format_object_name(&stmt.name))
-        }
         Statement::Procedural(crate::ast::ProceduralStatement::CreateView(stmt)) => {
             format!("CREATE VIEW {}", format_object_name(&stmt.name))
         }
@@ -691,45 +689,51 @@ pub(crate) fn format_statement(stmt: &Statement) -> String {
                 format_statement_list(&stmt.body)
             )
         }
-        Statement::Ddl(crate::ast::DdlStatement::DropView(stmt)) => {
-            format!("DROP VIEW {}", format_object_name(&stmt.name))
-        }
-        Statement::Ddl(crate::ast::DdlStatement::DropTable(stmt)) => {
-            format!("DROP TABLE {}", format_object_name(&stmt.name))
-        }
-        Statement::Ddl(crate::ast::DdlStatement::AlterTable(stmt)) => {
-            format!("ALTER TABLE {}", format_object_name(&stmt.table))
-        }
-        Statement::Ddl(crate::ast::DdlStatement::CreateSchema(stmt)) => {
-            format!("CREATE SCHEMA {}", stmt.name)
-        }
-        Statement::Ddl(crate::ast::DdlStatement::DropSchema(stmt)) => {
-            format!("DROP SCHEMA {}", stmt.name)
-        }
-        Statement::Ddl(crate::ast::DdlStatement::AlterSchemaTransfer(stmt)) => {
-            format!(
-                "ALTER SCHEMA {} TRANSFER {}",
-                stmt.target_schema,
-                format_object_name(&stmt.source)
-            )
-        }
-        Statement::Ddl(crate::ast::DdlStatement::CreateIndex(stmt)) => {
-            format!(
-                "CREATE INDEX {} ON {}",
-                format_object_name(&stmt.name),
-                format_object_name(&stmt.table)
-            )
-        }
-        Statement::Ddl(crate::ast::DdlStatement::DropIndex(stmt)) => {
-            format!(
-                "DROP INDEX {} ON {}",
-                format_object_name(&stmt.name),
-                format_object_name(&stmt.table)
-            )
-        }
-        Statement::Ddl(crate::ast::DdlStatement::TruncateTable(stmt)) => {
-            format!("TRUNCATE TABLE {}", format_object_name(&stmt.name))
-        }
+        Statement::Ddl(ddl) => match ddl.as_ref() {
+            crate::ast::DdlStatement::CreateTable(stmt) => {
+                format!("CREATE TABLE {}", format_object_name(&stmt.name))
+            }
+            crate::ast::DdlStatement::DropView(stmt) => {
+                format!("DROP VIEW {}", format_object_name(&stmt.name))
+            }
+            crate::ast::DdlStatement::DropTable(stmt) => {
+                format!("DROP TABLE {}", format_object_name(&stmt.name))
+            }
+            crate::ast::DdlStatement::AlterTable(stmt) => {
+                format!("ALTER TABLE {}", format_object_name(&stmt.table))
+            }
+            crate::ast::DdlStatement::CreateSchema(stmt) => {
+                format!("CREATE SCHEMA {}", stmt.name)
+            }
+            crate::ast::DdlStatement::DropSchema(stmt) => {
+                format!("DROP SCHEMA {}", stmt.name)
+            }
+            crate::ast::DdlStatement::AlterSchemaTransfer(stmt) => {
+                format!(
+                    "ALTER SCHEMA {} TRANSFER {}",
+                    stmt.target_schema,
+                    format_object_name(&stmt.source)
+                )
+            }
+            crate::ast::DdlStatement::CreateIndex(stmt) => {
+                format!(
+                    "CREATE INDEX {} ON {}",
+                    format_object_name(&stmt.name),
+                    format_object_name(&stmt.table)
+                )
+            }
+            crate::ast::DdlStatement::DropIndex(stmt) => {
+                format!(
+                    "DROP INDEX {} ON {}",
+                    format_object_name(&stmt.name),
+                    format_object_name(&stmt.table)
+                )
+            }
+            crate::ast::DdlStatement::TruncateTable(stmt) => {
+                format!("TRUNCATE TABLE {}", format_object_name(&stmt.name))
+            }
+            _ => super::formatting_kind::statement_kind(stmt).to_string(),
+        },
         _ => super::formatting_kind::statement_kind(stmt).to_string(),
     }
 }
@@ -770,7 +774,7 @@ pub fn format_routine_definition(routine: &crate::catalog::RoutineDef) -> String
                 s.push_str(" RETURNS ");
                 s.push_str(&format_data_type_spec(returns));
             }
-            match body {
+            match body.as_ref() {
                 FunctionBody::ScalarReturn(expr) => {
                     s.push_str(" AS RETURN ");
                     s.push_str(&format_expr(expr));

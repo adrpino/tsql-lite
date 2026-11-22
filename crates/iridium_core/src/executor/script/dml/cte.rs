@@ -75,7 +75,7 @@ fn extract_recursive_cte_parts(
             let recursive = set_op.right.clone();
             Some((
                 crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(anchor)),
-                crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(recursive)),
+                crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(Box::new(recursive))),
             ))
         }
         _ => None,
@@ -224,7 +224,7 @@ impl<'a> ScriptExecutor<'a> {
                         };
                         qe.execute_select_with_base_targets(
                             crate::executor::query::plan::RelationalQuery::from(
-                                select_stmt.clone(),
+                                (**select_stmt).clone(),
                             ),
                             ctx,
                         )?

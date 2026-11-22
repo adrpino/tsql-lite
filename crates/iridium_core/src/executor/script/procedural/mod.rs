@@ -31,18 +31,18 @@ impl<'a> ScriptExecutor<'a> {
 
         match proc {
             ProceduralStatement::Declare(stmt) => {
-                self.execute_declare(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_declare(*stmt, ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::DeclareTableVar(stmt) => self
-                .execute_declare_table_var(stmt, ctx)
+                .execute_declare_table_var(*stmt, ctx)
                 .map(StmtOutcome::Ok),
-            ProceduralStatement::Set(stmt) => self.execute_set(stmt, ctx).map(StmtOutcome::Ok),
+            ProceduralStatement::Set(stmt) => self.execute_set(*stmt, ctx).map(StmtOutcome::Ok),
             ProceduralStatement::SetOption(_) => Err(DbError::Execution(
                 "SET option statements are handled at engine level".into(),
             )),
-            ProceduralStatement::If(stmt) => self.execute_if(stmt, ctx),
+            ProceduralStatement::If(stmt) => self.execute_if(*stmt, ctx),
             ProceduralStatement::BeginEnd(stmts) => self.execute_batch(&stmts, ctx),
-            ProceduralStatement::While(stmt) => self.execute_while(stmt, ctx),
+            ProceduralStatement::While(stmt) => self.execute_while(*stmt, ctx),
             ProceduralStatement::Break => self.execute_break(ctx),
             ProceduralStatement::Continue => self.execute_continue(ctx),
             ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label)),
@@ -50,32 +50,32 @@ impl<'a> ScriptExecutor<'a> {
             ProceduralStatement::Return(expr) => self.execute_return(expr, ctx),
             ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, stmt, ctx),
             ProceduralStatement::ExecProcedure(stmt) => {
-                self.execute_procedure(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_procedure(*stmt, ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::SpExecuteSql(stmt) => {
-                execute_sp_executesql(self, stmt, ctx).map(StmtOutcome::Ok)
+                execute_sp_executesql(self, *stmt, ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::Print(expr) => self.execute_print(expr, ctx).map(StmtOutcome::Ok),
             ProceduralStatement::Raiserror(stmt) => {
-                self.execute_raiserror(stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_raiserror(*stmt, ctx).map(StmtOutcome::Ok)
             }
-            ProceduralStatement::Throw(stmt) => self.execute_throw(stmt, ctx).map(StmtOutcome::Ok),
-            ProceduralStatement::TryCatch(stmt) => self.execute_try_catch(stmt, ctx),
-            ProceduralStatement::DeclareCursor(stmt) => self.execute_declare_cursor(stmt, ctx),
+            ProceduralStatement::Throw(stmt) => self.execute_throw(*stmt, ctx).map(StmtOutcome::Ok),
+            ProceduralStatement::TryCatch(stmt) => self.execute_try_catch(*stmt, ctx),
+            ProceduralStatement::DeclareCursor(stmt) => self.execute_declare_cursor(*stmt, ctx),
             ProceduralStatement::CreateProcedure(stmt) => {
-                self.execute_create_procedure(stmt)?;
+                self.execute_create_procedure(*stmt)?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateFunction(stmt) => {
-                self.execute_create_function(stmt)?;
+                self.execute_create_function(*stmt)?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateView(stmt) => {
-                self.execute_create_view(stmt, ctx)?;
+                self.execute_create_view(*stmt, ctx)?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateTrigger(stmt) => {
-                self.execute_create_trigger(stmt)?;
+                self.execute_create_trigger(*stmt)?;
                 Ok(StmtOutcome::Ok(None))
             }
         }

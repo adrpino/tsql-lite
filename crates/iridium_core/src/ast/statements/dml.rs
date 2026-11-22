@@ -61,11 +61,10 @@ pub struct MergeStmt {
     pub output_into_columns: Vec<String>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MergeSource {
     Table(TableRef),
-    Subquery(SelectStmt, Option<String>),
+    Subquery(Box<SelectStmt>, Option<String>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

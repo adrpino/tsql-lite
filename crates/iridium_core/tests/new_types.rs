@@ -212,9 +212,12 @@ fn test_sysname_type_alias() {
 
     let stmt = parse_sql("CREATE TABLE dbo.t (name sysname NOT NULL)").expect("parse failed");
     match stmt {
-        Statement::Ddl(DdlStatement::CreateTable(tbl)) => {
-            assert_eq!(tbl.columns[0].data_type, DataTypeSpec::NVarChar(128));
-        }
+        Statement::Ddl(ddl) => match *ddl {
+            DdlStatement::CreateTable(tbl) => {
+                assert_eq!(tbl.columns[0].data_type, DataTypeSpec::NVarChar(128));
+            }
+            other => panic!("expected CREATE TABLE, got {:?}", other),
+        },
         other => panic!("expected CREATE TABLE, got {:?}", other),
     }
 }

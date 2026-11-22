@@ -86,7 +86,7 @@ pub(crate) fn eval_user_scalar_function(
                 .insert(param_name.clone(), (ty, coerced));
             ctx.register_declared_var(&param_name);
         }
-        let out = match body {
+        let out = match body.as_ref() {
             FunctionBody::ScalarReturn(expr) => eval_expr(expr, row, ctx, catalog, storage, clock),
             FunctionBody::Scalar(stmts) => {
                 super::super::evaluator::eval_udf_body(stmts, ctx, catalog, storage, clock)

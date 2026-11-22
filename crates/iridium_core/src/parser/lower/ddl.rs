@@ -6,90 +6,91 @@ use crate::error::DbError;
 use crate::parser::ast;
 
 pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbError> {
-    match ddl {
-        ast::DdlStatement::Create(s) => lower_create(*s),
-        ast::DdlStatement::AlterTable { table, action } => Ok(executor_ast::Statement::Ddl(
+    if let ast::DdlStatement::Create(s) = ddl {
+        return lower_create(*s);
+    }
+    let lowered = match ddl {
+        ast::DdlStatement::Create(_) => unreachable!(),
+        ast::DdlStatement::AlterTable { table, action } => {
             executor_ast::statements::DdlStatement::AlterTable(
                 executor_ast::statements::ddl::AlterTableStmt {
                     table: lower_object_name(table),
                     action: lower_alter_action(action)?,
                 },
-            ),
-        )),
-        ast::DdlStatement::TruncateTable(table) => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::TruncateTable(table) => {
             executor_ast::statements::DdlStatement::TruncateTable(
                 executor_ast::statements::ddl::TruncateTableStmt {
                     name: lower_object_name(table),
                 },
-            ),
-        )),
-        ast::DdlStatement::DropTable { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropTable { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropTable(
                 executor_ast::statements::ddl::DropTableStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
-        ast::DdlStatement::DropView { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropView { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropView(
                 executor_ast::statements::ddl::DropViewStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
-        ast::DdlStatement::DropProcedure { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropProcedure { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropProcedure(
                 executor_ast::statements::procedural::DropProcedureStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
-        ast::DdlStatement::DropFunction { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropFunction { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropFunction(
                 executor_ast::statements::procedural::DropFunctionStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
-        ast::DdlStatement::DropTrigger { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropTrigger { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropTrigger(
                 executor_ast::statements::procedural::DropTriggerStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
+            )
+        }
         ast::DdlStatement::DropIndex {
             name,
             table,
             if_exists,
-        } => Ok(executor_ast::Statement::Ddl(
-            executor_ast::statements::DdlStatement::DropIndex(
-                executor_ast::statements::ddl::DropIndexStmt {
-                    name: lower_object_name(name),
-                    table: lower_object_name(table),
-                    if_exists,
-                },
-            ),
-        )),
-        ast::DdlStatement::DropType { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+        } => executor_ast::statements::DdlStatement::DropIndex(
+            executor_ast::statements::ddl::DropIndexStmt {
+                name: lower_object_name(name),
+                table: lower_object_name(table),
+                if_exists,
+            },
+        ),
+        ast::DdlStatement::DropType { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropType(
                 executor_ast::statements::ddl::DropTypeStmt {
                     name: lower_object_name(name),
                     if_exists,
                 },
-            ),
-        )),
-        ast::DdlStatement::DropSchema { name, if_exists } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropSchema { name, if_exists } => {
             executor_ast::statements::DdlStatement::DropSchema(
                 executor_ast::statements::ddl::DropSchemaStmt { name, if_exists },
-            ),
-        )),
-        ast::DdlStatement::CreateIndex(stmt) => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::CreateIndex(stmt) => {
             executor_ast::statements::DdlStatement::CreateIndex(
                 executor_ast::statements::ddl::CreateIndexStmt {
                     name: lower_object_name(stmt.name),
@@ -114,9 +115,9 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                         })
                         .collect(),
                 },
-            ),
-        )),
-        ast::DdlStatement::CreateType { name, columns } => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::CreateType { name, columns } => {
             executor_ast::statements::DdlStatement::CreateType(
                 executor_ast::statements::ddl::CreateTypeStmt {
                     name: lower_object_name(name),
@@ -126,41 +127,39 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                         .collect::<Result<Vec<_>, _>>()?,
                     table_constraints: Vec::new(),
                 },
-            ),
-        )),
-        ast::DdlStatement::CreateSchema(name) => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::CreateSchema(name) => {
             executor_ast::statements::DdlStatement::CreateSchema(
                 executor_ast::statements::ddl::CreateSchemaStmt { name },
-            ),
-        )),
+            )
+        }
         ast::DdlStatement::AlterSchemaTransfer {
             target_schema,
             entity_type,
             source,
-        } => Ok(executor_ast::Statement::Ddl(
-            executor_ast::statements::DdlStatement::AlterSchemaTransfer(
-                executor_ast::statements::ddl::AlterSchemaTransferStmt {
-                    target_schema,
-                    entity_type,
-                    source: lower_object_name(source),
-                },
-            ),
-        )),
-        ast::DdlStatement::CreateSynonym { name, base_object } => Ok(executor_ast::Statement::Ddl(
+        } => executor_ast::statements::DdlStatement::AlterSchemaTransfer(
+            executor_ast::statements::ddl::AlterSchemaTransferStmt {
+                target_schema,
+                entity_type,
+                source: lower_object_name(source),
+            },
+        ),
+        ast::DdlStatement::CreateSynonym { name, base_object } => {
             executor_ast::statements::DdlStatement::CreateSynonym(
                 executor_ast::statements::ddl::CreateSynonymStmt {
                     name: lower_object_name(name),
                     base_object: lower_object_name(base_object),
                 },
-            ),
-        )),
-        ast::DdlStatement::DropSynonym(name) => Ok(executor_ast::Statement::Ddl(
+            )
+        }
+        ast::DdlStatement::DropSynonym(name) => {
             executor_ast::statements::DdlStatement::DropSynonym(
                 executor_ast::statements::ddl::DropSynonymStmt {
                     name: lower_object_name(name),
                 },
-            ),
-        )),
+            )
+        }
         ast::DdlStatement::CreateSequence {
             name,
             data_type,
@@ -169,30 +168,29 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
             min_value,
             max_value,
             cycle,
-        } => Ok(executor_ast::Statement::Ddl(
-            executor_ast::statements::DdlStatement::CreateSequence(
-                executor_ast::statements::ddl::CreateSequenceStmt {
-                    name: lower_object_name(name),
-                    data_type: data_type
-                        .map(lower_data_type)
-                        .transpose()?
-                        .unwrap_or(executor_ast::data_types::DataTypeSpec::BigInt),
-                    start_value: start_with.unwrap_or(1),
-                    increment: increment_by.unwrap_or(1),
-                    minimum_value: min_value.unwrap_or(i64::MIN),
-                    maximum_value: max_value.unwrap_or(i64::MAX),
-                    is_cycling: cycle,
-                },
-            ),
-        )),
-        ast::DdlStatement::DropSequence(name) => Ok(executor_ast::Statement::Ddl(
+        } => executor_ast::statements::DdlStatement::CreateSequence(
+            executor_ast::statements::ddl::CreateSequenceStmt {
+                name: lower_object_name(name),
+                data_type: data_type
+                    .map(lower_data_type)
+                    .transpose()?
+                    .unwrap_or(executor_ast::data_types::DataTypeSpec::BigInt),
+                start_value: start_with.unwrap_or(1),
+                increment: increment_by.unwrap_or(1),
+                minimum_value: min_value.unwrap_or(i64::MIN),
+                maximum_value: max_value.unwrap_or(i64::MAX),
+                is_cycling: cycle,
+            },
+        ),
+        ast::DdlStatement::DropSequence(name) => {
             executor_ast::statements::DdlStatement::DropSequence(
                 executor_ast::statements::ddl::DropSequenceStmt {
                     name: lower_object_name(name),
                 },
-            ),
-        )),
-    }
+            )
+        }
+    };
+    Ok(executor_ast::Statement::Ddl(Box::new(lowered)))
 }
 
 pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbError> {
@@ -201,7 +199,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             name,
             columns,
             constraints,
-        } => Ok(executor_ast::Statement::Ddl(
+        } => Ok(executor_ast::Statement::Ddl(Box::new(
             executor_ast::statements::DdlStatement::CreateTable(
                 executor_ast::statements::ddl::CreateTableStmt {
                     name: lower_object_name(name),
@@ -215,7 +213,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .collect::<Result<Vec<_>, _>>()?,
                 },
             ),
-        )),
+        ))),
         ast::CreateStmt::View {
             name,
             columns,
@@ -230,7 +228,9 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         name: c.name,
                         columns: c.columns,
                         query: executor_ast::Statement::Dml(
-                            executor_ast::statements::DmlStatement::Select(lower_select(c.query)?),
+                            executor_ast::statements::DmlStatement::Select(Box::new(lower_select(
+                                c.query,
+                            )?)),
                         ),
                     })
                 })
@@ -257,13 +257,13 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                 }
             }
             Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::CreateView(
+                executor_ast::statements::ProceduralStatement::CreateView(Box::new(
                     executor_ast::statements::ddl::CreateViewStmt {
                         name: lower_object_name(name),
                         ctes: lowered_ctes,
                         query: lowered_query,
                     },
-                ),
+                )),
             ))
         }
         ast::CreateStmt::Procedure {
@@ -271,31 +271,29 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             params,
             body,
             or_alter,
-        } => {
-            Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::CreateProcedure(
-                    executor_ast::statements::procedural::CreateProcedureStmt {
-                        name: lower_object_name(name),
-                        params: params
-                            .into_iter()
-                            .map(lower_routine_param)
-                            .collect::<Result<Vec<_>, _>>()?,
-                        body: body
-                            .into_iter()
-                            .map(lower_statement)
-                            .collect::<Result<Vec<_>, _>>()?,
-                        or_alter,
-                    },
-                ),
-            ))
-        }
+        } => Ok(executor_ast::Statement::Procedural(
+            executor_ast::statements::ProceduralStatement::CreateProcedure(Box::new(
+                executor_ast::statements::procedural::CreateProcedureStmt {
+                    name: lower_object_name(name),
+                    params: params
+                        .into_iter()
+                        .map(lower_routine_param)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    body: body
+                        .into_iter()
+                        .map(lower_statement)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    or_alter,
+                },
+            )),
+        )),
         ast::CreateStmt::Function {
             name,
             params,
             returns,
             body,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::CreateFunction(
+            executor_ast::statements::ProceduralStatement::CreateFunction(Box::new(
                 executor_ast::statements::procedural::CreateFunctionStmt {
                     name: lower_object_name(name),
                     params: params
@@ -319,7 +317,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         }
                         ast::FunctionBody::Table(sel) => {
                             executor_ast::statements::procedural::FunctionBody::InlineTable(
-                                lower_select(sel)?,
+                                Box::new(lower_select(sel)?),
                             )
                         }
                         ast::FunctionBody::TableWithCte { ctes, query } => {
@@ -331,7 +329,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                                         columns: c.columns,
                                         query: executor_ast::Statement::Dml(
                                             executor_ast::statements::DmlStatement::Select(
-                                                lower_select(c.query)?,
+                                                Box::new(lower_select(c.query)?),
                                             ),
                                         ),
                                     })
@@ -342,9 +340,9 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                                     recursive: false,
                                     ctes: lowered_ctes,
                                     body: Box::new(executor_ast::Statement::Dml(
-                                        executor_ast::statements::DmlStatement::Select(
+                                        executor_ast::statements::DmlStatement::Select(Box::new(
                                             lower_select(query)?,
-                                        ),
+                                        )),
                                     )),
                                 }),
                             )
@@ -371,7 +369,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         },
                     },
                 },
-            ),
+            )),
         )),
         ast::CreateStmt::Trigger {
             name,
@@ -380,7 +378,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             is_instead_of,
             body,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::CreateTrigger(
+            executor_ast::statements::ProceduralStatement::CreateTrigger(Box::new(
                 executor_ast::statements::procedural::CreateTriggerStmt {
                     name: lower_object_name(name),
                     table: lower_object_name(table),
@@ -398,7 +396,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .map(lower_statement)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
+            )),
         )),
     }
 }

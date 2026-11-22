@@ -268,3 +268,46 @@ fn lazy_definition_sql_serves_sys_sql_modules_sp_helptext_and_object_definition(
         .to_string_value()
         .contains("CREATE PROCEDURE"));
 }
+
+#[test]
+fn ast_and_catalog_enums_stay_compact() {
+    use iridium_core::ast::*;
+    use iridium_core::catalog::*;
+    use std::mem::size_of;
+
+    assert!(
+        size_of::<Expr>() <= 64,
+        "Expr grew to {} B",
+        size_of::<Expr>()
+    );
+    assert!(
+        size_of::<DmlStatement>() <= 24,
+        "DmlStatement grew to {} B",
+        size_of::<DmlStatement>()
+    );
+    assert!(
+        size_of::<ProceduralStatement>() <= 72,
+        "ProceduralStatement grew to {} B",
+        size_of::<ProceduralStatement>()
+    );
+    assert!(
+        size_of::<Statement>() <= 80,
+        "Statement grew to {} B",
+        size_of::<Statement>()
+    );
+    assert!(
+        size_of::<FunctionBody>() <= 104,
+        "FunctionBody grew to {} B",
+        size_of::<FunctionBody>()
+    );
+    assert!(
+        size_of::<RoutineKind>() <= 32,
+        "RoutineKind grew to {} B",
+        size_of::<RoutineKind>()
+    );
+    assert!(
+        size_of::<RoutineDef>() <= 128,
+        "RoutineDef grew to {} B",
+        size_of::<RoutineDef>()
+    );
+}

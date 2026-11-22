@@ -43,7 +43,7 @@ where
         session.cursors.map.insert(
             cursor_name.clone(),
             Cursor {
-                query: Some(select_ast.clone()),
+                query: Some((*select_ast).clone()),
                 query_result: QueryResult::default(),
                 current_row: -1,
             },
@@ -70,7 +70,7 @@ where
                 clock: &SystemClock,
             }
             .execute_select(
-                super::super::query::plan::RelationalQuery::from(select_ast),
+                super::super::query::plan::RelationalQuery::from(*select_ast),
                 &mut ctx,
             )?
         };

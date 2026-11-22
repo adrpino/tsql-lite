@@ -17,7 +17,8 @@ pub enum Expr {
     FunctionCall {
         name: String,
         args: Vec<Expr>,
-        within_group: Vec<OrderByExpr>,
+        #[serde(default)]
+        within_group: Option<Box<Vec<OrderByExpr>>>,
     },
     Binary {
         left: Box<Expr>,
@@ -70,13 +71,7 @@ pub enum Expr {
         escape: Option<Box<Expr>>,
         negated: bool,
     },
-    WindowFunction {
-        func: WindowFunc,
-        args: Vec<Expr>,
-        partition_by: Vec<Expr>,
-        order_by: Vec<OrderByExpr>,
-        frame: Option<WindowFrame>,
-    },
+    WindowFunction(Box<WindowFunctionExpr>),
     Subquery(Box<crate::ast::statements::query::SelectStmt>),
     Exists {
         subquery: Box<crate::ast::statements::query::SelectStmt>,
@@ -88,8 +83,17 @@ pub enum Expr {
         negated: bool,
     },
     NextValueFor {
-        sequence_name: crate::ast::ObjectName,
+        sequence_name: Box<crate::ast::ObjectName>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WindowFunctionExpr {
+    pub func: WindowFunc,
+    pub args: Vec<Expr>,
+    pub partition_by: Vec<Expr>,
+    pub order_by: Vec<OrderByExpr>,
+    pub frame: Option<WindowFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

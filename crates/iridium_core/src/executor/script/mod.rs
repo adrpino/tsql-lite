@@ -249,7 +249,7 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
     ) -> StmtResult<Option<QueryResult>> {
         match stmt {
             CursorStatement::OpenCursor(name) => self.execute_open_cursor(name, ctx),
-            CursorStatement::FetchCursor(stmt) => self.execute_fetch_cursor(stmt, ctx),
+            CursorStatement::FetchCursor(stmt) => self.execute_fetch_cursor(*stmt, ctx),
             CursorStatement::CloseCursor(name) => self.execute_close_cursor(name, ctx),
             CursorStatement::DeallocateCursor(name) => self.execute_deallocate_cursor(name, ctx),
         }

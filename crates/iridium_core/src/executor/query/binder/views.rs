@@ -34,7 +34,7 @@ pub(super) fn bind_view(
 
     let result = match view.query.as_ref() {
         crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => {
-            executor.execute_select(s.clone().into(), ctx)?
+            executor.execute_select((**s).clone().into(), ctx)?
         }
         crate::ast::Statement::WithCte(_) => {
             let mut temp_cat = catalog.clone_boxed();

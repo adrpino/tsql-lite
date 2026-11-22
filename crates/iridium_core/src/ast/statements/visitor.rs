@@ -19,12 +19,12 @@ pub trait StatementVisitor<Context> {
     ) -> StmtResult<Option<QueryResult>> {
         match stmt {
             Statement::Dml(s) => self.visit_dml(s, ctx),
-            Statement::Ddl(s) => self.visit_ddl(s, ctx),
+            Statement::Ddl(s) => self.visit_ddl(*s, ctx),
             Statement::Procedural(s) => self.visit_procedural(s, ctx),
             Statement::Transaction(s) => self.visit_transaction(s, ctx),
             Statement::Cursor(s) => self.visit_cursor(s, ctx),
             Statement::Session(s) => self.visit_session(s, ctx),
-            Statement::WithCte(s) => self.visit_with_cte(s, ctx),
+            Statement::WithCte(s) => self.visit_with_cte(*s, ctx),
         }
     }
 

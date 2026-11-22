@@ -89,12 +89,11 @@ pub struct DropProcedureStmt {
     pub if_exists: bool,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FunctionBody {
     ScalarReturn(Expr),
     Scalar(Vec<crate::ast::Statement>),
-    InlineTable(SelectStmt),
+    InlineTable(Box<SelectStmt>),
     InlineTableWithCte(Box<WithCteStmt>),
     MultiStatementTable {
         table_var: String,

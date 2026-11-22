@@ -193,264 +193,270 @@ impl<'a> WindowExecutor<'a> {
 
                     for win_expr in win_exprs {
                         let val = match win_expr {
-                            Expr::WindowFunction { func, args, .. } => match func {
-                                WindowFunc::RowNumber => Value::Int((i + 1) as i32),
-                                WindowFunc::Rank => Value::Int(current_rank),
-                                WindowFunc::DenseRank => Value::Int(current_dense_rank),
-                                WindowFunc::Lag => {
-                                    let offset = args
-                                        .get(1)
-                                        .and_then(|e| {
-                                            if let Expr::Integer(n) = e {
-                                                Some(*n as usize)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or(1);
-                                    if i >= offset {
-                                        eval_expr(
-                                            &args[0],
-                                            partition[i - offset].row,
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        )
-                                        .unwrap_or(Value::Null)
-                                    } else {
-                                        args.get(2)
-                                            .map(|e| {
-                                                eval_expr(
-                                                    e,
-                                                    w_row.row,
-                                                    ctx,
-                                                    self.catalog,
-                                                    self.storage,
-                                                    self.clock,
-                                                )
-                                                .unwrap_or(Value::Null)
+                            Expr::WindowFunction(wf) => {
+                                let crate::ast::WindowFunctionExpr { func, args, .. } = wf.as_ref();
+                                match func {
+                                    WindowFunc::RowNumber => Value::Int((i + 1) as i32),
+                                    WindowFunc::Rank => Value::Int(current_rank),
+                                    WindowFunc::DenseRank => Value::Int(current_dense_rank),
+                                    WindowFunc::Lag => {
+                                        let offset = args
+                                            .get(1)
+                                            .and_then(|e| {
+                                                if let Expr::Integer(n) = e {
+                                                    Some(*n as usize)
+                                                } else {
+                                                    None
+                                                }
                                             })
+                                            .unwrap_or(1);
+                                        if i >= offset {
+                                            eval_expr(
+                                                &args[0],
+                                                partition[i - offset].row,
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            )
                                             .unwrap_or(Value::Null)
-                                    }
-                                }
-                                WindowFunc::Lead => {
-                                    let offset = args
-                                        .get(1)
-                                        .and_then(|e| {
-                                            if let Expr::Integer(n) = e {
-                                                Some(*n as usize)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or(1);
-                                    if i + offset < partition.len() {
-                                        eval_expr(
-                                            &args[0],
-                                            partition[i + offset].row,
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        )
-                                        .unwrap_or(Value::Null)
-                                    } else {
-                                        args.get(2)
-                                            .map(|e| {
-                                                eval_expr(
-                                                    e,
-                                                    w_row.row,
-                                                    ctx,
-                                                    self.catalog,
-                                                    self.storage,
-                                                    self.clock,
-                                                )
+                                        } else {
+                                            args.get(2)
+                                                .map(|e| {
+                                                    eval_expr(
+                                                        e,
+                                                        w_row.row,
+                                                        ctx,
+                                                        self.catalog,
+                                                        self.storage,
+                                                        self.clock,
+                                                    )
+                                                    .unwrap_or(Value::Null)
+                                                })
                                                 .unwrap_or(Value::Null)
+                                        }
+                                    }
+                                    WindowFunc::Lead => {
+                                        let offset = args
+                                            .get(1)
+                                            .and_then(|e| {
+                                                if let Expr::Integer(n) = e {
+                                                    Some(*n as usize)
+                                                } else {
+                                                    None
+                                                }
                                             })
+                                            .unwrap_or(1);
+                                        if i + offset < partition.len() {
+                                            eval_expr(
+                                                &args[0],
+                                                partition[i + offset].row,
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            )
                                             .unwrap_or(Value::Null)
-                                    }
-                                }
-                                WindowFunc::FirstValue => {
-                                    let frame_rows = self.get_frame_rows_optimized(
-                                        partition,
-                                        i,
-                                        &spec.frame,
-                                        &spec.order_by,
-                                        ctx,
-                                    );
-                                    if frame_rows.is_empty() {
-                                        Value::Null
-                                    } else {
-                                        eval_expr(
-                                            &args[0],
-                                            frame_rows[0],
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        )
-                                        .unwrap_or(Value::Null)
-                                    }
-                                }
-                                WindowFunc::LastValue => {
-                                    let frame_rows = self.get_frame_rows_optimized(
-                                        partition,
-                                        i,
-                                        &spec.frame,
-                                        &spec.order_by,
-                                        ctx,
-                                    );
-                                    if frame_rows.is_empty() {
-                                        Value::Null
-                                    } else {
-                                        eval_expr(
-                                            &args[0],
-                                            frame_rows[frame_rows.len() - 1],
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        )
-                                        .unwrap_or(Value::Null)
-                                    }
-                                }
-                                WindowFunc::NTile => {
-                                    let n_buckets = if let Some(e) = args.first() {
-                                        match eval_expr(
-                                            e,
-                                            w_row.row,
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        ) {
-                                            Ok(Value::Int(n)) => n as i64,
-                                            Ok(Value::BigInt(n)) => n,
-                                            Ok(Value::TinyInt(n)) => n as i64,
-                                            Ok(Value::SmallInt(n)) => n as i64,
-                                            _ => 1,
+                                        } else {
+                                            args.get(2)
+                                                .map(|e| {
+                                                    eval_expr(
+                                                        e,
+                                                        w_row.row,
+                                                        ctx,
+                                                        self.catalog,
+                                                        self.storage,
+                                                        self.clock,
+                                                    )
+                                                    .unwrap_or(Value::Null)
+                                                })
+                                                .unwrap_or(Value::Null)
                                         }
-                                    } else {
-                                        1
-                                    };
-
-                                    if n_buckets <= 0 {
-                                        Value::Null
-                                    } else {
-                                        let partition_size = partition.len() as i64;
-                                        let bucket_size = partition_size / n_buckets;
-                                        let remainder = partition_size % n_buckets;
-
-                                        let mut current_row = 0i64;
-                                        let mut found_bucket = 1i64;
-                                        for b in 1..=n_buckets {
-                                            let rows_in_this_bucket =
-                                                bucket_size + if b <= remainder { 1 } else { 0 };
-                                            if (i as i64) >= current_row
-                                                && (i as i64) < current_row + rows_in_this_bucket
-                                            {
-                                                found_bucket = b;
-                                                break;
+                                    }
+                                    WindowFunc::FirstValue => {
+                                        let frame_rows = self.get_frame_rows_optimized(
+                                            partition,
+                                            i,
+                                            &spec.frame,
+                                            &spec.order_by,
+                                            ctx,
+                                        );
+                                        if frame_rows.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            eval_expr(
+                                                &args[0],
+                                                frame_rows[0],
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        }
+                                    }
+                                    WindowFunc::LastValue => {
+                                        let frame_rows = self.get_frame_rows_optimized(
+                                            partition,
+                                            i,
+                                            &spec.frame,
+                                            &spec.order_by,
+                                            ctx,
+                                        );
+                                        if frame_rows.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            eval_expr(
+                                                &args[0],
+                                                frame_rows[frame_rows.len() - 1],
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        }
+                                    }
+                                    WindowFunc::NTile => {
+                                        let n_buckets = if let Some(e) = args.first() {
+                                            match eval_expr(
+                                                e,
+                                                w_row.row,
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            ) {
+                                                Ok(Value::Int(n)) => n as i64,
+                                                Ok(Value::BigInt(n)) => n,
+                                                Ok(Value::TinyInt(n)) => n as i64,
+                                                Ok(Value::SmallInt(n)) => n as i64,
+                                                _ => 1,
                                             }
-                                            current_row += rows_in_this_bucket;
-                                        }
-                                        Value::BigInt(found_bucket)
-                                    }
-                                }
-                                WindowFunc::PercentileCont | WindowFunc::PercentileDisc => {
-                                    let percentile = if let Some(e) = args.first() {
-                                        match eval_expr(
-                                            e,
-                                            w_row.row,
-                                            ctx,
-                                            self.catalog,
-                                            self.storage,
-                                            self.clock,
-                                        ) {
-                                            Ok(Value::Float(v)) => f64::from_bits(v),
-                                            Ok(v) => value_to_f64(&v).unwrap_or(f64::NAN),
-                                            _ => f64::NAN,
-                                        }
-                                    } else {
-                                        f64::NAN
-                                    };
+                                        } else {
+                                            1
+                                        };
 
-                                    if percentile.is_nan() || !(0.0..=1.0).contains(&percentile) {
-                                        Value::Null
-                                    } else {
-                                        let mut values: Vec<f64> = Vec::new();
-                                        for p_row in partition.iter() {
-                                            if !p_row.order_values.is_empty() {
-                                                if let Ok(f) = value_to_f64(&p_row.order_values[0])
+                                        if n_buckets <= 0 {
+                                            Value::Null
+                                        } else {
+                                            let partition_size = partition.len() as i64;
+                                            let bucket_size = partition_size / n_buckets;
+                                            let remainder = partition_size % n_buckets;
+
+                                            let mut current_row = 0i64;
+                                            let mut found_bucket = 1i64;
+                                            for b in 1..=n_buckets {
+                                                let rows_in_this_bucket = bucket_size
+                                                    + if b <= remainder { 1 } else { 0 };
+                                                if (i as i64) >= current_row
+                                                    && (i as i64)
+                                                        < current_row + rows_in_this_bucket
                                                 {
-                                                    values.push(f);
+                                                    found_bucket = b;
+                                                    break;
+                                                }
+                                                current_row += rows_in_this_bucket;
+                                            }
+                                            Value::BigInt(found_bucket)
+                                        }
+                                    }
+                                    WindowFunc::PercentileCont | WindowFunc::PercentileDisc => {
+                                        let percentile = if let Some(e) = args.first() {
+                                            match eval_expr(
+                                                e,
+                                                w_row.row,
+                                                ctx,
+                                                self.catalog,
+                                                self.storage,
+                                                self.clock,
+                                            ) {
+                                                Ok(Value::Float(v)) => f64::from_bits(v),
+                                                Ok(v) => value_to_f64(&v).unwrap_or(f64::NAN),
+                                                _ => f64::NAN,
+                                            }
+                                        } else {
+                                            f64::NAN
+                                        };
+
+                                        if percentile.is_nan() || !(0.0..=1.0).contains(&percentile)
+                                        {
+                                            Value::Null
+                                        } else {
+                                            let mut values: Vec<f64> = Vec::new();
+                                            for p_row in partition.iter() {
+                                                if !p_row.order_values.is_empty() {
+                                                    if let Ok(f) =
+                                                        value_to_f64(&p_row.order_values[0])
+                                                    {
+                                                        values.push(f);
+                                                    }
+                                                }
+                                            }
+
+                                            values.sort_by(|a, b| {
+                                                a.partial_cmp(b).unwrap_or(Ordering::Equal)
+                                            });
+
+                                            if values.is_empty() {
+                                                Value::Null
+                                            } else {
+                                                let n = values.len();
+                                                let exact_index = percentile * (n - 1) as f64;
+                                                let lo = exact_index.floor() as usize;
+                                                let hi = exact_index.ceil() as usize;
+
+                                                if func == &WindowFunc::PercentileDisc {
+                                                    Value::Float(values[hi].to_bits())
+                                                } else if lo == hi {
+                                                    Value::Float(values[lo].to_bits())
+                                                } else {
+                                                    let frac = exact_index - lo as f64;
+                                                    let result = values[lo] * (1.0 - frac)
+                                                        + values[hi] * frac;
+                                                    Value::Float(result.to_bits())
                                                 }
                                             }
                                         }
-
-                                        values.sort_by(|a, b| {
-                                            a.partial_cmp(b).unwrap_or(Ordering::Equal)
-                                        });
-
-                                        if values.is_empty() {
-                                            Value::Null
+                                    }
+                                    WindowFunc::PercentileRank => {
+                                        if partition.len() <= 1 {
+                                            Value::Float(0.0f64.to_bits())
                                         } else {
-                                            let n = values.len();
-                                            let exact_index = percentile * (n - 1) as f64;
-                                            let lo = exact_index.floor() as usize;
-                                            let hi = exact_index.ceil() as usize;
-
-                                            if func == &WindowFunc::PercentileDisc {
-                                                Value::Float(values[hi].to_bits())
-                                            } else if lo == hi {
-                                                Value::Float(values[lo].to_bits())
-                                            } else {
-                                                let frac = exact_index - lo as f64;
-                                                let result =
-                                                    values[lo] * (1.0 - frac) + values[hi] * frac;
-                                                Value::Float(result.to_bits())
-                                            }
+                                            let result = (current_rank - 1) as f64
+                                                / (partition.len() - 1) as f64;
+                                            Value::Float(result.to_bits())
+                                        }
+                                    }
+                                    WindowFunc::Aggregate(name) => {
+                                        let frame_rows = self.get_frame_rows_optimized(
+                                            partition,
+                                            i,
+                                            &spec.frame,
+                                            &spec.order_by,
+                                            ctx,
+                                        );
+                                        let group = Group {
+                                            key: vec![],
+                                            rows: frame_rows.into_iter().cloned().collect(),
+                                        };
+                                        let res = dispatch_aggregate(
+                                            name.as_str(),
+                                            args,
+                                            &group,
+                                            ctx,
+                                            self.catalog,
+                                            self.storage,
+                                            self.clock,
+                                        );
+                                        match res {
+                                            Some(Ok(v)) => v,
+                                            Some(Err(e)) => return Err(e),
+                                            None => Value::Null,
                                         }
                                     }
                                 }
-                                WindowFunc::PercentileRank => {
-                                    if partition.len() <= 1 {
-                                        Value::Float(0.0f64.to_bits())
-                                    } else {
-                                        let result = (current_rank - 1) as f64
-                                            / (partition.len() - 1) as f64;
-                                        Value::Float(result.to_bits())
-                                    }
-                                }
-                                WindowFunc::Aggregate(name) => {
-                                    let frame_rows = self.get_frame_rows_optimized(
-                                        partition,
-                                        i,
-                                        &spec.frame,
-                                        &spec.order_by,
-                                        ctx,
-                                    );
-                                    let group = Group {
-                                        key: vec![],
-                                        rows: frame_rows.into_iter().cloned().collect(),
-                                    };
-                                    let res = dispatch_aggregate(
-                                        name.as_str(),
-                                        args,
-                                        &group,
-                                        ctx,
-                                        self.catalog,
-                                        self.storage,
-                                        self.clock,
-                                    );
-                                    match res {
-                                        Some(Ok(v)) => v,
-                                        Some(Err(e)) => return Err(e),
-                                        None => Value::Null,
-                                    }
-                                }
-                            },
+                            }
                             _ => Value::Null,
                         };
                         let key = format!("{:?}", win_expr);
@@ -565,16 +571,11 @@ impl<'a> WindowExecutor<'a> {
 
     fn collect_window_exprs(&self, expr: &Expr, window_specs: &mut Vec<(WindowSpec, Vec<Expr>)>) {
         match expr {
-            Expr::WindowFunction {
-                partition_by,
-                order_by,
-                frame,
-                ..
-            } => {
+            Expr::WindowFunction(wf) => {
                 let spec = WindowSpec {
-                    partition_by: partition_by.clone(),
-                    order_by: order_by.clone(),
-                    frame: frame.clone(),
+                    partition_by: wf.partition_by.clone(),
+                    order_by: wf.order_by.clone(),
+                    frame: wf.frame.clone(),
                 };
                 if let Some(existing) = window_specs.iter_mut().find(|(s, _)| s == &spec) {
                     if !existing.1.contains(expr) {

@@ -38,7 +38,7 @@ impl<'a> ScriptExecutor<'a> {
             params: stmt.params,
             kind: crate::catalog::RoutineKind::Function {
                 returns: stmt.returns,
-                body: stmt.body,
+                body: Box::new(stmt.body),
             },
             definition_sql: String::new(),
         };

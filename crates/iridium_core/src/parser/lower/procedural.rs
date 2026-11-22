@@ -35,28 +35,28 @@ pub fn lower_procedural(
                 };
                 let custom_type = custom_type_object_name(&var.data_type);
                 Ok(executor_ast::Statement::Procedural(
-                    executor_ast::statements::ProceduralStatement::Declare(
+                    executor_ast::statements::ProceduralStatement::Declare(Box::new(
                         executor_ast::statements::procedural::DeclareStmt {
                             name: var.name,
                             data_type: lower_data_type(var.data_type)?,
                             default: var.initial_value.map(lower_expr).transpose()?,
                             custom_type,
                         },
-                    ),
+                    )),
                 ))
             } else {
                 let mut stmts = Vec::new();
                 for var in vars {
                     let custom_type = custom_type_object_name(&var.data_type);
                     stmts.push(executor_ast::Statement::Procedural(
-                        executor_ast::statements::ProceduralStatement::Declare(
+                        executor_ast::statements::ProceduralStatement::Declare(Box::new(
                             executor_ast::statements::procedural::DeclareStmt {
                                 name: var.name,
                                 data_type: lower_data_type(var.data_type)?,
                                 default: var.initial_value.map(lower_expr).transpose()?,
                                 custom_type,
                             },
-                        ),
+                        )),
                     ));
                 }
                 Ok(executor_ast::Statement::Procedural(
@@ -69,7 +69,7 @@ pub fn lower_procedural(
             columns,
             constraints,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::DeclareTableVar(
+            executor_ast::statements::ProceduralStatement::DeclareTableVar(Box::new(
                 executor_ast::statements::procedural::DeclareTableVarStmt {
                     name,
                     columns: columns
@@ -81,16 +81,18 @@ pub fn lower_procedural(
                         .map(super::ddl::lower_table_constraint)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
-        )),
-        ast::ProceduralStatement::Synonym { name, base_object } => Ok(
-            executor_ast::Statement::Ddl(executor_ast::statements::DdlStatement::CreateSynonym(
-                executor_ast::statements::ddl::CreateSynonymStmt {
-                    name: lower_object_name(name),
-                    base_object: lower_object_name(base_object),
-                },
             )),
-        ),
+        )),
+        ast::ProceduralStatement::Synonym { name, base_object } => {
+            Ok(executor_ast::Statement::Ddl(Box::new(
+                executor_ast::statements::DdlStatement::CreateSynonym(
+                    executor_ast::statements::ddl::CreateSynonymStmt {
+                        name: lower_object_name(name),
+                        base_object: lower_object_name(base_object),
+                    },
+                ),
+            )))
+        }
         ast::ProceduralStatement::Sequence {
             name,
             data_type,
@@ -99,7 +101,7 @@ pub fn lower_procedural(
             min_value,
             max_value,
             cycle,
-        } => Ok(executor_ast::Statement::Ddl(
+        } => Ok(executor_ast::Statement::Ddl(Box::new(
             executor_ast::statements::DdlStatement::CreateSequence(
                 executor_ast::statements::ddl::CreateSequenceStmt {
                     name: lower_object_name(name),
@@ -114,25 +116,25 @@ pub fn lower_procedural(
                     is_cycling: cycle,
                 },
             ),
-        )),
+        ))),
         ast::ProceduralStatement::DeclareCursor { name, query } => {
             Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::DeclareCursor(
+                executor_ast::statements::ProceduralStatement::DeclareCursor(Box::new(
                     executor_ast::statements::procedural::DeclareCursorStmt {
                         name,
                         query: lower_select(query)?,
                     },
-                ),
+                )),
             ))
         }
         ast::ProceduralStatement::Set { variable, expr } => {
             Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::Set(
+                executor_ast::statements::ProceduralStatement::Set(Box::new(
                     executor_ast::statements::procedural::SetStmt {
                         name: variable,
                         expr: lower_expr(expr)?,
                     },
-                ),
+                )),
             ))
         }
         ast::ProceduralStatement::If {
@@ -156,13 +158,13 @@ pub fn lower_procedural(
                 None => None,
             };
             Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::If(
+                executor_ast::statements::ProceduralStatement::If(Box::new(
                     executor_ast::statements::procedural::IfStmt {
                         condition: lower_expr(condition)?,
                         then_body,
                         else_body,
                     },
-                ),
+                )),
             ))
         }
         ast::ProceduralStatement::BeginEnd(stmts) => Ok(executor_ast::Statement::Procedural(
@@ -181,12 +183,12 @@ pub fn lower_procedural(
                 other => vec![other],
             };
             Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::While(
+                executor_ast::statements::ProceduralStatement::While(Box::new(
                     executor_ast::statements::procedural::WhileStmt {
                         condition: lower_expr(condition)?,
                         body,
                     },
-                ),
+                )),
             ))
         }
         ast::ProceduralStatement::Break => Ok(executor_ast::Statement::Procedural(
@@ -215,7 +217,7 @@ pub fn lower_procedural(
             state,
             args,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::Raiserror(
+            executor_ast::statements::ProceduralStatement::Raiserror(Box::new(
                 executor_ast::statements::procedural::RaiserrorStmt {
                     message: lower_expr(message)?,
                     severity: lower_expr(severity)?,
@@ -225,26 +227,26 @@ pub fn lower_procedural(
                         .map(lower_expr)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
+            )),
         )),
         ast::ProceduralStatement::Throw {
             error_number,
             message,
             state,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::Throw(
+            executor_ast::statements::ProceduralStatement::Throw(Box::new(
                 executor_ast::statements::procedural::ThrowStmt {
                     error_number: error_number.map(lower_expr).transpose()?,
                     message: message.map(lower_expr).transpose()?,
                     state: state.map(lower_expr).transpose()?,
                 },
-            ),
+            )),
         )),
         ast::ProceduralStatement::TryCatch {
             try_body,
             catch_body,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::TryCatch(
+            executor_ast::statements::ProceduralStatement::TryCatch(Box::new(
                 executor_ast::statements::procedural::TryCatchStmt {
                     try_body: try_body
                         .into_iter()
@@ -255,7 +257,7 @@ pub fn lower_procedural(
                         .map(lower_statement)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
+            )),
         )),
         ast::ProceduralStatement::ExecDynamic { sql_expr } => {
             Ok(executor_ast::Statement::Procedural(
@@ -271,7 +273,7 @@ pub fn lower_procedural(
             name,
             args,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::ExecProcedure(
+            executor_ast::statements::ProceduralStatement::ExecProcedure(Box::new(
                 executor_ast::statements::procedural::ExecProcedureStmt {
                     return_variable,
                     name: lower_object_name(name),
@@ -280,14 +282,14 @@ pub fn lower_procedural(
                         .map(lower_exec_arg)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
+            )),
         )),
         ast::ProceduralStatement::SpExecuteSql {
             sql_expr,
             params_def,
             args,
         } => Ok(executor_ast::Statement::Procedural(
-            executor_ast::statements::ProceduralStatement::SpExecuteSql(
+            executor_ast::statements::ProceduralStatement::SpExecuteSql(Box::new(
                 executor_ast::statements::procedural::SpExecuteSqlStmt {
                     sql_expr: lower_expr(sql_expr)?,
                     params_def: params_def.map(lower_expr).transpose()?,
@@ -296,7 +298,7 @@ pub fn lower_procedural(
                         .map(lower_exec_arg)
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-            ),
+            )),
         )),
     }
 }
@@ -330,13 +332,13 @@ pub fn lower_cursor(cursor: ast::CursorStatement) -> Result<executor_ast::Statem
             direction,
             into_vars,
         } => Ok(executor_ast::Statement::Cursor(
-            executor_ast::statements::CursorStatement::FetchCursor(
+            executor_ast::statements::CursorStatement::FetchCursor(Box::new(
                 executor_ast::statements::procedural::FetchCursorStmt {
                     name,
                     direction: lower_fetch_direction(direction)?,
                     into: into_vars,
                 },
-            ),
+            )),
         )),
         ast::CursorStatement::Close(name) => Ok(executor_ast::Statement::Cursor(
             executor_ast::statements::CursorStatement::CloseCursor(name),
@@ -446,12 +448,12 @@ pub fn lower_session(session: ast::SessionStatement) -> Result<executor_ast::Sta
         )),
         ast::SessionStatement::SetIdentityInsert { table, on } => {
             Ok(executor_ast::Statement::Session(
-                executor_ast::statements::SessionStatement::SetIdentityInsert(
+                executor_ast::statements::SessionStatement::SetIdentityInsert(Box::new(
                     executor_ast::statements::SetIdentityInsertStmt {
                         table: lower_object_name(table),
                         on,
                     },
-                ),
+                )),
             ))
         }
         ast::SessionStatement::SetContextInfo(expr) => Ok(executor_ast::Statement::Session(

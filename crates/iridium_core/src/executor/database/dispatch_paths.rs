@@ -141,7 +141,7 @@ where
                 clock,
             };
             let result = qe.execute_select(
-                super::super::query::plan::RelationalQuery::from(select_stmt),
+                super::super::query::plan::RelationalQuery::from(*select_stmt),
                 ctx,
             )?;
             if !result.columns.is_empty() {

@@ -511,12 +511,13 @@ fn collect_expr_view_column_usage(
                 rows,
             );
         }
-        crate::ast::Expr::WindowFunction {
-            args,
-            partition_by,
-            order_by,
-            ..
-        } => {
+        crate::ast::Expr::WindowFunction(wf) => {
+            let crate::ast::WindowFunctionExpr {
+                args,
+                partition_by,
+                order_by,
+                ..
+            } = wf.as_ref();
             for arg in args {
                 collect_expr_view_column_usage(
                     arg,

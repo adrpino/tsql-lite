@@ -42,13 +42,13 @@ pub fn lower_statement(parser_stmt: ast::Statement) -> Result<executor_ast::Stat
                 .collect();
             let ctes = ctes?;
             let body = Box::new(lower_statement(*body)?);
-            Ok(executor_ast::Statement::WithCte(
+            Ok(executor_ast::Statement::WithCte(Box::new(
                 executor_ast::statements::procedural::WithCteStmt {
                     recursive: false,
                     ctes,
                     body,
                 },
-            ))
+            )))
         }
     }
 }

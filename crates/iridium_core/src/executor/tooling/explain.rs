@@ -101,14 +101,20 @@ pub fn explain_statement(stmt: &Statement) -> ExplainPlan {
             op: "Delete".to_string(),
             detail: format!("FROM {}", normalize_object_name(&d.table)),
         }),
-        Statement::Ddl(DdlStatement::CreateTable(c)) => operators.push(ExplainOperator {
-            op: "DDL".to_string(),
-            detail: format!("CREATE TABLE {}", normalize_object_name(&c.name)),
-        }),
-        Statement::Ddl(DdlStatement::AlterTable(a)) => operators.push(ExplainOperator {
-            op: "DDL".to_string(),
-            detail: format!("ALTER TABLE {}", normalize_object_name(&a.table)),
-        }),
+        Statement::Ddl(ddl) => match ddl.as_ref() {
+            DdlStatement::CreateTable(c) => operators.push(ExplainOperator {
+                op: "DDL".to_string(),
+                detail: format!("CREATE TABLE {}", normalize_object_name(&c.name)),
+            }),
+            DdlStatement::AlterTable(a) => operators.push(ExplainOperator {
+                op: "DDL".to_string(),
+                detail: format!("ALTER TABLE {}", normalize_object_name(&a.table)),
+            }),
+            _ => operators.push(ExplainOperator {
+                op: "Statement".to_string(),
+                detail: statement_kind.clone(),
+            }),
+        },
         _ => operators.push(ExplainOperator {
             op: "Statement".to_string(),
             detail: statement_kind.clone(),

@@ -31,13 +31,14 @@ impl VirtualTable for SysRoutines {
                 crate::catalog::RoutineKind::Procedure { .. } => {
                     ("P ".to_string(), "SQL_STORED_PROCEDURE".to_string())
                 }
-                crate::catalog::RoutineKind::Function {
-                    body: crate::ast::FunctionBody::InlineTable(_),
-                    ..
-                } => (
-                    "IF".to_string(),
-                    "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
-                ),
+                crate::catalog::RoutineKind::Function { body, .. }
+                    if matches!(body.as_ref(), crate::ast::FunctionBody::InlineTable(_)) =>
+                {
+                    (
+                        "IF".to_string(),
+                        "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
+                    )
+                }
                 crate::catalog::RoutineKind::Function { .. } => {
                     ("FN".to_string(), "SQL_SCALAR_FUNCTION".to_string())
                 }
@@ -127,13 +128,14 @@ impl VirtualTable for SysFunctions {
             .map(|r| {
                 let schema_id = catalog.get_schema_id(&r.schema).unwrap_or(1);
                 let (ty, desc) = match &r.kind {
-                    crate::catalog::RoutineKind::Function {
-                        body: crate::ast::FunctionBody::InlineTable(_),
-                        ..
-                    } => (
-                        "IF".to_string(),
-                        "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
-                    ),
+                    crate::catalog::RoutineKind::Function { body, .. }
+                        if matches!(body.as_ref(), crate::ast::FunctionBody::InlineTable(_)) =>
+                    {
+                        (
+                            "IF".to_string(),
+                            "SQL_INLINE_TABLE_VALUED_FUNCTION".to_string(),
+                        )
+                    }
                     _ => ("FN".to_string(), "SQL_SCALAR_FUNCTION".to_string()),
                 };
                 StoredRow {

@@ -6,10 +6,16 @@ use iridium_core::{
 #[test]
 fn parse_create_and_drop_type() {
     let stmt = parse_sql("CREATE TYPE dbo.IntList AS TABLE (id INT)").unwrap();
-    assert!(matches!(stmt, Statement::Ddl(DdlStatement::CreateType(_))));
+    assert!(matches!(
+        stmt,
+        Statement::Ddl(ref d) if matches!(d.as_ref(), DdlStatement::CreateType(_))
+    ));
 
     let stmt = parse_sql("DROP TYPE dbo.IntList").unwrap();
-    assert!(matches!(stmt, Statement::Ddl(DdlStatement::DropType(_))));
+    assert!(matches!(
+        stmt,
+        Statement::Ddl(ref d) if matches!(d.as_ref(), DdlStatement::DropType(_))
+    ));
 }
 
 #[test]

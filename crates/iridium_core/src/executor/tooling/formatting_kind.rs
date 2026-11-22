@@ -13,7 +13,7 @@ pub fn statement_kind(stmt: &Statement) -> &'static str {
             crate::ast::DmlStatement::BulkInsert(_) => "BULK_INSERT",
             crate::ast::DmlStatement::InsertBulk(_) => "INSERT_BULK",
         },
-        Statement::Ddl(s) => match s {
+        Statement::Ddl(s) => match s.as_ref() {
             crate::ast::DdlStatement::CreateTable(_) => "CREATE_TABLE",
             crate::ast::DdlStatement::DropView(_) => "DROP_VIEW",
             crate::ast::DdlStatement::AlterTable(_) => "ALTER_TABLE",

@@ -204,3 +204,67 @@ fn execute_on_session_runs_independently_of_default_session_transaction() {
     assert_eq!(survived.rows[0][0].to_integer_i64(), Some(2));
     assert_eq!(survived.rows[0][1].to_string_value(), "other_session");
 }
+
+#[test]
+fn lazy_definition_sql_serves_sys_sql_modules_sp_helptext_and_object_definition() {
+    let e = Engine::new();
+    exec(&e, "CREATE TABLE dbo.DefItems (Id INT NOT NULL);");
+    exec(
+        &e,
+        "CREATE VIEW dbo.vDefItems AS SELECT Id FROM dbo.DefItems;",
+    );
+    exec(
+        &e,
+        "CREATE PROCEDURE dbo.usp_DefEcho AS BEGIN SELECT 1; END;",
+    );
+    exec(
+        &e,
+        "CREATE FUNCTION dbo.ufn_DefInc(@x INT) RETURNS INT AS BEGIN RETURN @x + 1; END;",
+    );
+    exec(
+        &e,
+        "CREATE TRIGGER dbo.trg_DefAudit ON dbo.DefItems AFTER INSERT AS BEGIN SELECT 1; END;",
+    );
+
+    let mods = query(
+        &e,
+        "SELECT o.name, m.definition
+         FROM sys.sql_modules m
+         JOIN sys.objects o ON o.object_id = m.object_id
+         ORDER BY o.name;",
+    );
+    assert_eq!(mods.rows.len(), 4);
+    for row in &mods.rows {
+        let def = row[1].to_string_value();
+        assert!(
+            !def.is_empty(),
+            "sys.sql_modules.definition must be populated lazily for {}",
+            row[0].to_string_value()
+        );
+    }
+
+    let obj_def = query(
+        &e,
+        "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.usp_DefEcho')),
+                OBJECT_DEFINITION(OBJECT_ID('dbo.vDefItems')),
+                OBJECT_DEFINITION(OBJECT_ID('dbo.ufn_DefInc')),
+                OBJECT_DEFINITION(OBJECT_ID('dbo.trg_DefAudit'));",
+    );
+    assert!(obj_def.rows[0][0]
+        .to_string_value()
+        .contains("CREATE PROCEDURE"));
+    assert!(obj_def.rows[0][1].to_string_value().contains("CREATE VIEW"));
+    assert!(obj_def.rows[0][2]
+        .to_string_value()
+        .contains("CREATE FUNCTION"));
+    assert!(obj_def.rows[0][3]
+        .to_string_value()
+        .contains("CREATE TRIGGER"));
+
+    let ht_view = query(&e, "EXEC sp_helptext 'vDefItems';");
+    assert!(ht_view.rows[0][0].to_string_value().contains("CREATE VIEW"));
+    let ht_proc = query(&e, "EXEC sp_helptext 'usp_DefEcho';");
+    assert!(ht_proc.rows[0][0]
+        .to_string_value()
+        .contains("CREATE PROCEDURE"));
+}

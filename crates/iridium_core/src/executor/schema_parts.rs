@@ -10,7 +10,6 @@ use crate::error::DbError;
 
 use super::schema::SchemaExecutor;
 use super::schema_physical;
-use super::tooling::format_view_definition;
 use super::type_mapping::data_type_spec_to_runtime;
 
 pub(crate) fn apply_table_constraint(
@@ -297,7 +296,7 @@ pub(crate) fn create_view(
             body: Box::new(select_stmt),
         })
     };
-    let mut view = crate::catalog::ViewDef {
+    let view = crate::catalog::ViewDef {
         object_id: executor.catalog.alloc_object_id(),
         schema,
         name: view_name,
@@ -305,7 +304,6 @@ pub(crate) fn create_view(
         query: std::sync::Arc::new(view_stmt),
         definition_sql: String::new(),
     };
-    view.definition_sql = format_view_definition(&view);
     executor.catalog.create_view(view)
 }
 

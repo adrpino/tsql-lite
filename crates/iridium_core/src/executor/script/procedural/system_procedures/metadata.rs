@@ -116,7 +116,11 @@ pub(crate) fn execute_sp_helptext(
     let obj_name = &args[0];
 
     if let Some(view) = exec.catalog.find_view("dbo", obj_name) {
-        let text = view.definition_sql.clone();
+        let text = if !view.definition_sql.is_empty() {
+            view.definition_sql.clone()
+        } else {
+            crate::executor::tooling::format_view_definition(view)
+        };
         return Ok(QueryResult {
             columns: vec!["Text".into()],
             column_types: vec![DataType::NVarChar { max_len: 4000 }],
@@ -127,7 +131,11 @@ pub(crate) fn execute_sp_helptext(
     }
 
     if let Some(routine) = exec.catalog.find_routine("dbo", obj_name).cloned() {
-        let text = routine.definition_sql.clone();
+        let text = if !routine.definition_sql.is_empty() {
+            routine.definition_sql.clone()
+        } else {
+            crate::executor::tooling::format_routine_definition(&routine)
+        };
         return Ok(QueryResult {
             columns: vec!["Text".into()],
             column_types: vec![DataType::NVarChar { max_len: 4000 }],

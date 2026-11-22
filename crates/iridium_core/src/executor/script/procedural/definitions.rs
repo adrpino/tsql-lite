@@ -1,7 +1,6 @@
 use super::super::ScriptExecutor;
 use crate::ast::{CreateFunctionStmt, CreateProcedureStmt, CreateTriggerStmt, CreateViewStmt};
 use crate::error::DbError;
-use crate::executor::tooling::{format_routine_definition, format_trigger_definition};
 
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_create_procedure(
@@ -9,7 +8,7 @@ impl<'a> ScriptExecutor<'a> {
         stmt: CreateProcedureStmt,
     ) -> Result<(), DbError> {
         let schema = stmt.name.schema_or_dbo().to_string();
-        let mut routine = crate::catalog::RoutineDef {
+        let routine = crate::catalog::RoutineDef {
             object_id: self.catalog.alloc_object_id(),
             schema,
             name: stmt.name.name,
@@ -19,7 +18,6 @@ impl<'a> ScriptExecutor<'a> {
             },
             definition_sql: String::new(),
         };
-        routine.definition_sql = format_routine_definition(&routine);
         if stmt.or_alter {
             self.catalog.replace_routine(routine)?;
         } else {
@@ -33,7 +31,7 @@ impl<'a> ScriptExecutor<'a> {
         stmt: CreateFunctionStmt,
     ) -> Result<(), DbError> {
         let schema = stmt.name.schema_or_dbo().to_string();
-        let mut routine = crate::catalog::RoutineDef {
+        let routine = crate::catalog::RoutineDef {
             object_id: self.catalog.alloc_object_id(),
             schema,
             name: stmt.name.name,
@@ -44,7 +42,6 @@ impl<'a> ScriptExecutor<'a> {
             },
             definition_sql: String::new(),
         };
-        routine.definition_sql = format_routine_definition(&routine);
         self.catalog.create_routine(routine)?;
         Ok(())
     }
@@ -62,7 +59,7 @@ impl<'a> ScriptExecutor<'a> {
         stmt: CreateTriggerStmt,
     ) -> Result<(), DbError> {
         let schema = stmt.name.schema_or_dbo().to_string();
-        let mut trigger = crate::catalog::TriggerDef {
+        let trigger = crate::catalog::TriggerDef {
             object_id: self.catalog.alloc_object_id(),
             schema,
             name: stmt.name.name,
@@ -74,7 +71,6 @@ impl<'a> ScriptExecutor<'a> {
             body: std::sync::Arc::new(stmt.body),
             definition_sql: String::new(),
         };
-        trigger.definition_sql = format_trigger_definition(&trigger);
         self.catalog.create_trigger(trigger)?;
         Ok(())
     }

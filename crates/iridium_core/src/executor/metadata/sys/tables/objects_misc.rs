@@ -473,10 +473,15 @@ impl VirtualTable for SysSqlModules {
         let mut rows = Vec::new();
 
         for r in catalog.get_routines() {
+            let def = if !r.definition_sql.is_empty() {
+                r.definition_sql.clone()
+            } else {
+                crate::executor::tooling::format_routine_definition(r)
+            };
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(r.object_id),
-                    Value::VarChar(r.definition_sql.clone()),
+                    Value::VarChar(def),
                     Value::Bit(true),
                     Value::Bit(true),
                     Value::Bit(false),
@@ -491,10 +496,15 @@ impl VirtualTable for SysSqlModules {
         }
 
         for v in catalog.get_views() {
+            let def = if !v.definition_sql.is_empty() {
+                v.definition_sql.clone()
+            } else {
+                crate::executor::tooling::format_view_definition(v)
+            };
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(v.object_id),
-                    Value::VarChar(v.definition_sql.clone()),
+                    Value::VarChar(def),
                     Value::Bit(true),
                     Value::Bit(true),
                     Value::Bit(false),
@@ -509,10 +519,15 @@ impl VirtualTable for SysSqlModules {
         }
 
         for t in catalog.get_triggers() {
+            let def = if !t.definition_sql.is_empty() {
+                t.definition_sql.clone()
+            } else {
+                crate::executor::tooling::format_trigger_definition(t)
+            };
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(t.object_id),
-                    Value::VarChar(t.definition_sql.clone()),
+                    Value::VarChar(def),
                     Value::Bit(true),
                     Value::Bit(true),
                     Value::Bit(false),

@@ -311,3 +311,53 @@ fn ast_and_catalog_enums_stay_compact() {
         size_of::<RoutineDef>()
     );
 }
+
+#[test]
+fn procedural_tx_savepoint_and_rollback_preserve_table_variables_with_o1_snapshot() {
+    let e = Engine::new();
+    exec(
+        &e,
+        "CREATE TABLE dbo.Ledger (Id INT NOT NULL, Tag NVARCHAR(30) NOT NULL);
+         INSERT INTO dbo.Ledger (Id, Tag) VALUES (1, N'initial');",
+    );
+    exec(
+        &e,
+        "CREATE PROCEDURE dbo.usp_TxSavepointCheck
+         AS
+         BEGIN
+             DECLARE @tvBefore TABLE (V INT);
+             INSERT INTO @tvBefore VALUES (10);
+
+             BEGIN TRANSACTION;
+             INSERT INTO dbo.Ledger (Id, Tag) VALUES (2, N'in_tx_before_sp');
+             INSERT INTO @tvBefore VALUES (20);
+
+             DECLARE @tvInside TABLE (V INT);
+             INSERT INTO @tvInside VALUES (100);
+
+             SAVE TRANSACTION sp1;
+             INSERT INTO dbo.Ledger (Id, Tag) VALUES (3, N'after_sp1');
+             INSERT INTO @tvBefore VALUES (30);
+             INSERT INTO @tvInside VALUES (200);
+
+             ROLLBACK TRANSACTION sp1;
+             -- Ledger row 3 rolled back; row 2 remains; both table vars kept all inserts.
+             DECLARE @afterSpCnt INT = (SELECT COUNT(*) FROM dbo.Ledger);
+
+             ROLLBACK TRANSACTION;
+             -- Ledger row 2 rolled back; only row 1 remains; both table vars survive full rollback.
+             SELECT
+                 @afterSpCnt AS AfterSpLedgerCount,
+                 (SELECT COUNT(*) FROM dbo.Ledger) AS FinalLedgerCount,
+                 (SELECT COUNT(*) FROM @tvBefore) AS TvBeforeCount,
+                 (SELECT COUNT(*) FROM @tvInside) AS TvInsideCount;
+         END;",
+    );
+
+    let res = query(&e, "EXEC dbo.usp_TxSavepointCheck;");
+    assert_eq!(res.rows.len(), 1);
+    assert_eq!(res.rows[0][0].to_integer_i64(), Some(2));
+    assert_eq!(res.rows[0][1].to_integer_i64(), Some(1));
+    assert_eq!(res.rows[0][2].to_integer_i64(), Some(3));
+    assert_eq!(res.rows[0][3].to_integer_i64(), Some(2));
+}

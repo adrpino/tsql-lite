@@ -60,8 +60,8 @@ pub struct SessionMetadata {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ScriptTransactionState {
     pub(crate) base_depth: u32,
-    pub(crate) root_snapshot: Option<HashMap<u32, Vec<crate::storage::StoredRow>>>,
-    pub(crate) savepoints: Vec<(String, HashMap<u32, Vec<crate::storage::StoredRow>>)>,
+    pub(crate) root_snapshot: Option<crate::storage::StorageSnapshot>,
+    pub(crate) savepoints: Vec<(String, crate::storage::StorageSnapshot)>,
     /// Set when a procedural block executes `ROLLBACK TRANSACTION` targeting
     /// an outer session-level transaction so the session transaction manager
     /// rolls back its workspace.

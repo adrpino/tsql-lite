@@ -27,6 +27,14 @@ pub enum StorageCheckpointData {
     Persistent,
 }
 
+#[derive(Debug, Clone)]
+pub enum StorageSnapshot {
+    /// O(1) copy-on-write snapshot for `InMemoryStorage`: a single `Arc::clone` of `tables`.
+    InMemory(Arc<HashMap<u32, Arc<Vec<StoredRow>>>>),
+    /// Fallback per-table row snapshot for non-in-memory storage backends.
+    Tables(HashMap<u32, Vec<StoredRow>>),
+}
+
 pub trait Storage: std::fmt::Debug + Send + Sync {
     fn scan_rows<'a>(&'a self, table_id: u32) -> Result<StorageRowStream<'a>, DbError>;
 
@@ -45,6 +53,22 @@ pub trait Storage: std::fmt::Debug + Send + Sync {
     fn ensure_table(&mut self, table_id: u32) -> Result<(), DbError>;
 
     fn clone_boxed(&self) -> Box<dyn Storage>;
+
+    /// Captures a fast snapshot of storage state (O(1) `Arc` clone for `InMemoryStorage`).
+    /// Returns `None` when the backend requires a catalog-guided per-table copy.
+    fn take_fast_snapshot(&self) -> Option<StorageSnapshot> {
+        None
+    }
+
+    /// Restores storage state from a snapshot captured by `take_fast_snapshot`, preserving
+    /// any table IDs in `preserve_table_ids` (e.g. table variables that survive `ROLLBACK`).
+    fn restore_fast_snapshot(
+        &mut self,
+        _snapshot: &StorageSnapshot,
+        _preserve_table_ids: &std::collections::HashSet<u32>,
+    ) -> Result<bool, DbError> {
+        Ok(false)
+    }
 
     fn as_index_storage(&self) -> Option<&dyn IndexStorage> {
         None
@@ -203,6 +227,49 @@ impl Storage for InMemoryStorage {
 
     fn clone_boxed(&self) -> Box<dyn Storage> {
         Box::new(self.clone())
+    }
+
+    fn take_fast_snapshot(&self) -> Option<StorageSnapshot> {
+        Some(StorageSnapshot::InMemory(Arc::clone(&self.tables)))
+    }
+
+    fn restore_fast_snapshot(
+        &mut self,
+        snapshot: &StorageSnapshot,
+        preserve_table_ids: &std::collections::HashSet<u32>,
+    ) -> Result<bool, DbError> {
+        let StorageSnapshot::InMemory(snap_tables) = snapshot else {
+            return Ok(false);
+        };
+        if Arc::ptr_eq(&self.tables, snap_tables) {
+            return Ok(true);
+        }
+        let mut overrides: Vec<(u32, Arc<Vec<StoredRow>>)> = Vec::new();
+        for &tid in preserve_table_ids {
+            if let Some(cur_rows) = self.tables.get(&tid) {
+                let unchanged = snap_tables
+                    .get(&tid)
+                    .is_some_and(|s_rows| Arc::ptr_eq(cur_rows, s_rows));
+                if !unchanged {
+                    overrides.push((tid, Arc::clone(cur_rows)));
+                }
+            }
+        }
+        if self.tables.len() > snap_tables.len() {
+            for &tid in self.tables.keys() {
+                if !snap_tables.contains_key(&tid) && !preserve_table_ids.contains(&tid) {
+                    overrides.push((tid, Arc::new(Vec::new())));
+                }
+            }
+        }
+        self.tables = Arc::clone(snap_tables);
+        if !overrides.is_empty() {
+            let map = Arc::make_mut(&mut self.tables);
+            for (tid, rows) in overrides {
+                map.insert(tid, rows);
+            }
+        }
+        Ok(true)
     }
 
     fn as_index_storage(&self) -> Option<&dyn IndexStorage> {

@@ -113,37 +113,60 @@ impl<'a> ScriptExecutor<'a> {
         );
     }
 
-    fn snapshot_transactional_tables(
-        &self,
-        ctx: &ExecutionContext<'_>,
-    ) -> Result<std::collections::HashMap<u32, Vec<crate::storage::StoredRow>>, DbError> {
-        let mut table_var_physicals: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+    fn collect_table_var_ids(&self, ctx: &ExecutionContext<'_>) -> std::collections::HashSet<u32> {
+        let mut ids = std::collections::HashSet::new();
         for scope in &ctx.frame.table_vars {
             for phys in scope.values() {
-                table_var_physicals.insert(phys.to_ascii_lowercase());
+                if let Some(tbl) = self.catalog.find_table("dbo", phys) {
+                    ids.insert(tbl.id);
+                }
             }
         }
         for phys in ctx.session.var_map.values() {
-            table_var_physicals.insert(phys.to_ascii_lowercase());
+            if let Some(tbl) = self.catalog.find_table("dbo", phys) {
+                ids.insert(tbl.id);
+            }
         }
+        ids
+    }
+
+    fn snapshot_transactional_tables(
+        &self,
+        ctx: &ExecutionContext<'_>,
+    ) -> Result<crate::storage::StorageSnapshot, DbError> {
+        if let Some(fast) = self.storage.take_fast_snapshot() {
+            return Ok(fast);
+        }
+        let table_var_ids = self.collect_table_var_ids(ctx);
         let mut snapshot = std::collections::HashMap::new();
         for table in self.catalog.get_tables() {
-            if table_var_physicals.contains(&table.name.to_ascii_lowercase()) {
+            if table_var_ids.contains(&table.id) {
                 continue;
             }
             let rows = self.storage.get_rows(table.id)?;
             snapshot.insert(table.id, rows);
         }
-        Ok(snapshot)
+        Ok(crate::storage::StorageSnapshot::Tables(snapshot))
     }
 
     fn restore_transactional_tables(
         &mut self,
-        snapshot: &std::collections::HashMap<u32, Vec<crate::storage::StoredRow>>,
+        snapshot: &crate::storage::StorageSnapshot,
+        ctx: &ExecutionContext<'_>,
     ) -> Result<(), DbError> {
-        for (&table_id, rows) in snapshot {
-            self.storage.replace_table(table_id, rows.clone())?;
+        let preserve_ids = self.collect_table_var_ids(ctx);
+        if self
+            .storage
+            .restore_fast_snapshot(snapshot, &preserve_ids)?
+        {
+            return Ok(());
+        }
+        if let crate::storage::StorageSnapshot::Tables(tables) = snapshot {
+            for (&table_id, rows) in tables {
+                if !preserve_ids.contains(&table_id) {
+                    self.storage.replace_table(table_id, rows.clone())?;
+                }
+            }
         }
         Ok(())
     }
@@ -220,13 +243,13 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                         .rposition(|(n, _)| *n == target)
                     {
                         let snap = ctx.frame.script_tx.savepoints[pos].1.clone();
-                        self.restore_transactional_tables(&snap)?;
+                        self.restore_transactional_tables(&snap, ctx)?;
                         ctx.frame.script_tx.savepoints.truncate(pos + 1);
                         return Ok(StmtOutcome::Ok(None));
                     }
                 }
                 if let Some(root_snap) = ctx.frame.script_tx.root_snapshot.take() {
-                    self.restore_transactional_tables(&root_snap)?;
+                    self.restore_transactional_tables(&root_snap, ctx)?;
                     ctx.frame.script_tx.savepoints.clear();
                     ctx.frame.trancount = ctx.frame.script_tx.base_depth;
                 } else {

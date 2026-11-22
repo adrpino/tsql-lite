@@ -626,3 +626,252 @@ pub(crate) fn eval_datetime2fromparts(
         .ok_or_else(|| DbError::Execution("Invalid time arguments to DATETIME2FROMPARTS".into()))?;
     Ok(Value::DateTime2(dt))
 }
+
+fn value_to_naive_datetime(
+    val: &Value,
+    dateformat: &str,
+) -> Result<chrono::NaiveDateTime, DbError> {
+    match val {
+        Value::Date(d) => Ok(d.and_hms_opt(0, 0, 0).unwrap()),
+        Value::DateTime(dt) | Value::DateTime2(dt) | Value::SmallDateTime(dt) => Ok(*dt),
+        Value::Time(t) => Ok(chrono::NaiveDate::from_ymd_opt(1900, 1, 1)
+            .unwrap()
+            .and_time(*t)),
+        _ => {
+            let s = val.to_string_value();
+            let (y, m, d, hh, mm, ss) = parse_datetime_parts(&s, dateformat)?;
+            let date = chrono::NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+                .ok_or_else(|| DbError::Execution(format!("invalid date '{}'", s)))?;
+            date.and_hms_opt(hh as u32, mm as u32, ss as u32)
+                .ok_or_else(|| DbError::Execution(format!("invalid datetime '{}'", s)))
+        }
+    }
+}
+
+fn wrap_matching_date_type(orig: &Value, dt: chrono::NaiveDateTime) -> Value {
+    match orig {
+        Value::Date(_) => Value::Date(dt.date()),
+        Value::DateTime(_) => Value::DateTime(dt),
+        Value::DateTime2(_) => Value::DateTime2(dt),
+        Value::SmallDateTime(_) => Value::SmallDateTime(dt),
+        Value::Time(_) => Value::Time(dt.time()),
+        _ => Value::DateTime2(dt),
+    }
+}
+
+pub(crate) fn eval_datetrunc(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    use chrono::{Datelike, Duration, NaiveDate, Timelike};
+    if args.len() != 2 {
+        return Err(DbError::Execution("DATETRUNC expects 2 arguments".into()));
+    }
+    let part = extract_datepart(&args[0])?;
+    let date_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if date_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let dt = value_to_naive_datetime(&date_val, &ctx.options.dateformat)?;
+    let d = dt.date();
+    let t = dt.time();
+
+    let truncated = match part.as_str() {
+        "year" | "yy" | "yyyy" => NaiveDate::from_ymd_opt(d.year(), 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+        "quarter" | "qq" | "q" => {
+            let q_month = ((d.month() - 1) / 3) * 3 + 1;
+            NaiveDate::from_ymd_opt(d.year(), q_month, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        }
+        "month" | "mm" | "m" => NaiveDate::from_ymd_opt(d.year(), d.month(), 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+        "dayofyear" | "dy" | "y" | "day" | "dd" | "d" => d.and_hms_opt(0, 0, 0).unwrap(),
+        "week" | "wk" | "ww" => {
+            // SQL Server DATEFIRST: 1 = Monday .. 7 = Sunday (default 7).
+            let dow_mon1 = d.weekday().number_from_monday() as i64; // 1..=7
+            let datefirst = ctx.options.datefirst.clamp(1, 7) as i64;
+            let offset = (dow_mon1 - datefirst).rem_euclid(7);
+            (d - Duration::days(offset)).and_hms_opt(0, 0, 0).unwrap()
+        }
+        "iso_week" | "isowk" | "isoww" => {
+            let offset = (d.weekday().number_from_monday() - 1) as i64;
+            (d - Duration::days(offset)).and_hms_opt(0, 0, 0).unwrap()
+        }
+        "hour" | "hh" => d.and_hms_opt(t.hour(), 0, 0).unwrap(),
+        "minute" | "mi" | "n" => d.and_hms_opt(t.hour(), t.minute(), 0).unwrap(),
+        "second" | "ss" | "s" => d.and_hms_opt(t.hour(), t.minute(), t.second()).unwrap(),
+        "millisecond" | "ms" => {
+            let ms_nanos = (t.nanosecond() / 1_000_000) * 1_000_000;
+            d.and_hms_nano_opt(t.hour(), t.minute(), t.second(), ms_nanos)
+                .unwrap()
+        }
+        "microsecond" | "mcs" => {
+            let us_nanos = (t.nanosecond() / 1_000) * 1_000;
+            d.and_hms_nano_opt(t.hour(), t.minute(), t.second(), us_nanos)
+                .unwrap()
+        }
+        _ => {
+            return Err(DbError::Execution(format!(
+                "Invalid datepart '{}' for DATETRUNC",
+                part
+            )));
+        }
+    };
+
+    Ok(wrap_matching_date_type(&date_val, truncated))
+}
+
+pub(crate) fn eval_date_bucket(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    use chrono::{Datelike, Duration, NaiveDate};
+    if args.len() < 3 || args.len() > 4 {
+        return Err(DbError::Execution(
+            "DATE_BUCKET expects 3 or 4 arguments".into(),
+        ));
+    }
+    let part = extract_datepart(&args[0])?;
+    let num_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    let date_val = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+    let origin_val = if args.len() == 4 {
+        Some(eval_expr(&args[3], row, ctx, catalog, storage, clock)?)
+    } else {
+        None
+    };
+
+    if num_val.is_null() || date_val.is_null() || origin_val.as_ref().is_some_and(|v| v.is_null()) {
+        return Ok(Value::Null);
+    }
+
+    let width = num_val
+        .to_integer_i64()
+        .ok_or_else(|| DbError::Execution("DATE_BUCKET number must be an integer".into()))?;
+    if width <= 0 {
+        return Err(DbError::Execution(
+            "Invalid number parameter value for DATE_BUCKET: must be greater than zero.".into(),
+        ));
+    }
+
+    let dt = value_to_naive_datetime(&date_val, &ctx.options.dateformat)?;
+    let origin = match &origin_val {
+        Some(v) => value_to_naive_datetime(v, &ctx.options.dateformat)?,
+        None => NaiveDate::from_ymd_opt(1900, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+    };
+
+    let add_months_clamped =
+        |base: chrono::NaiveDateTime, months: i64| -> Result<chrono::NaiveDateTime, DbError> {
+            let total_months = (base.year() as i64) * 12 + (base.month() as i64 - 1) + months;
+            let new_year = total_months.div_euclid(12) as i32;
+            let new_month = (total_months.rem_euclid(12) + 1) as u32;
+            let mut day = base.day();
+            let mut target_date = NaiveDate::from_ymd_opt(new_year, new_month, day);
+            while target_date.is_none() && day > 28 {
+                day -= 1;
+                target_date = NaiveDate::from_ymd_opt(new_year, new_month, day);
+            }
+            let d = target_date
+                .ok_or_else(|| DbError::Execution("DATE_BUCKET date overflow".into()))?;
+            Ok(d.and_time(base.time()))
+        };
+
+    let bucketed = match part.as_str() {
+        "year" | "yy" | "yyyy" => {
+            let mut diff = (dt.year() - origin.year()) as i64;
+            let cand = add_months_clamped(origin, diff * 12)?;
+            if dt < cand {
+                diff -= 1;
+            }
+            let k = diff.div_euclid(width);
+            add_months_clamped(origin, k * width * 12)?
+        }
+        "quarter" | "qq" | "q" => {
+            let mut diff_m = (dt.year() - origin.year()) as i64 * 12
+                + (dt.month() as i64 - origin.month() as i64);
+            let cand = add_months_clamped(origin, diff_m)?;
+            if dt < cand {
+                diff_m -= 1;
+            }
+            let diff_q = diff_m.div_euclid(3);
+            let k = diff_q.div_euclid(width);
+            add_months_clamped(origin, k * width * 3)?
+        }
+        "month" | "mm" | "m" => {
+            let mut diff_m = (dt.year() - origin.year()) as i64 * 12
+                + (dt.month() as i64 - origin.month() as i64);
+            let cand = add_months_clamped(origin, diff_m)?;
+            if dt < cand {
+                diff_m -= 1;
+            }
+            let k = diff_m.div_euclid(width);
+            add_months_clamped(origin, k * width)?
+        }
+        "week" | "wk" | "ww" => {
+            let step_us = width * 7 * 86_400_000_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "day" | "dd" | "d" | "dayofyear" | "dy" | "y" => {
+            let step_us = width * 86_400_000_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "hour" | "hh" => {
+            let step_us = width * 3_600_000_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "minute" | "mi" | "n" => {
+            let step_us = width * 60_000_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "second" | "ss" | "s" => {
+            let step_us = width * 1_000_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "millisecond" | "ms" => {
+            let step_us = width * 1_000i64;
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(step_us);
+            origin + Duration::microseconds(k * step_us)
+        }
+        "microsecond" | "mcs" => {
+            let delta = (dt - origin).num_microseconds().unwrap_or(0);
+            let k = delta.div_euclid(width);
+            origin + Duration::microseconds(k * width)
+        }
+        _ => {
+            return Err(DbError::Execution(format!(
+                "Invalid datepart '{}' for DATE_BUCKET",
+                part
+            )));
+        }
+    };
+
+    Ok(wrap_matching_date_type(&date_val, bucketed))
+}

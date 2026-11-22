@@ -69,6 +69,13 @@ pub(crate) struct ScriptTransactionState {
 }
 
 #[derive(Debug, Clone)]
+pub struct TriggerIntrospectionFrame {
+    pub object_id: i32,
+    pub table_columns: Vec<String>,
+    pub updated_columns: Vec<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct FrameState {
     pub(crate) depth: usize,
     pub(crate) loop_depth: usize,
@@ -76,6 +83,7 @@ pub struct FrameState {
     pub(crate) xact_state: i8,
     pub(crate) trigger_depth: usize,
     pub(crate) active_triggers: Vec<(String, String)>,
+    pub(crate) trigger_frames: Vec<TriggerIntrospectionFrame>,
     pub(crate) module_stack: Vec<ModuleFrame>,
     pub(crate) table_vars: Vec<HashMap<String, String>>,
     pub(crate) readonly_table_vars: Vec<HashSet<String>>,

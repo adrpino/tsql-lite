@@ -261,6 +261,7 @@ pub(crate) fn format_expr(expr: &Expr) -> String {
                 crate::ast::WindowFunc::PercentileCont => "PERCENTILE_CONT()",
                 crate::ast::WindowFunc::PercentileDisc => "PERCENTILE_DISC()",
                 crate::ast::WindowFunc::PercentileRank => "PERCENTILE_RANK()",
+                crate::ast::WindowFunc::CumeDist => "CUME_DIST()",
             };
             let mut parts: Vec<String> = vec![func_name.to_string()];
             if !partition_by.is_empty() {

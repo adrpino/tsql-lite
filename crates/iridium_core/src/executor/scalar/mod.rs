@@ -24,6 +24,7 @@ use builtin_registry::{lookup_builtin_handler, lookup_system_variable};
 pub(crate) fn eval_function(
     name: &str,
     args: &[Expr],
+    within_group: Option<&[crate::ast::OrderByExpr]>,
     row: &[ContextTable],
     ctx: &mut ExecutionContext<'_>,
     catalog: &dyn Catalog,
@@ -32,7 +33,15 @@ pub(crate) fn eval_function(
 ) -> Result<Value, DbError> {
     if is_aggregate_function(name) {
         if let Some(group) = ctx.current_group().clone() {
-            if let Some(res) = dispatch_aggregate(name, args, &group, ctx, catalog, storage, clock)
+            let effective = if let Some(ob) = within_group.filter(|v| !v.is_empty()) {
+                super::aggregates::sort_group_for_within_group(
+                    &group, ob, ctx, catalog, storage, clock,
+                )
+            } else {
+                group
+            };
+            if let Some(res) =
+                dispatch_aggregate(name, args, &effective, ctx, catalog, storage, clock)
             {
                 return res;
             }

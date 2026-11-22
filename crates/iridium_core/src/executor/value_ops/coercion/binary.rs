@@ -24,10 +24,10 @@ pub(crate) fn coerce_binary(data: &[u8], ty: &DataType) -> Result<Value, DbError
         }
         DataType::VarBinary { .. } => Ok(Value::VarBinary(data.to_vec())),
         DataType::Char { .. } | DataType::VarChar { .. } => {
-            Ok(Value::VarChar(crate::types::format_binary(data)))
+            Ok(Value::VarChar(String::from_utf8_lossy(data).into_owned()))
         }
         DataType::NChar { .. } | DataType::NVarChar { .. } => {
-            Ok(Value::NVarChar(crate::types::format_binary(data)))
+            Ok(Value::NVarChar(String::from_utf8_lossy(data).into_owned()))
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Binary(data.to_vec())))),
         DataType::UniqueIdentifier => {

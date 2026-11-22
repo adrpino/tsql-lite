@@ -173,6 +173,7 @@ pub fn lower_expr(parser_expr: ast::Expr) -> Result<executor_ast::expressions::E
                 partition_by,
                 order_by,
                 frame,
+                ignore_nulls,
             } = *wf;
             Ok(executor_ast::expressions::Expr::WindowFunction(Box::new(
                 executor_ast::expressions::WindowFunctionExpr {
@@ -190,6 +191,7 @@ pub fn lower_expr(parser_expr: ast::Expr) -> Result<executor_ast::expressions::E
                         .map(lower_order_by_expr)
                         .collect::<Result<Vec<_>, _>>()?,
                     frame: frame.map(lower_window_frame),
+                    ignore_nulls,
                 },
             )))
         }
@@ -246,6 +248,7 @@ pub fn lower_window_func(name: &str) -> executor_ast::expressions::WindowFunc {
         "PERCENTILE_CONT" => executor_ast::expressions::WindowFunc::PercentileCont,
         "PERCENTILE_DISC" => executor_ast::expressions::WindowFunc::PercentileDisc,
         "PERCENT_RANK" => executor_ast::expressions::WindowFunc::PercentileRank,
+        "CUME_DIST" => executor_ast::expressions::WindowFunc::CumeDist,
         _ => executor_ast::expressions::WindowFunc::Aggregate(name.to_string()),
     }
 }

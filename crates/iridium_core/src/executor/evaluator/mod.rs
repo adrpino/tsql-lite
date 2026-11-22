@@ -122,7 +122,11 @@ fn eval_expr_inner(
             special::eval_special_runtime_expr(expr, ctx, catalog)
         }
 
-        Expr::FunctionCall { name, args, .. } => {
+        Expr::FunctionCall {
+            name,
+            args,
+            within_group,
+        } => {
             if name == "__COLLATE" && !args.is_empty() {
                 return eval_expr(&args[0], row, ctx, catalog, storage, clock);
             }
@@ -228,7 +232,16 @@ fn eval_expr_inner(
                     return Ok(Value::NVarChar(fragment));
                 }
             }
-            eval_function(name, args, row, ctx, catalog, storage, clock)
+            eval_function(
+                name,
+                args,
+                within_group.as_deref().map(|v| v.as_slice()),
+                row,
+                ctx,
+                catalog,
+                storage,
+                clock,
+            )
         }
 
         Expr::Binary { left, op, right } => {

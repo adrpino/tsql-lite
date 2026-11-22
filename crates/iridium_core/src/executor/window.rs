@@ -194,7 +194,13 @@ impl<'a> WindowExecutor<'a> {
                     for win_expr in win_exprs {
                         let val = match win_expr {
                             Expr::WindowFunction(wf) => {
-                                let crate::ast::WindowFunctionExpr { func, args, .. } = wf.as_ref();
+                                let crate::ast::WindowFunctionExpr {
+                                    func,
+                                    args,
+                                    ignore_nulls,
+                                    ..
+                                } = wf.as_ref();
+                                let ignore_nulls = *ignore_nulls;
                                 match func {
                                     WindowFunc::RowNumber => Value::Int((i + 1) as i32),
                                     WindowFunc::Rank => Value::Int(current_rank),
@@ -210,18 +216,59 @@ impl<'a> WindowExecutor<'a> {
                                                 }
                                             })
                                             .unwrap_or(1);
-                                        if i >= offset {
-                                            eval_expr(
-                                                &args[0],
-                                                partition[i - offset].row,
-                                                ctx,
-                                                self.catalog,
-                                                self.storage,
-                                                self.clock,
+                                        let found = if offset == 0 {
+                                            Some(
+                                                eval_expr(
+                                                    &args[0],
+                                                    w_row.row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null),
                                             )
-                                            .unwrap_or(Value::Null)
+                                        } else if ignore_nulls {
+                                            let mut seen = 0usize;
+                                            let mut hit = None;
+                                            for k in (0..i).rev() {
+                                                let v = eval_expr(
+                                                    &args[0],
+                                                    partition[k].row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null);
+                                                if !v.is_null() {
+                                                    seen += 1;
+                                                    if seen == offset {
+                                                        hit = Some(v);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            hit
+                                        } else if i >= offset {
+                                            Some(
+                                                eval_expr(
+                                                    &args[0],
+                                                    partition[i - offset].row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null),
+                                            )
                                         } else {
-                                            args.get(2)
+                                            None
+                                        };
+                                        match found {
+                                            Some(v) => v,
+                                            None => args
+                                                .get(2)
                                                 .map(|e| {
                                                     eval_expr(
                                                         e,
@@ -233,7 +280,7 @@ impl<'a> WindowExecutor<'a> {
                                                     )
                                                     .unwrap_or(Value::Null)
                                                 })
-                                                .unwrap_or(Value::Null)
+                                                .unwrap_or(Value::Null),
                                         }
                                     }
                                     WindowFunc::Lead => {
@@ -247,18 +294,59 @@ impl<'a> WindowExecutor<'a> {
                                                 }
                                             })
                                             .unwrap_or(1);
-                                        if i + offset < partition.len() {
-                                            eval_expr(
-                                                &args[0],
-                                                partition[i + offset].row,
-                                                ctx,
-                                                self.catalog,
-                                                self.storage,
-                                                self.clock,
+                                        let found = if offset == 0 {
+                                            Some(
+                                                eval_expr(
+                                                    &args[0],
+                                                    w_row.row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null),
                                             )
-                                            .unwrap_or(Value::Null)
+                                        } else if ignore_nulls {
+                                            let mut seen = 0usize;
+                                            let mut hit = None;
+                                            for item in partition.iter().skip(i + 1) {
+                                                let v = eval_expr(
+                                                    &args[0],
+                                                    item.row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null);
+                                                if !v.is_null() {
+                                                    seen += 1;
+                                                    if seen == offset {
+                                                        hit = Some(v);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            hit
+                                        } else if i + offset < partition.len() {
+                                            Some(
+                                                eval_expr(
+                                                    &args[0],
+                                                    partition[i + offset].row,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null),
+                                            )
                                         } else {
-                                            args.get(2)
+                                            None
+                                        };
+                                        match found {
+                                            Some(v) => v,
+                                            None => args
+                                                .get(2)
                                                 .map(|e| {
                                                     eval_expr(
                                                         e,
@@ -270,7 +358,7 @@ impl<'a> WindowExecutor<'a> {
                                                     )
                                                     .unwrap_or(Value::Null)
                                                 })
-                                                .unwrap_or(Value::Null)
+                                                .unwrap_or(Value::Null),
                                         }
                                     }
                                     WindowFunc::FirstValue => {
@@ -283,6 +371,24 @@ impl<'a> WindowExecutor<'a> {
                                         );
                                         if frame_rows.is_empty() {
                                             Value::Null
+                                        } else if ignore_nulls {
+                                            let mut found = Value::Null;
+                                            for r in frame_rows {
+                                                let v = eval_expr(
+                                                    &args[0],
+                                                    r,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null);
+                                                if !v.is_null() {
+                                                    found = v;
+                                                    break;
+                                                }
+                                            }
+                                            found
                                         } else {
                                             eval_expr(
                                                 &args[0],
@@ -305,6 +411,24 @@ impl<'a> WindowExecutor<'a> {
                                         );
                                         if frame_rows.is_empty() {
                                             Value::Null
+                                        } else if ignore_nulls {
+                                            let mut found = Value::Null;
+                                            for r in frame_rows.into_iter().rev() {
+                                                let v = eval_expr(
+                                                    &args[0],
+                                                    r,
+                                                    ctx,
+                                                    self.catalog,
+                                                    self.storage,
+                                                    self.clock,
+                                                )
+                                                .unwrap_or(Value::Null);
+                                                if !v.is_null() {
+                                                    found = v;
+                                                    break;
+                                                }
+                                            }
+                                            found
                                         } else {
                                             eval_expr(
                                                 &args[0],
@@ -425,6 +549,26 @@ impl<'a> WindowExecutor<'a> {
                                         } else {
                                             let result = (current_rank - 1) as f64
                                                 / (partition.len() - 1) as f64;
+                                            Value::Float(result.to_bits())
+                                        }
+                                    }
+                                    WindowFunc::CumeDist => {
+                                        if partition.is_empty() {
+                                            Value::Float(0.0f64.to_bits())
+                                        } else if spec.order_by.is_empty() {
+                                            Value::Float(1.0f64.to_bits())
+                                        } else {
+                                            let mut peer_end = i;
+                                            while peer_end + 1 < partition.len()
+                                                && self.are_peers(
+                                                    &partition[i],
+                                                    &partition[peer_end + 1],
+                                                )
+                                            {
+                                                peer_end += 1;
+                                            }
+                                            let result =
+                                                (peer_end + 1) as f64 / partition.len() as f64;
                                             Value::Float(result.to_bits())
                                         }
                                     }

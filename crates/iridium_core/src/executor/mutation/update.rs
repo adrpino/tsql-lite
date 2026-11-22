@@ -154,12 +154,19 @@ impl<'a> MutationExecutor<'a> {
             )?;
             ctx.set_last_rowcount(updated_count);
 
-            self.execute_triggers(
+            let updated_cols: Vec<String> = stmt
+                .assignments
+                .iter()
+                .filter(|a| !a.column.starts_with('@'))
+                .map(|a| a.column.clone())
+                .collect();
+            self.execute_triggers_with_updated_cols(
                 &table,
                 crate::ast::TriggerEvent::Update,
                 true,
                 &inserted_rows,
                 &deleted_rows,
+                Some(&updated_cols),
                 ctx,
             )?;
 
@@ -294,12 +301,19 @@ impl<'a> MutationExecutor<'a> {
         )?;
         ctx.set_last_rowcount(updated_count);
 
-        self.execute_triggers(
+        let updated_cols: Vec<String> = stmt
+            .assignments
+            .iter()
+            .filter(|a| !a.column.starts_with('@'))
+            .map(|a| a.column.clone())
+            .collect();
+        self.execute_triggers_with_updated_cols(
             &table,
             crate::ast::TriggerEvent::Update,
             false,
             &inserted_rows_for_output,
             &deleted_rows_for_output,
+            Some(&updated_cols),
             ctx,
         )?;
 

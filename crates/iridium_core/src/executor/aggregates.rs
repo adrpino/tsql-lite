@@ -22,6 +22,10 @@ pub enum AggregateFn {
     Min,
     Max,
     StringAgg,
+    JsonObjectAggNull,
+    JsonObjectAggAbsent,
+    JsonArrayAggAbsent,
+    JsonArrayAggNull,
 }
 
 impl AggregateFn {
@@ -35,8 +39,38 @@ impl AggregateFn {
             "MIN" => Some(AggregateFn::Min),
             "MAX" => Some(AggregateFn::Max),
             "STRING_AGG" => Some(AggregateFn::StringAgg),
+            "JSON_OBJECTAGG" | "__JSON_OBJECTAGG_NULL" => Some(AggregateFn::JsonObjectAggNull),
+            "__JSON_OBJECTAGG_ABSENT" => Some(AggregateFn::JsonObjectAggAbsent),
+            "JSON_ARRAYAGG" | "__JSON_ARRAYAGG_ABSENT" => Some(AggregateFn::JsonArrayAggAbsent),
+            "__JSON_ARRAYAGG_NULL" => Some(AggregateFn::JsonArrayAggNull),
             _ => None,
         }
+    }
+}
+
+pub fn sort_group_for_within_group(
+    group: &Group,
+    order_by: &[crate::ast::OrderByExpr],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Group {
+    let mut rows = group.rows.clone();
+    rows.sort_by(|a, b| {
+        for item in order_by {
+            let va = eval_expr(&item.expr, a, ctx, catalog, storage, clock).unwrap_or(Value::Null);
+            let vb = eval_expr(&item.expr, b, ctx, catalog, storage, clock).unwrap_or(Value::Null);
+            let ord = compare_values(&va, &vb);
+            if ord != std::cmp::Ordering::Equal {
+                return if item.asc { ord } else { ord.reverse() };
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    Group {
+        key: group.key.clone(),
+        rows,
     }
 }
 
@@ -77,6 +111,18 @@ pub fn dispatch_aggregate(
         )),
         AggregateFn::StringAgg => Some(eval_aggregate_string_agg(
             args, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::JsonObjectAggNull => Some(eval_aggregate_json_objectagg(
+            args, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::JsonObjectAggAbsent => Some(eval_aggregate_json_objectagg(
+            args, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::JsonArrayAggAbsent => Some(eval_aggregate_json_arrayagg(
+            args, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::JsonArrayAggNull => Some(eval_aggregate_json_arrayagg(
+            args, true, group, ctx, catalog, storage, clock,
         )),
     }
 }
@@ -357,4 +403,68 @@ pub fn eval_aggregate_string_agg(
 
     let result = string_values.join(&separator_str);
     Ok(Value::VarChar(result))
+}
+
+fn eval_aggregate_json_objectagg(
+    args: &[Expr],
+    absent_on_null: bool,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution(
+            "JSON_OBJECTAGG requires key and value expressions".into(),
+        ));
+    }
+    let embed_raw = super::json::is_json_producing_expr(&args[1]);
+    let mut pairs = Vec::with_capacity(group.rows.len());
+    for row in &group.rows {
+        let k = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        if k.is_null() {
+            return Err(DbError::Execution(
+                "JSON_OBJECTAGG key cannot be NULL".into(),
+            ));
+        }
+        let v = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        if absent_on_null && v.is_null() {
+            continue;
+        }
+        pairs.push((k.to_string_value(), v, embed_raw));
+    }
+    if pairs.is_empty() {
+        return Ok(Value::Null);
+    }
+    Ok(super::json::build_json_object(&pairs, absent_on_null))
+}
+
+fn eval_aggregate_json_arrayagg(
+    args: &[Expr],
+    null_on_null: bool,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 1 {
+        return Err(DbError::Execution(
+            "JSON_ARRAYAGG requires 1 expression argument".into(),
+        ));
+    }
+    let embed_raw = super::json::is_json_producing_expr(&args[0]);
+    let mut items = Vec::with_capacity(group.rows.len());
+    for row in &group.rows {
+        let v = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        if !null_on_null && v.is_null() {
+            continue;
+        }
+        items.push((v, embed_raw));
+    }
+    if items.is_empty() {
+        return Ok(Value::Null);
+    }
+    Ok(super::json::build_json_array(&items, null_on_null))
 }

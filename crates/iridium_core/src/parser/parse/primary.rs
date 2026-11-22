@@ -145,6 +145,25 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
                 })
             }
         }
+        Some(Token::Keyword(Keyword::Update))
+            if matches!(parser.peek_at(1), Some(Token::LParen)) =>
+        {
+            let _ = parser.next(); // UPDATE
+            let _ = parser.next(); // (
+            let col_name = match parser.next() {
+                Some(Token::Identifier(id)) => id.clone(),
+                Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                _ => {
+                    return parser.backtrack(Expected::Description("column name in UPDATE(column)"))
+                }
+            };
+            parser.expect_rparen()?;
+            Ok(Expr::FunctionCall {
+                name: "__TRIGGER_UPDATE".to_string(),
+                args: vec![Expr::String(col_name)],
+                within_group: None,
+            })
+        }
         Some(Token::Keyword(Keyword::Next)) => {
             let _ = parser.next();
             parser.expect_keyword(Keyword::Value)?;
@@ -376,6 +395,77 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
     }
 
     if matches!(parser.peek(), Some(Token::LParen)) {
+        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("JSON_OBJECTAGG") {
+            let _ = parser.next(); // consume '('
+            let key_expr = parse_expr(parser)?;
+            if !matches!(parser.peek(), Some(Token::Colon)) {
+                return parser.backtrack(Expected::Description("':' in JSON_OBJECTAGG"));
+            }
+            let _ = parser.next(); // consume ':'
+            let val_expr = parse_expr(parser)?;
+            let mut absent_on_null = false;
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ABSENT"))
+            {
+                let _ = parser.next();
+                parser.expect_keyword(Keyword::On)?;
+                parser.expect_keyword(Keyword::Null)?;
+                absent_on_null = true;
+            } else if parser.at_keyword(Keyword::Null) {
+                let _ = parser.next();
+                parser.expect_keyword(Keyword::On)?;
+                parser.expect_keyword(Keyword::Null)?;
+                absent_on_null = false;
+            }
+            parser.expect_rparen()?;
+            let fn_name = if absent_on_null {
+                "__JSON_OBJECTAGG_ABSENT"
+            } else {
+                "__JSON_OBJECTAGG_NULL"
+            };
+            return Ok(Expr::FunctionCall {
+                name: fn_name.to_string(),
+                args: vec![key_expr, val_expr],
+                within_group: None,
+            });
+        }
+        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("JSON_ARRAYAGG") {
+            let _ = parser.next(); // consume '('
+            let val_expr = parse_expr(parser)?;
+            let mut order_by: Option<Box<Vec<OrderByExpr>>> = None;
+            if parser.at_keyword(Keyword::Order) {
+                let _ = parser.next();
+                parser.expect_keyword(Keyword::By)?;
+                let obs = parse_comma_list(
+                    parser,
+                    crate::parser::parse::statements::query::parse_order_by_expr,
+                )?;
+                order_by = Some(Box::new(obs));
+            }
+            let mut null_on_null = false;
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ABSENT"))
+            {
+                let _ = parser.next();
+                parser.expect_keyword(Keyword::On)?;
+                parser.expect_keyword(Keyword::Null)?;
+                null_on_null = false;
+            } else if parser.at_keyword(Keyword::Null) {
+                let _ = parser.next();
+                parser.expect_keyword(Keyword::On)?;
+                parser.expect_keyword(Keyword::Null)?;
+                null_on_null = true;
+            }
+            parser.expect_rparen()?;
+            let fn_name = if null_on_null {
+                "__JSON_ARRAYAGG_NULL"
+            } else {
+                "__JSON_ARRAYAGG_ABSENT"
+            };
+            return Ok(Expr::FunctionCall {
+                name: fn_name.to_string(),
+                args: vec![val_expr],
+                within_group: order_by,
+            });
+        }
         if parts.len() == 1 && parts[0].eq_ignore_ascii_case("JSON_OBJECT") {
             let _ = parser.next(); // consume '('
             let mut args = Vec::new();
@@ -583,8 +673,22 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
         } else {
             None
         };
+        let mut ignore_nulls = false;
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("IGNORE"))
+            && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NULLS"))
+        {
+            let _ = parser.next();
+            let _ = parser.next();
+            ignore_nulls = true;
+        } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RESPECT"))
+            && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NULLS"))
+        {
+            let _ = parser.next();
+            let _ = parser.next();
+            ignore_nulls = false;
+        }
         if parser.at_keyword(Keyword::Over) {
-            return parse_window_over(parser, function_name, args);
+            return parse_window_over(parser, function_name, args, ignore_nulls);
         }
         Ok(Expr::FunctionCall {
             name: function_name,

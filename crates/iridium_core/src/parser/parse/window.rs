@@ -10,6 +10,7 @@ pub(crate) fn parse_window_over(
     parser: &mut Parser,
     name: String,
     args: Vec<Expr>,
+    ignore_nulls: bool,
 ) -> ParseResult<Expr> {
     parser.expect_keyword(Keyword::Over)?;
     parser.expect_lparen()?;
@@ -90,6 +91,7 @@ pub(crate) fn parse_window_over(
         partition_by,
         order_by,
         frame,
+        ignore_nulls,
     })))
 }
 

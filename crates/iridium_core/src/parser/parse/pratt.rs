@@ -69,6 +69,21 @@ pub(super) fn parse_pratt_expr(parser: &mut Parser, min_bp: u8) -> ParseResult<E
                         let _ = parser.next();
                         negated = true;
                     }
+                    if parser.at_keyword(Keyword::Distinct) {
+                        let _ = parser.next();
+                        parser.expect_keyword(Keyword::From)?;
+                        let right = parse_pratt_expr(parser, l_bp + 1)?;
+                        left = Expr::FunctionCall {
+                            name: if negated {
+                                "__IS_NOT_DISTINCT_FROM".to_string()
+                            } else {
+                                "__IS_DISTINCT_FROM".to_string()
+                            },
+                            args: vec![left, right],
+                            within_group: None,
+                        };
+                        continue;
+                    }
                     parser.expect_keyword(Keyword::Null)?;
                     left = if negated {
                         Expr::IsNotNull(Box::new(left))

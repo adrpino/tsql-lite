@@ -31,13 +31,30 @@ fn eval_having_expr(
     clock: &dyn Clock,
 ) -> Result<Value, DbError> {
     match expr {
-        Expr::FunctionCall { name, args, .. } => {
-            if let Some(res) = dispatch_aggregate(name, args, group, ctx, catalog, storage, clock) {
-                res
-            } else {
-                // Fallback to standard eval_expr if it's not an aggregate
-                eval_expr(expr, row, ctx, catalog, storage, clock)
+        Expr::FunctionCall {
+            name,
+            args,
+            within_group,
+        } => {
+            if super::aggregates::is_aggregate_function(name) {
+                let sorted_group;
+                let effective_group =
+                    if let Some(ob) = within_group.as_deref().filter(|v| !v.is_empty()) {
+                        sorted_group = super::aggregates::sort_group_for_within_group(
+                            group, ob, ctx, catalog, storage, clock,
+                        );
+                        &sorted_group
+                    } else {
+                        group
+                    };
+                if let Some(res) =
+                    dispatch_aggregate(name, args, effective_group, ctx, catalog, storage, clock)
+                {
+                    return res;
+                }
             }
+            // Fallback to standard eval_expr if it's not an aggregate
+            eval_expr(expr, row, ctx, catalog, storage, clock)
         }
         Expr::Binary { left, op, right } => {
             let lv = eval_having_expr(left, row, group, ctx, catalog, storage, clock)?;
@@ -490,7 +507,13 @@ fn validate_expr_columns_against_shape(
         Expr::FunctionCall { name, args, .. } => {
             let skip_first = matches!(
                 name.to_ascii_uppercase().as_str(),
-                "DATEADD" | "DATEDIFF" | "DATEDIFF_BIG" | "DATEPART" | "DATENAME" | "DATETRUNC"
+                "DATEADD"
+                    | "DATEDIFF"
+                    | "DATEDIFF_BIG"
+                    | "DATEPART"
+                    | "DATENAME"
+                    | "DATETRUNC"
+                    | "DATE_BUCKET"
             );
             for (idx, a) in args.iter().enumerate() {
                 if skip_first && idx == 0 {

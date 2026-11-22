@@ -277,6 +277,96 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("PARSENAME" => system::formatting::eval_parsename),
     builtin!("QUOTENAME" => system::formatting::eval_quotename),
     builtin!("HASHBYTES" => system::crypto::eval_hashbytes),
+    builtin!("COMPRESS" => system::crypto::eval_compress),
+    builtin!("DECOMPRESS" => system::crypto::eval_decompress),
+    builtin!("BINARY_CHECKSUM" => system::crypto::eval_binary_checksum),
+    builtin!("__TRIGGER_UPDATE" => |args, _row, ctx, _catalog, _storage, _clock| {
+        if args.len() != 1 {
+            return Err(DbError::Execution("UPDATE() expects 1 column argument".into()));
+        }
+        let col_name = match &args[0] {
+            Expr::String(s) | Expr::UnicodeString(s) | Expr::Identifier(s) => s.as_str(),
+            _ => return Ok(Value::Bit(false)),
+        };
+        let Some(frame) = ctx.frame.trigger_frames.last() else {
+            return Ok(Value::Bit(false));
+        };
+        let hit = frame
+            .table_columns
+            .iter()
+            .zip(frame.updated_columns.iter())
+            .any(|(c, &u)| u && c.eq_ignore_ascii_case(col_name));
+        Ok(Value::Bit(hit))
+    }),
+    builtin!("COLUMNS_UPDATED" => |args, _row, ctx, _catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("COLUMNS_UPDATED expects 0 arguments".into()));
+        }
+        let Some(frame) = ctx.frame.trigger_frames.last() else {
+            return Ok(Value::VarBinary(Vec::new()));
+        };
+        let byte_len = frame.updated_columns.len().div_ceil(8);
+        let mut mask = vec![0u8; byte_len];
+        for (idx, &updated) in frame.updated_columns.iter().enumerate() {
+            if updated {
+                mask[idx / 8] |= 1u8 << (idx % 8);
+            }
+        }
+        Ok(Value::VarBinary(mask))
+    }),
+    builtin!("TRIGGER_NESTLEVEL" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() > 3 {
+            return Err(DbError::Execution("TRIGGER_NESTLEVEL expects 0 to 3 arguments".into()));
+        }
+        if args.is_empty() {
+            return Ok(Value::Int(ctx.frame.trigger_frames.len() as i32));
+        }
+        let obj_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        if obj_val.is_null() {
+            return Ok(Value::Int(ctx.frame.trigger_frames.len() as i32));
+        }
+        let obj_id = obj_val.to_integer_i64().unwrap_or(0) as i32;
+        if obj_id == 0 {
+            return Ok(Value::Int(ctx.frame.trigger_frames.len() as i32));
+        }
+        let count = ctx
+            .frame
+            .trigger_frames
+            .iter()
+            .filter(|f| f.object_id == obj_id)
+            .count();
+        Ok(Value::Int(count as i32))
+    }),
+    builtin!("__IS_DISTINCT_FROM" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() != 2 {
+            return Err(DbError::Execution("IS DISTINCT FROM expects 2 operands".into()));
+        }
+        let l = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        let r = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        let distinct = match (l.is_null(), r.is_null()) {
+            (true, true) => false,
+            (true, false) | (false, true) => true,
+            (false, false) => {
+                crate::executor::value_ops::compare_values(&l, &r) != std::cmp::Ordering::Equal
+            }
+        };
+        Ok(Value::Bit(distinct))
+    }),
+    builtin!("__IS_NOT_DISTINCT_FROM" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() != 2 {
+            return Err(DbError::Execution("IS NOT DISTINCT FROM expects 2 operands".into()));
+        }
+        let l = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        let r = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        let not_distinct = match (l.is_null(), r.is_null()) {
+            (true, true) => true,
+            (true, false) | (false, true) => false,
+            (false, false) => {
+                crate::executor::value_ops::compare_values(&l, &r) == std::cmp::Ordering::Equal
+            }
+        };
+        Ok(Value::Bit(not_distinct))
+    }),
 ];
 
 const DATETIME_FUNCTIONS: &[BuiltinScalarFunction] = &[
@@ -295,6 +385,8 @@ const DATETIME_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("DATEDIFF" => datetime::eval_datediff),
     builtin!("DATEDIFF_BIG" => datetime::eval_datediff_big),
     builtin!("DATEADD" => datetime::eval_dateadd),
+    builtin!("DATETRUNC" => datetime::eval_datetrunc),
+    builtin!("DATE_BUCKET" => datetime::eval_date_bucket),
     builtin!("EOMONTH" => datetime::eval_eomonth),
     builtin!("DATEFROMPARTS" => datetime::eval_datefromparts),
     builtin!("DATETIMEFROMPARTS" => datetime::eval_datetimefromparts),

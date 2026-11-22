@@ -94,6 +94,8 @@ pub struct WindowFunctionExpr {
     pub partition_by: Vec<Expr>,
     pub order_by: Vec<OrderByExpr>,
     pub frame: Option<WindowFrame>,
+    #[serde(default)]
+    pub ignore_nulls: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -115,6 +117,7 @@ pub enum WindowFunc {
     PercentileCont,
     PercentileDisc,
     PercentileRank,
+    CumeDist,
     Aggregate(String),
 }
 

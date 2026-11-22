@@ -46,6 +46,28 @@ impl<'a> MutationExecutor<'a> {
         deleted_rows: &[crate::storage::StoredRow],
         ctx: &mut super::context::ExecutionContext<'_>,
     ) -> Result<(), crate::error::DbError> {
+        self.execute_triggers_with_updated_cols(
+            table,
+            event,
+            is_instead_of,
+            inserted_rows,
+            deleted_rows,
+            None,
+            ctx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_triggers_with_updated_cols(
+        &mut self,
+        table: &crate::catalog::TableDef,
+        event: crate::ast::TriggerEvent,
+        is_instead_of: bool,
+        inserted_rows: &[crate::storage::StoredRow],
+        deleted_rows: &[crate::storage::StoredRow],
+        updated_col_names: Option<&[String]>,
+        ctx: &mut super::context::ExecutionContext<'_>,
+    ) -> Result<(), crate::error::DbError> {
         let triggers: Vec<crate::catalog::TriggerDef> = self
             .catalog
             .find_triggers_for_table(table.schema_or_dbo(), &table.name)
@@ -80,6 +102,26 @@ impl<'a> MutationExecutor<'a> {
                     .frame
                     .active_triggers
                     .push((trigger.schema.clone(), trigger.name.clone()));
+                let updated_columns: Vec<bool> = match event {
+                    crate::ast::TriggerEvent::Insert => vec![true; table.columns.len()],
+                    crate::ast::TriggerEvent::Delete => vec![false; table.columns.len()],
+                    crate::ast::TriggerEvent::Update => match updated_col_names {
+                        Some(names) => table
+                            .columns
+                            .iter()
+                            .map(|c| names.iter().any(|n| n.eq_ignore_ascii_case(&c.name)))
+                            .collect(),
+                        None => vec![true; table.columns.len()],
+                    },
+                };
+                trigger_ctx
+                    .frame
+                    .trigger_frames
+                    .push(super::context::TriggerIntrospectionFrame {
+                        object_id: trigger.object_id,
+                        table_columns: table.columns.iter().map(|c| c.name.clone()).collect(),
+                        updated_columns,
+                    });
                 if is_instead_of {
                     trigger_ctx.frame.skip_instead_of = true;
                 }

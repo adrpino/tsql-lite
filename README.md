@@ -1,6 +1,6 @@
 # Iridium SQL
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L11VB7JN)
+> Maintained fork of [celsowm/iridium-sql](https://github.com/celsowm/iridium-sql) with extended T-SQL compatibility, copy-on-write storage/catalog isolation, and performance optimizations.
 
 An open SQL Server-compatible database engine with native persistence by default and WASM support for embedding.
 

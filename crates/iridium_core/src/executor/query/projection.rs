@@ -245,9 +245,22 @@ fn infer_expr_type(expr: &Expr, sample: Option<&JoinedRow>) -> Option<DataType> 
             | crate::ast::BinaryOp::BitwiseOr
             | crate::ast::BinaryOp::BitwiseXor => Some(DataType::Int),
         },
+        Expr::FunctionCall { name, .. } => {
+            if name.eq_ignore_ascii_case("COUNT") || name.eq_ignore_ascii_case("COUNT_DISTINCT") {
+                Some(DataType::Int)
+            } else if name.eq_ignore_ascii_case("COUNT_BIG")
+                || name.eq_ignore_ascii_case("COUNT_BIG_DISTINCT")
+            {
+                Some(DataType::BigInt)
+            } else {
+                None
+            }
+        }
         Expr::Subquery(sub) => {
             if sub.for_xml().is_some_and(|fx| fx.type_directive) {
                 Some(DataType::Xml)
+            } else if sub.projection.len() == 1 {
+                infer_expr_type(&sub.projection[0].expr, None)
             } else {
                 None
             }

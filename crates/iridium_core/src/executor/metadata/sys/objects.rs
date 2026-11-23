@@ -319,6 +319,13 @@ impl VirtualTable for SysObjects {
             });
         }
         for trigger in catalog.get_triggers() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &trigger.schema,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(trigger.object_id),
@@ -341,7 +348,17 @@ impl VirtualTable for SysObjects {
                 deleted: false,
             });
         }
+        let all_tables = catalog.get_tables();
         for idx in catalog.get_indexes() {
+            if let Some(tbl) = all_tables.iter().find(|t| t.id == idx.table_id) {
+                if !crate::executor::database_catalog::schema_belongs_to_db(
+                    &tbl.schema_name,
+                    active_db,
+                    catalog,
+                ) {
+                    continue;
+                }
+            }
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(idx.id as i32),

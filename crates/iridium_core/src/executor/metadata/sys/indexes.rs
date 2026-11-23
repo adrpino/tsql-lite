@@ -40,12 +40,26 @@ impl VirtualTable for SysIndexes {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let tables = catalog.get_tables();
         let indexes = catalog.get_indexes();
 
         let mut rows: Vec<StoredRow> = indexes
             .iter()
+            .filter(|idx| {
+                tables
+                    .iter()
+                    .find(|t| t.id == idx.table_id)
+                    .map(|t| {
+                        crate::executor::database_catalog::schema_belongs_to_db(
+                            &t.schema_name,
+                            active_db,
+                            catalog,
+                        )
+                    })
+                    .unwrap_or(true)
+            })
             .map(|idx| {
                 let table = tables.iter().find(|t| t.id == idx.table_id);
                 let is_primary_key = table

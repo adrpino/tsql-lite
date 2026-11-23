@@ -67,10 +67,26 @@ impl VirtualTable for Columns {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
+        let catalog_name =
+            if crate::executor::database_catalog::is_user_database(catalog, active_db) {
+                active_db
+            } else {
+                DB_CATALOG
+            };
         let mut rows = Vec::new();
         for t in catalog.get_tables() {
-            let schema = schema_name_by_id(catalog, t.schema_id);
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &t.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
+            let raw_schema = schema_name_by_id(catalog, t.schema_id);
+            let schema =
+                crate::executor::database_catalog::display_schema_name(&raw_schema).to_string();
             for (ordinal, c) in t.columns.iter().enumerate() {
                 let col_default = c
                     .default
@@ -79,7 +95,7 @@ impl VirtualTable for Columns {
                     .unwrap_or(Value::Null);
                 rows.push(StoredRow {
                     values: vec![
-                        Value::VarChar(DB_CATALOG.to_string()),
+                        Value::VarChar(catalog_name.to_string()),
                         Value::VarChar(schema.clone()),
                         Value::VarChar(t.name.clone()),
                         Value::VarChar(c.name.clone()),

@@ -17,8 +17,8 @@ impl VirtualTable for SysColumns {
         column_table_def("columns")
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        column_rows(catalog)
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        column_rows(catalog, ctx)
     }
 }
 
@@ -27,8 +27,8 @@ impl VirtualTable for SysAllColumns {
         column_table_def("all_columns")
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        column_rows(catalog)
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        column_rows(catalog, ctx)
     }
 }
 
@@ -108,7 +108,8 @@ fn column_table_def(name: &str) -> crate::catalog::TableDef {
     virtual_table_def(name, cols)
 }
 
-fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
+fn column_rows(catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+    let active_db = crate::executor::database_catalog::current_database_name(ctx);
     fn precision_scale(dt: &DataType) -> (u8, u8) {
         match dt {
             DataType::Bit => (1, 0),
@@ -137,6 +138,13 @@ fn column_rows(catalog: &dyn Catalog) -> Vec<StoredRow> {
 
     let mut rows = Vec::new();
     for t in catalog.get_tables() {
+        if !crate::executor::database_catalog::schema_belongs_to_db(
+            &t.schema_name,
+            active_db,
+            catalog,
+        ) {
+            continue;
+        }
         for c in &t.columns {
             let (precision, scale) = precision_scale(&c.data_type);
             let (vector_dimensions, vector_base_type, vector_base_type_desc) =

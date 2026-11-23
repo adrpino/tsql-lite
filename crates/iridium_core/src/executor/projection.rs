@@ -172,13 +172,24 @@ pub fn compare_projected_rows(
     columns: &[String],
     order_by: &[OrderByExpr],
 ) -> Result<Ordering, DbError> {
+    compare_projected_rows_with_projection(a, b, columns, &[], order_by)
+}
+
+pub fn compare_projected_rows_with_projection(
+    a: &[Value],
+    b: &[Value],
+    columns: &[String],
+    projection: &[crate::ast::SelectItem],
+    order_by: &[OrderByExpr],
+) -> Result<Ordering, DbError> {
     for item in order_by {
-        let idx = resolve_projected_order_index(columns, item).ok_or_else(|| {
-            DbError::invalid_identifier(format!(
-                "invalid column in ORDER BY: {}",
-                expr_label(&item.expr)
-            ))
-        })?;
+        let idx = resolve_projected_order_index_with_projection(columns, projection, item)
+            .ok_or_else(|| {
+                DbError::invalid_identifier(format!(
+                    "invalid column in ORDER BY: {}",
+                    expr_label(&item.expr)
+                ))
+            })?;
         let ord = if let Some(flags) = super::collation::expr_collation(&item.expr) {
             super::collation::compare_values_with_collation(
                 a.get(idx).unwrap_or(&Value::Null),
@@ -199,21 +210,39 @@ pub fn compare_projected_rows(
 }
 
 pub fn resolve_projected_order_index(columns: &[String], item: &OrderByExpr) -> Option<usize> {
+    resolve_projected_order_index_with_projection(columns, &[], item)
+}
+
+pub fn resolve_projected_order_index_with_projection(
+    columns: &[String],
+    projection: &[crate::ast::SelectItem],
+    item: &OrderByExpr,
+) -> Option<usize> {
     let target_expr = match &item.expr {
         Expr::FunctionCall { name, args, .. } if name == "__COLLATE" && !args.is_empty() => {
             &args[0]
         }
         other => other,
     };
-    match target_expr {
-        Expr::Identifier(name) => columns.iter().position(|c| c.eq_ignore_ascii_case(name)),
-        Expr::QualifiedIdentifier(parts) => parts
-            .last()
-            .and_then(|name| columns.iter().position(|c| c.eq_ignore_ascii_case(name))),
-        _ => columns
-            .iter()
-            .position(|c| c.eq_ignore_ascii_case(&expr_label(target_expr))),
+    let target_label = match target_expr {
+        Expr::Identifier(name) => name.clone(),
+        Expr::QualifiedIdentifier(parts) => parts.last().cloned().unwrap_or_default(),
+        _ => expr_label(target_expr),
+    };
+    if let Some(idx) = columns
+        .iter()
+        .position(|c| c.eq_ignore_ascii_case(&target_label))
+    {
+        return Some(idx);
     }
+    // Fall back to matching the unaliased projection expression (e.g.
+    // `SELECT [e].[Category] AS [Key] ... GROUP BY [e].[Category] ORDER BY [e].[Category]`).
+    if !projection.is_empty() {
+        return projection
+            .iter()
+            .position(|p| expr_label(&p.expr).eq_ignore_ascii_case(&target_label));
+    }
+    None
 }
 
 pub fn deduplicate_projected_rows(rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {

@@ -38,6 +38,7 @@ internal static class Scenarios
             ("10_multidb_use_and_three_part_query", RunMultiDbThreePartQuery),
         };
         list.AddRange(Tier1Scenarios.All());
+        list.AddRange(Tier2Scenarios.All());
         return list;
     }
 

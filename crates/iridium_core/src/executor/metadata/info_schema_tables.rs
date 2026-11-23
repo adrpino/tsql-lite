@@ -45,14 +45,26 @@ impl VirtualTable for Schemata {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
+        let catalog_name =
+            if crate::executor::database_catalog::is_user_database(catalog, active_db) {
+                active_db
+            } else {
+                DB_CATALOG
+            };
         catalog
             .get_schemas()
             .iter()
+            .filter(|s| {
+                crate::executor::database_catalog::schema_belongs_to_db(&s.name, active_db, catalog)
+            })
             .map(|s| StoredRow {
                 values: vec![
-                    Value::VarChar(DB_CATALOG.to_string()),
-                    Value::VarChar(s.name.clone()),
+                    Value::VarChar(catalog_name.to_string()),
+                    Value::VarChar(
+                        crate::executor::database_catalog::display_schema_name(&s.name).to_string(),
+                    ),
                     Value::VarChar("dbo".to_string()),
                     Value::Null,
                     Value::Null,
@@ -77,25 +89,51 @@ impl VirtualTable for Tables {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
+        let catalog_name =
+            if crate::executor::database_catalog::is_user_database(catalog, active_db) {
+                active_db
+            } else {
+                DB_CATALOG
+            };
         let mut rows: Vec<StoredRow> = catalog
             .get_tables()
             .iter()
-            .map(|t| StoredRow {
-                values: vec![
-                    Value::VarChar(DB_CATALOG.to_string()),
-                    Value::VarChar(schema_name_by_id(catalog, t.schema_id)),
-                    Value::VarChar(t.name.clone()),
-                    Value::VarChar("BASE TABLE".to_string()),
-                ],
-                deleted: false,
+            .filter(|t| {
+                crate::executor::database_catalog::schema_belongs_to_db(
+                    &t.schema_name,
+                    active_db,
+                    catalog,
+                )
+            })
+            .map(|t| {
+                let raw_schema = schema_name_by_id(catalog, t.schema_id);
+                let disp_schema =
+                    crate::executor::database_catalog::display_schema_name(&raw_schema).to_string();
+                StoredRow {
+                    values: vec![
+                        Value::VarChar(catalog_name.to_string()),
+                        Value::VarChar(disp_schema),
+                        Value::VarChar(t.name.clone()),
+                        Value::VarChar("BASE TABLE".to_string()),
+                    ],
+                    deleted: false,
+                }
             })
             .collect();
         for v in catalog.get_views() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &v.schema, active_db, catalog,
+            ) {
+                continue;
+            }
+            let disp_schema =
+                crate::executor::database_catalog::display_schema_name(&v.schema).to_string();
             rows.push(StoredRow {
                 values: vec![
-                    Value::VarChar(DB_CATALOG.to_string()),
-                    Value::VarChar(v.schema.clone()),
+                    Value::VarChar(catalog_name.to_string()),
+                    Value::VarChar(disp_schema),
                     Value::VarChar(v.name.clone()),
                     Value::VarChar("VIEW".to_string()),
                 ],
@@ -121,20 +159,36 @@ impl VirtualTable for Views {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
+        let catalog_name =
+            if crate::executor::database_catalog::is_user_database(catalog, active_db) {
+                active_db
+            } else {
+                DB_CATALOG
+            };
         catalog
             .get_views()
             .iter()
-            .map(|v| StoredRow {
-                values: vec![
-                    Value::VarChar(DB_CATALOG.to_string()),
-                    Value::VarChar(v.schema.clone()),
-                    Value::VarChar(v.name.clone()),
-                    Value::Null,
-                    Value::VarChar("NONE".to_string()),
-                    Value::VarChar("NO".to_string()),
-                ],
-                deleted: false,
+            .filter(|v| {
+                crate::executor::database_catalog::schema_belongs_to_db(
+                    &v.schema, active_db, catalog,
+                )
+            })
+            .map(|v| {
+                let disp_schema =
+                    crate::executor::database_catalog::display_schema_name(&v.schema).to_string();
+                StoredRow {
+                    values: vec![
+                        Value::VarChar(catalog_name.to_string()),
+                        Value::VarChar(disp_schema),
+                        Value::VarChar(v.name.clone()),
+                        Value::Null,
+                        Value::VarChar("NONE".to_string()),
+                        Value::VarChar("NO".to_string()),
+                    ],
+                    deleted: false,
+                }
             })
             .collect()
     }

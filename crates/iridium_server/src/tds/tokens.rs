@@ -172,35 +172,18 @@ pub fn write_returnvalue(
     b.put_bytes(&value_to_wire_bytes(value, ti));
 }
 
-/// Write an OUTPUT parameter token (0x80) for an integer value.
-/// Used by cursor RPC to return the cursor handle as an output parameter.
+/// Write a TDS 7.2+ `RETURNVALUE` (`0xAC`) token for an integer output parameter
+/// (e.g. cursor handle `@cursor` or prepared statement `@handle`).
 pub fn write_output_int(b: &mut PacketBuilder, param_name: &str, value: i32) {
-    b.put_u8(OUTPUT_PARAM_TOKEN);
-
-    // Param name (B_VARCHAR, length-prefixed with single byte)
-    let name_bytes: Vec<u16> = param_name.encode_utf16().collect();
-    b.put_u8(name_bytes.len() as u8);
-    for ch in name_bytes {
-        b.put_u16_le(ch);
-    }
-
-    // STATUS byte (0x00 = RETURN value)
-    b.put_u8(0x00);
-
-    // Type info: INTN (type 0x26), 4 bytes max
-    b.put_u8(0x26); // INTN
-    b.put_u8(0x04); // max length = 4
-
-    // Collation (5 bytes) - for INTN we can use zeroes
-    b.put_u8(0x00);
-    b.put_u8(0x00);
-    b.put_u8(0x00);
-    b.put_u8(0x00);
-    b.put_u8(0x00);
-
-    // Actual length (1 byte) + value (4 bytes LE)
-    b.put_u8(0x04);
-    b.put_i32_le(value);
+    let ti = TypeInfo {
+        tds_type: super::type_mapping::INTNTYPE,
+        length_prefix: vec![0x04],
+        collation: None,
+        scale: None,
+        precision: None,
+        flags: 0x0001,
+    };
+    write_returnvalue(b, 0, param_name, &Value::Int(value), &ti);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -429,5 +412,14 @@ mod tests {
         let bytes = b.as_bytes();
         assert_eq!(bytes[0], ROW_TOKEN);
         assert!(bytes.windows(4).any(|w| w == [0x02, 0x00, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn write_output_int_emits_tds72_returnvalue_0xac() {
+        let mut b = PacketBuilder::new();
+        write_output_int(&mut b, "@cursor", 42);
+        let bytes = b.as_bytes();
+        assert_eq!(bytes[0], RETURNVALUE_TOKEN);
+        assert_ne!(bytes[0], OUTPUT_PARAM_TOKEN);
     }
 }

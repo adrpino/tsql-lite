@@ -322,11 +322,22 @@ impl<'a> GroupExecutor<'a> {
         let columns = expand_projection_columns(&projection, None);
         let mut column_types = Vec::new();
         if !projected_rows.is_empty() {
-            for val in &projected_rows[0] {
-                column_types.push(
+            for (idx, val) in projected_rows[0].iter().enumerate() {
+                let is_count_int = projection.get(idx).is_some_and(|item| {
+                    matches!(
+                        &item.expr,
+                        Expr::FunctionCall { name, .. }
+                            if name.eq_ignore_ascii_case("COUNT")
+                                || name.eq_ignore_ascii_case("COUNT_DISTINCT")
+                    )
+                });
+                let dt = if is_count_int {
+                    crate::types::DataType::Int
+                } else {
                     val.data_type()
-                        .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 }),
-                );
+                        .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 })
+                };
+                column_types.push(dt);
             }
         } else {
             column_types = vec![crate::types::DataType::VarChar { max_len: 4000 }; columns.len()];

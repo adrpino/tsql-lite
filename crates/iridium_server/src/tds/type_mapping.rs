@@ -18,7 +18,9 @@ pub const BIGVARBINARYTYPE: u8 = 0xA5;
 pub const DATENTYPE: u8 = 0x28;
 pub const TIMENTYPE: u8 = 0x29;
 pub const DATETIME2NTYPE: u8 = 0x2A;
+pub const DATETIMEOFFSETNTYPE: u8 = 0x2B;
 pub const DATETIMNTYPE: u8 = 0x6F;
+pub const XMLTYPE: u8 = 0xF1;
 
 /// Default collation: Latin1_General_CI_AS (LCID=0x0409)
 pub const DEFAULT_COLLATION: [u8; 5] = [0x09, 0x04, 0x00, 0x00, 0x00];
@@ -42,7 +44,7 @@ impl TypeInfo {
 }
 
 fn encode_plp_bytes(payload: &[u8]) -> Vec<u8> {
-    const CHUNK_SIZE: usize = 65_536;
+    const CHUNK_SIZE: usize = 4_000;
     let total_len = payload.len() as u64;
     let num_chunks = payload.len().div_ceil(CHUNK_SIZE);
     let mut buf = Vec::with_capacity(8 + payload.len() + num_chunks * 4 + 4);
@@ -204,10 +206,10 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
             flags: 0x0001,
         },
         Value::DateTimeOffset(_) => TypeInfo {
-            tds_type: NVARCHARTYPE,
-            length_prefix: 510u16.to_le_bytes().to_vec(),
-            collation: Some(DEFAULT_COLLATION),
-            scale: None,
+            tds_type: DATETIMEOFFSETNTYPE,
+            length_prefix: vec![],
+            collation: None,
+            scale: Some(7),
             precision: None,
             flags: 0x0001,
         },
@@ -232,7 +234,7 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
 
 pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
     if value.is_null() {
-        if ti.is_plp() {
+        if ti.is_plp() || ti.tds_type == XMLTYPE {
             return 0xFFFF_FFFF_FFFF_FFFFu64.to_le_bytes().to_vec();
         }
         match ti.tds_type {
@@ -282,12 +284,18 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
         NUMERICNTYPE | DECIMALNTYPE => {
             let len = ti.length_prefix[0];
             let mut buf = vec![len];
+            let target_scale = ti.scale.unwrap_or(0);
             let raw = match value {
-                Value::Decimal(r, _s) => *r,
-                _ => {
-                    value.to_integer_i64().unwrap_or(0) as i128
-                        * 10i128.pow(ti.scale.unwrap_or(0) as u32)
+                Value::Decimal(r, s) => {
+                    if *s == target_scale {
+                        *r
+                    } else if target_scale > *s {
+                        r.saturating_mul(10i128.pow((target_scale - *s) as u32))
+                    } else {
+                        *r / 10i128.pow((*s - target_scale) as u32)
+                    }
                 }
+                _ => value.to_integer_i64().unwrap_or(0) as i128 * 10i128.pow(target_scale as u32),
             };
             let negative = raw < 0;
             let abs_val = raw.unsigned_abs();
@@ -307,11 +315,27 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
             let m = match value {
                 Value::Money(v) => *v,
                 Value::SmallMoney(v) => *v as i128,
+                Value::Decimal(r, s) => {
+                    if *s == 4 {
+                        *r
+                    } else if *s < 4 {
+                        r.saturating_mul(10i128.pow((4 - *s) as u32))
+                    } else {
+                        *r / 10i128.pow((*s - 4) as u32)
+                    }
+                }
                 _ => value.to_integer_i64().unwrap_or(0) as i128 * 10000,
             };
             match len {
                 4 => buf.extend_from_slice(&(m as i32).to_le_bytes()),
-                8 => buf.extend_from_slice(&(m as i64).to_le_bytes()),
+                8 => {
+                    // MS-TDS 8-byte MONEY encodes high 32 bits FIRST, then low 32 bits (both LE).
+                    let val64 = m as i64;
+                    let high = (val64 >> 32) as i32;
+                    let low = val64 as u32;
+                    buf.extend_from_slice(&high.to_le_bytes());
+                    buf.extend_from_slice(&low.to_le_bytes());
+                }
                 _ => {}
             }
             buf
@@ -373,7 +397,7 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
         }
         DATENTYPE => {
             let s = value.to_string_value();
-            let days = parse_date_to_days_since_2000(&s);
+            let days = parse_date_to_days_since_0001(&s);
             let mut buf = vec![0x03];
             buf.extend_from_slice(&days.to_le_bytes()[..3]);
             buf
@@ -401,6 +425,23 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
             buf.extend_from_slice(&days.to_le_bytes()[..3]);
             buf
         }
+        DATETIMEOFFSETNTYPE => {
+            let s = value.to_string_value();
+            let (utc_days, utc_ticks, offset_min) = parse_datetimeoffset_utc(&s);
+            let mut buf = vec![0x0A];
+            buf.extend_from_slice(&utc_ticks.to_le_bytes()[..5]);
+            buf.extend_from_slice(&utc_days.to_le_bytes()[..3]);
+            buf.extend_from_slice(&offset_min.to_le_bytes());
+            buf
+        }
+        XMLTYPE => {
+            let s = value.to_string_value();
+            let mut raw = Vec::with_capacity(s.len() * 2);
+            for c in s.encode_utf16() {
+                raw.extend_from_slice(&c.to_le_bytes());
+            }
+            encode_plp_bytes(&raw)
+        }
         GUIDTYPE => {
             let s = value.to_string_value();
             let bytes = parse_guid(&s);
@@ -412,17 +453,33 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
     }
 }
 
-fn parse_date_to_days_since_2000(s: &str) -> i32 {
-    let parts: Vec<&str> = s.split('-').collect();
+fn parse_date_to_days_since_0001(s: &str) -> u32 {
+    let date_part = s.split([' ', 'T']).next().unwrap_or(s);
+    let parts: Vec<&str> = date_part.split('-').collect();
     if parts.len() < 3 {
         return 0;
     }
-    let y: i32 = parts[0].parse().unwrap_or(2000);
+    let y: i32 = parts[0].parse().unwrap_or(1);
     let m: i32 = parts[1].parse().unwrap_or(1);
     let d: i32 = parts[2].parse().unwrap_or(1);
 
     let total_days = date_to_days(y, m, d);
-    let base_days = date_to_days(2000, 1, 1);
+    let base_days = date_to_days(1, 1, 1);
+    (total_days - base_days).max(0) as u32
+}
+
+fn parse_date_to_days_since_1900(s: &str) -> i32 {
+    let date_part = s.split([' ', 'T']).next().unwrap_or(s);
+    let parts: Vec<&str> = date_part.split('-').collect();
+    if parts.len() < 3 {
+        return 0;
+    }
+    let y: i32 = parts[0].parse().unwrap_or(1900);
+    let m: i32 = parts[1].parse().unwrap_or(1);
+    let d: i32 = parts[2].parse().unwrap_or(1);
+
+    let total_days = date_to_days(y, m, d);
+    let base_days = date_to_days(1900, 1, 1);
     total_days - base_days
 }
 
@@ -447,22 +504,27 @@ fn parse_time_to_ticks(s: &str) -> u64 {
     ticks *= 10_000_000;
 
     if main_frac.len() > 1 {
-        let frac_str = main_frac[1];
-        let frac_str = &frac_str[..frac_str.len().min(7)];
-        let frac: u64 = frac_str.parse().unwrap_or(0);
-        let scale_factor = 10u64.pow(7 - frac_str.len() as u32);
-        ticks += frac * scale_factor;
+        let frac_str: String = main_frac[1]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .take(7)
+            .collect();
+        if !frac_str.is_empty() {
+            let frac: u64 = frac_str.parse().unwrap_or(0);
+            let scale_factor = 10u64.pow(7 - frac_str.len() as u32);
+            ticks += frac * scale_factor;
+        }
     }
 
     ticks
 }
 
 fn parse_datetime(s: &str) -> (i32, u32) {
-    let parts: Vec<&str> = s.split(' ').collect();
+    let parts: Vec<&str> = s.split([' ', 'T']).collect();
     if parts.is_empty() {
         return (0, 0);
     }
-    let days = parse_date_to_days_since_2000(parts[0]);
+    let days = parse_date_to_days_since_1900(parts[0]);
 
     if parts.len() < 2 {
         return (days, 0);
@@ -478,24 +540,33 @@ fn parse_datetime(s: &str) -> (i32, u32) {
     let m: u32 = hms[1].parse().unwrap_or(0);
     let sec: u32 = hms[2].parse().unwrap_or(0);
 
-    let mut ticks = h * 3600 + m * 60 + sec;
-    ticks *= 300;
+    let mut ticks = (h * 3600 + m * 60 + sec) * 300;
 
     if main_frac.len() > 1 {
-        let ms_str = &main_frac[1][..main_frac[1].len().min(3)];
-        let ms: u32 = ms_str.parse().unwrap_or(0);
-        ticks += ms * 300 / 1000;
+        let digits: String = main_frac[1]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .take(3)
+            .collect();
+        if !digits.is_empty() {
+            let ms: u32 = match digits.len() {
+                1 => digits.parse::<u32>().unwrap_or(0) * 100,
+                2 => digits.parse::<u32>().unwrap_or(0) * 10,
+                _ => digits.parse::<u32>().unwrap_or(0),
+            };
+            ticks += (ms * 300 + 500) / 1000;
+        }
     }
 
     (days, ticks)
 }
 
-fn parse_datetime2(s: &str) -> (i32, u64) {
-    let parts: Vec<&str> = s.split(' ').collect();
+fn parse_datetime2(s: &str) -> (u32, u64) {
+    let parts: Vec<&str> = s.split([' ', 'T']).collect();
     if parts.is_empty() {
         return (0, 0);
     }
-    let days = parse_date_to_days_since_2000(parts[0]);
+    let days = parse_date_to_days_since_0001(parts[0]);
 
     if parts.len() < 2 {
         return (days, 0);
@@ -503,6 +574,39 @@ fn parse_datetime2(s: &str) -> (i32, u64) {
 
     let ticks = parse_time_to_ticks(parts[1]);
     (days, ticks)
+}
+
+fn parse_datetimeoffset_utc(s: &str) -> (u32, u64, i16) {
+    let trimmed = s.trim();
+    let (dt_part, offset_min): (&str, i16) = if let Some(stripped) = trimmed
+        .strip_suffix('Z')
+        .or_else(|| trimmed.strip_suffix('z'))
+    {
+        (stripped.trim(), 0)
+    } else if trimmed.len() >= 6 {
+        let tail = &trimmed[trimmed.len() - 6..];
+        let b = tail.as_bytes();
+        if (b[0] == b'+' || b[0] == b'-') && b[3] == b':' {
+            let h = tail[1..3].parse::<i16>().unwrap_or(0);
+            let m = tail[4..6].parse::<i16>().unwrap_or(0);
+            let mins = h * 60 + m;
+            let signed = if b[0] == b'-' { -mins } else { mins };
+            (trimmed[..trimmed.len() - 6].trim(), signed)
+        } else {
+            (trimmed, 0)
+        }
+    } else {
+        (trimmed, 0)
+    };
+
+    let (local_days, local_ticks) = parse_datetime2(dt_part);
+    const TICKS_PER_DAY: i128 = 86_400 * 10_000_000;
+    let total_local: i128 = (local_days as i128) * TICKS_PER_DAY + (local_ticks as i128);
+    // MS-TDS stores DATETIMEOFFSET in UTC: utc = local - offset
+    let total_utc = total_local - (offset_min as i128) * 60 * 10_000_000;
+    let utc_days = total_utc.div_euclid(TICKS_PER_DAY).max(0) as u32;
+    let utc_ticks = total_utc.rem_euclid(TICKS_PER_DAY) as u64;
+    (utc_days, utc_ticks, offset_min)
 }
 
 fn parse_guid(s: &str) -> [u8; 16] {
@@ -619,7 +723,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::VarChar { max_len } => TypeInfo {
             tds_type: BIGVARCHARTYPE,
-            length_prefix: if *max_len == 0 {
+            length_prefix: if *max_len == 0 || *max_len > 8000 {
                 vec![0xFF, 0xFF]
             } else {
                 max_len.to_le_bytes().to_vec()
@@ -631,7 +735,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::NChar { len } => TypeInfo {
             tds_type: NCHARTYPE,
-            length_prefix: (len * 2).to_le_bytes().to_vec(),
+            length_prefix: (len.saturating_mul(2).min(8000)).to_le_bytes().to_vec(),
             collation: Some(DEFAULT_COLLATION),
             scale: None,
             precision: None,
@@ -639,7 +743,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::NVarChar { max_len } => TypeInfo {
             tds_type: NVARCHARTYPE,
-            length_prefix: if *max_len == 0 {
+            length_prefix: if *max_len == 0 || *max_len > 4000 {
                 vec![0xFF, 0xFF]
             } else {
                 (max_len * 2).to_le_bytes().to_vec()
@@ -659,7 +763,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::VarBinary { max_len } => TypeInfo {
             tds_type: BIGVARBINARYTYPE,
-            length_prefix: if *max_len == 0 {
+            length_prefix: if *max_len == 0 || *max_len > 8000 {
                 vec![0xFF, 0xFF]
             } else {
                 max_len.to_le_bytes().to_vec()
@@ -704,10 +808,10 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
             flags: 0x0001,
         },
         iridium_core::types::DataType::DateTimeOffset => TypeInfo {
-            tds_type: NVARCHARTYPE,
-            length_prefix: 510u16.to_le_bytes().to_vec(),
-            collation: Some(DEFAULT_COLLATION),
-            scale: None,
+            tds_type: DATETIMEOFFSETNTYPE,
+            length_prefix: vec![],
+            collation: None,
+            scale: Some(7),
             precision: None,
             flags: 0x0001,
         },
@@ -736,9 +840,9 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
             flags: 0x0001,
         },
         iridium_core::types::DataType::Xml => TypeInfo {
-            tds_type: BIGVARCHARTYPE,
-            length_prefix: vec![0xFF, 0xFF],
-            collation: Some(DEFAULT_COLLATION),
+            tds_type: XMLTYPE,
+            length_prefix: vec![0x00], // SCHEMA_PRESENT = 0
+            collation: None,
             scale: None,
             precision: None,
             flags: 0x0001,

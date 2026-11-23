@@ -204,9 +204,15 @@ impl TdsSession {
             );
         }
 
-        if login.packet_size > 0 {
-            self.packet_size = login.packet_size.min(32767) as u16;
-        }
+        let client_packet_size = if login.packet_size > 0 {
+            login.packet_size.min(32767) as u16
+        } else {
+            4096
+        };
+        // Server frames outbound TABULAR_RESULT packets at 4096 bytes; report the
+        // actual 4096-byte packet size via ENVCHANGE so drivers size their buffers
+        // identically to our wire chunks.
+        self.packet_size = 4096;
         if !login.database.is_empty() {
             self.database = login.database.clone();
         }
@@ -269,7 +275,7 @@ impl TdsSession {
         }
 
         let mut b = PacketBuilder::with_capacity(512);
-        tokens::write_envchange_packet_size(&mut b, self.packet_size, self.packet_size);
+        tokens::write_envchange_packet_size(&mut b, self.packet_size, client_packet_size);
         tokens::write_envchange_database(&mut b, &self.database, "master");
         tokens::write_envchange_language(&mut b, "us_english", "");
         tokens::write_envchange_collation(&mut b);
@@ -381,34 +387,72 @@ impl TdsSession {
                 }
             }
         } else {
-            let reader_cancel_flag = self.cancel_flag.clone();
-            let (pkt_tx, mut pkt_rx) = tokio::sync::mpsc::unbounded_channel::<
-                Result<(packet::PacketHeader, Vec<u8>), std::io::Error>,
-            >();
-            tokio::spawn(async move {
-                loop {
-                    let res = packet::read_message(&mut reader).await;
-                    let is_err = res.is_err();
-                    if let Ok((ref hdr, _)) = res {
-                        if hdr.packet_type == ATTENTION {
-                            reader_cancel_flag.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    if pkt_tx.send(res).is_err() || is_err {
-                        break;
-                    }
-                }
-            });
+            let conn_id = self.connection_id;
+            let cancel_flag = self.cancel_flag.clone();
+            let mut queued_packet: Option<(packet::PacketHeader, Vec<u8>)> = None;
 
             loop {
-                let Some(result) = pkt_rx.recv().await else {
-                    log::debug!("[conn={}] Client disconnected", self.connection_id);
-                    break;
+                let next_msg = if let Some(pkt) = queued_packet.take() {
+                    Ok(pkt)
+                } else {
+                    packet::read_message(&mut reader).await
                 };
-                match result {
+
+                match next_msg {
                     Ok((header, data)) => {
-                        if let Err(e) = self.dispatch_tds_message(header, data, &mut writer).await {
-                            log::error!("[conn={}] Dispatch error: {}", self.connection_id, e);
+                        let mut resp_buf: Vec<u8> = Vec::new();
+                        let mut attn_received = false;
+                        {
+                            let mut dispatch_fut = std::pin::pin!(self.dispatch_tds_message(
+                                header,
+                                data,
+                                &mut resp_buf
+                            ));
+                            tokio::select! {
+                                res = &mut dispatch_fut => {
+                                    if let Err(e) = res {
+                                        log::error!("[conn={}] Dispatch error: {}", conn_id, e);
+                                        break;
+                                    }
+                                }
+                                read_res = packet::read_message(&mut reader) => {
+                                    match read_res {
+                                        Ok((in_hdr, _in_data)) if in_hdr.packet_type == ATTENTION => {
+                                            attn_received = true;
+                                            cancel_flag.store(true, Ordering::SeqCst);
+                                            let _ = dispatch_fut.await;
+                                            cancel_flag.store(false, Ordering::SeqCst);
+                                        }
+                                        Ok(other_pkt) => {
+                                            queued_packet = Some(other_pkt);
+                                            if let Err(e) = dispatch_fut.await {
+                                                log::error!("[conn={}] Dispatch error: {}", conn_id, e);
+                                                break;
+                                            }
+                                        }
+                                        Err(_) => {
+                                            cancel_flag.store(true, Ordering::SeqCst);
+                                            let _ = dispatch_fut.await;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if attn_received {
+                            let mut attn = PacketBuilder::new();
+                            tokens::write_done(&mut attn, tokens::DONE_ATTN, 0, 0);
+                            if packet::write_packet(&mut writer, TABULAR_RESULT, attn.as_bytes())
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        } else if !resp_buf.is_empty()
+                            && (writer.write_all(&resp_buf).await.is_err()
+                                || writer.flush().await.is_err())
+                        {
                             break;
                         }
                     }

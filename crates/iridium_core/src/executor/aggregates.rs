@@ -263,17 +263,17 @@ pub fn eval_aggregate_count_distinct(
     storage: &dyn Storage,
     clock: &dyn Clock,
 ) -> Value {
-    if let Some(expr) = args.first() {
+    let count = if let Some(expr) = args.first() {
         let values = collect_group_values(expr, group, ctx, catalog, storage, clock);
         let mut seen = std::collections::HashSet::new();
-        let count = values
+        values
             .into_iter()
             .filter(|v| seen.insert(format!("{:?}", v)))
-            .count() as i64;
-        Value::BigInt(count)
+            .count() as i64
     } else {
-        Value::BigInt(group.rows.len() as i64)
-    }
+        group.rows.len() as i64
+    };
+    Value::BigInt(count)
 }
 
 fn dedup_aggregate_values(values: Vec<Value>) -> Vec<Value> {

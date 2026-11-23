@@ -5,7 +5,7 @@ use crate::types::Value;
 
 use crate::executor::context::ExecutionContext;
 use crate::executor::model::JoinedRow;
-use crate::executor::projection::compare_projected_rows;
+use crate::executor::projection::compare_projected_rows_with_projection;
 use crate::executor::query::plan::RelationalQuery;
 use crate::executor::value_ops;
 
@@ -109,9 +109,16 @@ pub(crate) fn apply_result_ordering(
     _ctx: &mut ExecutionContext,
 ) -> Result<Vec<Vec<Value>>, DbError> {
     let order_by_refs = &query.sort.order_by;
-    validate_projected_order_by(columns, order_by_refs)?;
+    validate_projected_order_by(columns, &query.projection.items, order_by_refs)?;
     final_rows.sort_by(|a, b| {
-        compare_projected_rows(a, b, columns, order_by_refs).unwrap_or(Ordering::Equal)
+        compare_projected_rows_with_projection(
+            a,
+            b,
+            columns,
+            &query.projection.items,
+            order_by_refs,
+        )
+        .unwrap_or(Ordering::Equal)
     });
     Ok(final_rows)
 }

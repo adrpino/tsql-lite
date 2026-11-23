@@ -32,7 +32,8 @@ impl VirtualTable for SysCheckConstraints {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
         let mut object_id = 1_000_000i32;
         let epoch = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
@@ -40,6 +41,13 @@ impl VirtualTable for SysCheckConstraints {
             .and_hms_opt(0, 0, 0)
             .unwrap();
         for t in catalog.get_tables() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &t.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             let schema_id = t.schema_id as i32;
             for col in &t.columns {
                 if let Some(expr) = &col.check {
@@ -129,11 +137,19 @@ impl VirtualTable for SysForeignKeys {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
         let mut fk_idx = 0;
 
         for table in catalog.get_tables() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &table.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             let schema_id = table.schema_id as i32;
             for fk in &table.foreign_keys {
                 let object_id = 4_000_000 + fk_idx;
@@ -202,12 +218,20 @@ impl VirtualTable for SysKeyConstraints {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
         let mut object_id = 2_000_000i32;
         let indexes = catalog.get_indexes();
 
         for table in catalog.get_tables() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &table.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             let pk_index_id = indexes
                 .iter()
                 .find(|idx| idx.table_id == table.id && idx.is_clustered)
@@ -284,10 +308,18 @@ impl VirtualTable for SysDefaultConstraints {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
 
         for table in catalog.get_tables() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &table.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             for col in &table.columns {
                 if let Some(default_expr) = &col.default {
                     let is_system_named = col.default_constraint_name.is_none();

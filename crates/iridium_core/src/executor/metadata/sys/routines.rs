@@ -23,9 +23,15 @@ impl VirtualTable for SysRoutines {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
         for r in catalog.get_routines() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &r.schema, active_db, catalog,
+            ) {
+                continue;
+            }
             let schema_id = catalog.get_schema_id(&r.schema).unwrap_or(1);
             let (ty, desc) = match &r.kind {
                 crate::catalog::RoutineKind::Procedure { .. } => {
@@ -75,7 +81,8 @@ impl VirtualTable for SysProcedures {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
@@ -85,7 +92,12 @@ impl VirtualTable for SysProcedures {
         catalog
             .get_routines()
             .iter()
-            .filter(|r| matches!(r.kind, crate::catalog::RoutineKind::Procedure { .. }))
+            .filter(|r| {
+                matches!(r.kind, crate::catalog::RoutineKind::Procedure { .. })
+                    && crate::executor::database_catalog::schema_belongs_to_db(
+                        &r.schema, active_db, catalog,
+                    )
+            })
             .map(|r| {
                 let schema_id = catalog.get_schema_id(&r.schema).unwrap_or(1);
                 StoredRow {
@@ -120,11 +132,17 @@ impl VirtualTable for SysFunctions {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         catalog
             .get_routines()
             .iter()
-            .filter(|r| matches!(r.kind, crate::catalog::RoutineKind::Function { .. }))
+            .filter(|r| {
+                matches!(r.kind, crate::catalog::RoutineKind::Function { .. })
+                    && crate::executor::database_catalog::schema_belongs_to_db(
+                        &r.schema, active_db, catalog,
+                    )
+            })
             .map(|r| {
                 let schema_id = catalog.get_schema_id(&r.schema).unwrap_or(1);
                 let (ty, desc) = match &r.kind {

@@ -157,7 +157,28 @@ impl<'a> ScriptExecutor<'a> {
                 args: remaining,
                 result_sets: None,
             };
-            let res = super::sp_executesql::execute_sp_executesql(self, sp_stmt, ctx)?;
+            let prev_db = if let Some(ref target_db) = stmt.name.database {
+                if crate::executor::database_catalog::database_id_for_name_in(
+                    self.catalog,
+                    target_db,
+                )
+                .is_none()
+                {
+                    return Err(DbError::DatabaseNotFound {
+                        database: target_db.clone(),
+                    });
+                }
+                let old = ctx.metadata.database.clone();
+                ctx.metadata.database = Some(target_db.clone());
+                Some(old)
+            } else {
+                None
+            };
+            let exec_res = super::sp_executesql::execute_sp_executesql(self, sp_stmt, ctx);
+            if let Some(old_db) = prev_db {
+                ctx.metadata.database = old_db;
+            }
+            let res = exec_res?;
             self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
             return Ok(res);
         }

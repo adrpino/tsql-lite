@@ -114,6 +114,7 @@ pub async fn write_packet<W: AsyncWriteExt + Unpin>(
 
     let chunks: Vec<&[u8]> = data.chunks(max_data_per_packet).collect();
     let total_chunks = chunks.len();
+    let mut framed = Vec::with_capacity(data.len() + total_chunks * HEADER_SIZE);
 
     for (i, chunk) in chunks.iter().enumerate() {
         let is_last = i == total_chunks - 1;
@@ -124,10 +125,11 @@ pub async fn write_packet<W: AsyncWriteExt + Unpin>(
         }
         // STATUS_EOM (0x01) is already set by PacketHeader::new for the last chunk
         header.packet_id = ((i + 1) & 0xFF) as u8;
-        writer.write_all(&header.to_bytes()).await?;
-        writer.write_all(chunk).await?;
+        framed.extend_from_slice(&header.to_bytes());
+        framed.extend_from_slice(chunk);
     }
 
+    writer.write_all(&framed).await?;
     writer.flush().await?;
     Ok(())
 }

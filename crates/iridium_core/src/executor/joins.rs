@@ -33,6 +33,9 @@ pub(crate) fn get_expr_side(
 ) -> JoinSide {
     match expr {
         Expr::Identifier(name) => {
+            if name.starts_with('@') {
+                return JoinSide::None;
+            }
             let in_left = left_shape.iter().any(|b| {
                 b.table
                     .columns
@@ -48,28 +51,35 @@ pub(crate) fn get_expr_side(
             match (in_left, in_right) {
                 (true, false) => JoinSide::Left,
                 (false, true) => JoinSide::Right,
-                (true, true) => JoinSide::Both,
-                (false, false) => JoinSide::None,
+                // Ambiguous or external (belongs to an outer/higher join table): never push down.
+                (true, true) | (false, false) => JoinSide::Both,
             }
         }
         Expr::QualifiedIdentifier(parts) => {
-            if parts.len() != 2 {
-                return JoinSide::None;
+            if parts.len() < 2 {
+                return JoinSide::Both;
             }
-            let table_name = &parts[0];
+            let table_name = &parts[parts.len() - 2];
             let in_left = left_shape.iter().any(|b| {
                 b.alias.eq_ignore_ascii_case(table_name)
                     || b.table.name.eq_ignore_ascii_case(table_name)
+                    || b.source_aliases
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(table_name))
             });
             let in_right = right_shape.iter().any(|b| {
                 b.alias.eq_ignore_ascii_case(table_name)
                     || b.table.name.eq_ignore_ascii_case(table_name)
+                    || b.source_aliases
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(table_name))
             });
             match (in_left, in_right) {
                 (true, false) => JoinSide::Left,
                 (false, true) => JoinSide::Right,
-                (true, true) => JoinSide::Both,
-                (false, false) => JoinSide::None,
+                // Ambiguous or external alias (higher up in join tree or correlated outer query):
+                // never treat as a constant or push below where that alias is bound.
+                (true, true) | (false, false) => JoinSide::Both,
             }
         }
         Expr::Binary { left, right, .. } => {

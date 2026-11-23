@@ -329,4 +329,24 @@ fn set_op_trailing_order_by_offset_fetch_and_where_pushdown_anti_join() {
          ORDER BY a.Id;",
     );
     assert_eq!(anti.rows, vec![vec![Value::Int(3)], vec![Value::Int(5)]]);
+
+    // 3-table join where a WHERE predicate compares table A with outer/higher table C:
+    // MUST NOT push `a.Id = c.Id` down into `(A JOIN B)` before `C` is joined!
+    let three_way = exec(
+        &engine,
+        "SELECT a.Id, b.Tag, c.Label
+         FROM dbo.SetA a
+         INNER JOIN dbo.SetB b ON a.Id = b.Id
+         INNER JOIN dbo.SetA c ON c.Label = b.Tag
+         WHERE a.Id = c.Id AND a.Id >= 1
+         ORDER BY a.Id;",
+    );
+    assert_eq!(
+        three_way.rows,
+        vec![vec![
+            Value::Int(1),
+            Value::VarChar("a".into()),
+            Value::VarChar("a".into())
+        ]]
+    );
 }

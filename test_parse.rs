@@ -1,2 +1,0 @@
-use iridium_core::parse_sql; fn main() { let r = parse_sql("SELECT * FROM t WHERE x = 1"); println!("{:?}", r); }
-

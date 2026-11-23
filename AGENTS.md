@@ -102,8 +102,5 @@ cargo test -p iridium_core --tests -- `
 2. Add parser in `iridium_core/src/parser/statements/`
 3. Add executor in `iridium_core/src/executor/`
 4. Update exports in `iridium_core/src/lib.rs`
-
-**Keep versions synchronized before commits:**
-1. Run `pwsh scripts/install-hooks.ps1` once per clone to enable the local pre-commit hook.
-2. The hook runs `scripts/version-sync.mjs bump` so npm and crate versions stay aligned automatically.
+5. Update `docs/tsql-function-parity.md` (verified by `tsql_function_parity_doc`) and run `./scripts/test-compat.sh` for live SQL Server differential parity.
 

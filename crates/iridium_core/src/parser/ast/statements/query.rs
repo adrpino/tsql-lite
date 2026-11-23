@@ -27,6 +27,7 @@ pub struct SelectExtra {
     pub for_json: Option<ForJsonClause>,
     pub grouping_sets: Vec<Vec<Expr>>,
     pub windows: Vec<crate::parser::ast::NamedWindowDef>,
+    pub max_recursion: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -82,6 +82,21 @@ fn extract_recursive_cte_parts(
     }
 }
 
+fn extract_max_recursion(body: &crate::ast::Statement) -> Option<u16> {
+    match body {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(sel)) => sel.max_recursion(),
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::SelectAssign(sa)) => sa.max_recursion,
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Insert(ins)) => {
+            if let crate::ast::InsertSource::Select(q) = &ins.source {
+                q.max_recursion()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_with_cte(
         &mut self,
@@ -89,6 +104,14 @@ impl<'a> ScriptExecutor<'a> {
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         let old_ctes = ctx.row.ctes.clone();
+        // SQL Server default MAXRECURSION is 100; OPTION (MAXRECURSION 0) allows unlimited recursion.
+        let requested_max_recursion = extract_max_recursion(&stmt.body);
+        let max_recursion: usize = match requested_max_recursion {
+            Some(0) => 0,
+            Some(n) => n as usize,
+            None => 100,
+        };
+        const UNLIMITED_SAFETY_CAP: usize = 100_000;
 
         for cte_def in &stmt.ctes {
             let recursive_parts =
@@ -152,13 +175,10 @@ impl<'a> ScriptExecutor<'a> {
                     .collect();
                 let mut working_set = all_rows.clone();
 
-                let mut iteration = 0;
-                let max_recursion = 10_000;
+                let mut iteration = 0usize;
                 let table_def_inner = table_def.clone();
 
-                while !working_set.is_empty() && iteration < max_recursion {
-                    iteration += 1;
-
+                while !working_set.is_empty() {
                     let mut iteration_ctes = ctx.row.ctes.clone();
                     iteration_ctes.insert(&cte_def.name, table_def_inner.clone(), working_set);
                     let prev_ctes = std::mem::replace(&mut ctx.row.ctes, iteration_ctes);
@@ -180,6 +200,28 @@ impl<'a> ScriptExecutor<'a> {
                         break;
                     }
 
+                    iteration += 1;
+                    if max_recursion > 0 && iteration > max_recursion {
+                        return Err(DbError::Custom {
+                            class: 16,
+                            number: 530,
+                            message: format!(
+                                "The statement terminated. The maximum recursion {} has been exhausted before statement completion.",
+                                max_recursion
+                            ),
+                        });
+                    }
+                    if max_recursion == 0 && iteration > UNLIMITED_SAFETY_CAP {
+                        return Err(DbError::Custom {
+                            class: 16,
+                            number: 530,
+                            message: format!(
+                                "The statement terminated. The maximum recursion {} has been exhausted before statement completion.",
+                                UNLIMITED_SAFETY_CAP
+                            ),
+                        });
+                    }
+
                     working_set = res
                         .rows
                         .iter()
@@ -189,13 +231,6 @@ impl<'a> ScriptExecutor<'a> {
                         })
                         .collect();
                     all_rows.extend(working_set.iter().cloned());
-                }
-
-                if iteration >= max_recursion {
-                    return Err(DbError::Execution(format!(
-                        "The maximum recursion {} has been exhausted before statement completion.",
-                        max_recursion
-                    )));
                 }
 
                 ctx.row.ctes.insert(&cte_def.name, table_def, all_rows);

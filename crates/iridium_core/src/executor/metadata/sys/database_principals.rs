@@ -188,8 +188,22 @@ impl VirtualTable for SysSecurityPolicies {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        catalog
+            .get_security_policies()
+            .iter()
+            .map(|p| StoredRow {
+                values: vec![
+                    Value::Int(p.object_id),
+                    Value::VarChar(p.name.clone()),
+                    Value::Int(p.schema_id as i32),
+                    Value::Bit(p.is_enabled),
+                    Value::Bit(p.is_schema_bound),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -218,7 +232,46 @@ impl VirtualTable for SysSecurityPredicates {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        vec![]
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut out = Vec::new();
+        for p in catalog.get_security_policies() {
+            for pred in &p.predicates {
+                let target_id = catalog
+                    .find_table(&pred.target_schema, &pred.target_table)
+                    .map(|t| t.id as i32)
+                    .unwrap_or(0);
+                let args = pred
+                    .function_args
+                    .iter()
+                    .map(|a| format!("[{a}]"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let def = format!(
+                    "([{}].[{}]({}))",
+                    pred.function_schema, pred.function_name, args
+                );
+                let (ptype, pdesc) = match pred.kind {
+                    crate::catalog::SecurityPredicateKind::Filter => (0, "FILTER"),
+                    crate::catalog::SecurityPredicateKind::Block => (1, "BLOCK"),
+                };
+                let op = pred
+                    .block_op
+                    .unwrap_or(crate::catalog::SecurityBlockOp::All);
+                out.push(StoredRow {
+                    values: vec![
+                        Value::Int(p.object_id),
+                        Value::Int(pred.predicate_id),
+                        Value::Int(target_id),
+                        Value::NVarChar(def),
+                        Value::Int(ptype),
+                        Value::VarChar(pdesc.to_string()),
+                        Value::Int(op.op_code()),
+                        Value::VarChar(op.op_desc().to_string()),
+                    ],
+                    deleted: false,
+                });
+            }
+        }
+        out
     }
 }

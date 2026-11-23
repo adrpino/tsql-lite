@@ -15,8 +15,9 @@ mod view_registry;
 use cow_registry::CowRegistry;
 pub use cow_registry::{CowRegistryIter, CowRegistryView};
 pub use metadata_registry::{
-    FilegroupDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef, PrincipalDef,
-    RoleMemberDef,
+    FilegroupDef, MaskedColumnDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef,
+    PrincipalDef, RoleMemberDef, SecurityBlockOp, SecurityPolicyDef, SecurityPredicateDef,
+    SecurityPredicateKind,
 };
 
 use crate::ast::Expr;
@@ -223,6 +224,8 @@ pub struct ViewDef {
     pub definition_sql: String,
     #[serde(default)]
     pub is_schema_bound: bool,
+    #[serde(default)]
+    pub with_check_option: bool,
 }
 
 fn default_true() -> bool {
@@ -598,6 +601,31 @@ pub trait Catalog:
         false
     }
     fn set_table_large_value_out_of_row(&mut self, _table_id: u32, _enabled: bool) {}
+    fn get_masked_columns(&self) -> &[MaskedColumnDef] {
+        &[]
+    }
+    fn set_column_mask(
+        &mut self,
+        _table_id: u32,
+        _column_name: &str,
+        _masking_function: Option<String>,
+    ) {
+    }
+    fn remove_table_masks(&mut self, _table_id: u32) {}
+    fn get_security_policies(&self) -> &[SecurityPolicyDef] {
+        &[]
+    }
+    fn upsert_security_policy(&mut self, _policy: SecurityPolicyDef) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn drop_security_policy(
+        &mut self,
+        _schema: &str,
+        _name: &str,
+        _if_exists: bool,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
 
     fn clone_boxed(&self) -> Box<dyn Catalog>;
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
@@ -736,6 +764,10 @@ pub struct CatalogImpl {
     filegroups: Arc<Vec<FilegroupDef>>,
     #[serde(default, with = "arc_serde")]
     table_large_value_out_of_row: Arc<Vec<u32>>,
+    #[serde(default, with = "arc_serde")]
+    masked_columns: Arc<Vec<MaskedColumnDef>>,
+    #[serde(default, with = "arc_serde")]
+    security_policies: Arc<Vec<SecurityPolicyDef>>,
     #[serde(default, with = "arc_serde")]
     temporal_tables: Arc<Vec<TemporalTableConfig>>,
     #[serde(with = "atomic_u32_serde")]
@@ -911,6 +943,8 @@ impl Default for CatalogImpl {
             partition_schemes: Arc::new(Vec::new()),
             filegroups: Arc::new(Vec::new()),
             table_large_value_out_of_row: Arc::new(Vec::new()),
+            masked_columns: Arc::new(Vec::new()),
+            security_policies: Arc::new(Vec::new()),
             temporal_tables: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
             next_table_id: Arc::new(AtomicU32::new(1234567890)),
@@ -1136,6 +1170,68 @@ impl Catalog for CatalogImpl {
             }
         } else {
             list.retain(|&id| id != table_id);
+        }
+    }
+    fn get_masked_columns(&self) -> &[MaskedColumnDef] {
+        &self.masked_columns
+    }
+    fn set_column_mask(
+        &mut self,
+        table_id: u32,
+        column_name: &str,
+        masking_function: Option<String>,
+    ) {
+        let list = Arc::make_mut(&mut self.masked_columns);
+        list.retain(|m| {
+            !(m.table_id == table_id && m.column_name.eq_ignore_ascii_case(column_name))
+        });
+        if let Some(func) = masking_function {
+            list.push(MaskedColumnDef {
+                table_id,
+                column_name: column_name.to_string(),
+                masking_function: func,
+            });
+        }
+    }
+    fn remove_table_masks(&mut self, table_id: u32) {
+        if self.masked_columns.iter().any(|m| m.table_id == table_id) {
+            Arc::make_mut(&mut self.masked_columns).retain(|m| m.table_id != table_id);
+        }
+    }
+    fn get_security_policies(&self) -> &[SecurityPolicyDef] {
+        &self.security_policies
+    }
+    fn upsert_security_policy(&mut self, policy: SecurityPolicyDef) -> Result<(), DbError> {
+        let list = Arc::make_mut(&mut self.security_policies);
+        if let Some(existing) = list.iter_mut().find(|p| {
+            p.schema.eq_ignore_ascii_case(&policy.schema)
+                && p.name.eq_ignore_ascii_case(&policy.name)
+        }) {
+            *existing = policy;
+        } else {
+            list.push(policy);
+        }
+        Ok(())
+    }
+    fn drop_security_policy(
+        &mut self,
+        schema: &str,
+        name: &str,
+        if_exists: bool,
+    ) -> Result<(), DbError> {
+        let idx = self.security_policies.iter().position(|p| {
+            p.schema.eq_ignore_ascii_case(schema) && p.name.eq_ignore_ascii_case(name)
+        });
+        match idx {
+            Some(i) => {
+                Arc::make_mut(&mut self.security_policies).remove(i);
+                Ok(())
+            }
+            None if if_exists => Ok(()),
+            None => Err(DbError::Execution(format!(
+                "Cannot drop the security policy '{}.{}', because it does not exist or you do not have permission.",
+                schema, name
+            ))),
         }
     }
 
@@ -1376,6 +1472,23 @@ impl Catalog for CatalogImpl {
             &workspace.table_large_value_out_of_row,
             &base.table_large_value_out_of_row,
             |id| *id,
+        );
+        merge_arc_vec(
+            &mut self.masked_columns,
+            &workspace.masked_columns,
+            &base.masked_columns,
+            |m| (m.table_id, normalize_identifier(&m.column_name)),
+        );
+        merge_arc_vec(
+            &mut self.security_policies,
+            &workspace.security_policies,
+            &base.security_policies,
+            |p| {
+                (
+                    normalize_identifier(&p.schema),
+                    normalize_identifier(&p.name),
+                )
+            },
         );
 
         // Advance atomic counters defensively if workspace came from a distinct allocator.

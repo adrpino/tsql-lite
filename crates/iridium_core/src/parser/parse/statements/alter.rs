@@ -156,6 +156,64 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 Some(Token::Keyword(k)) => k.as_ref().to_string(),
                 _ => return parser.backtrack(Expected::Description("column name")),
             };
+            // ALTER TABLE t ALTER COLUMN c ADD MASKED WITH (FUNCTION = '...')
+            // ALTER TABLE t ALTER COLUMN c DROP MASKED
+            if parser.at_keyword(Keyword::Add)
+                && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MASKED"))
+            {
+                let _ = parser.next(); // ADD
+                let _ = parser.next(); // MASKED
+                let mut mask_fn: Option<String> = None;
+                if parser.at_keyword(Keyword::With) {
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::LParen)) {
+                        let _ = parser.next();
+                        if parser.at_keyword(Keyword::Function)
+                            || matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("FUNCTION"))
+                        {
+                            let _ = parser.next();
+                            if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                                let _ = parser.next();
+                            }
+                            match parser.next() {
+                                Some(Token::String(func)) | Some(Token::NString(func)) => {
+                                    mask_fn = Some(func.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+                        let mut depth = 1usize;
+                        while depth > 0 {
+                            match parser.next() {
+                                Some(Token::LParen) => depth += 1,
+                                Some(Token::RParen) => depth -= 1,
+                                Some(_) => {}
+                                None => return parser.backtrack(Expected::Description(")")),
+                            }
+                        }
+                    }
+                }
+                return Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
+                    table,
+                    action: AlterTableAction::SetColumnMask {
+                        column: col_name,
+                        masking_function: mask_fn,
+                    },
+                })));
+            }
+            if parser.at_keyword(Keyword::Drop)
+                && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MASKED"))
+            {
+                let _ = parser.next(); // DROP
+                let _ = parser.next(); // MASKED
+                return Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
+                    table,
+                    action: AlterTableAction::SetColumnMask {
+                        column: col_name,
+                        masking_function: None,
+                    },
+                })));
+            }
             let data_type = crate::parser::parse::expressions::parse_data_type(parser)?;
             let mut nullable = None;
             if parser.at_keyword(Keyword::Not) {
@@ -551,6 +609,12 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
             Vec::new(),
         )))
+    } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SECURITY"))
+        && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("POLICY"))
+    {
+        let _ = parser.next(); // SECURITY
+        let _ = parser.next(); // POLICY
+        super::security_policy::parse_alter_security_policy(parser)
     } else if parser.at_keyword(Keyword::User)
         || parser.at_keyword(Keyword::Index)
         || matches!(

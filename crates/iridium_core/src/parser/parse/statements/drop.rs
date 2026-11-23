@@ -151,6 +151,12 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
         Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
             Box::new(crate::ast::CatalogMetadataAction::DropUser { name, if_exists }),
         ))))
+    } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SECURITY"))
+        && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("POLICY"))
+    {
+        let _ = parser.next(); // SECURITY
+        let _ = parser.next(); // POLICY
+        super::security_policy::parse_drop_security_policy(parser)
     } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLE"))
     {
         let _ = parser.next();

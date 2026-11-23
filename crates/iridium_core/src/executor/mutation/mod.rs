@@ -7,6 +7,7 @@ pub(crate) mod query_source;
 mod shared;
 mod update;
 pub(crate) mod validation;
+pub(crate) mod view_dml;
 
 pub(crate) use output::{build_output_result_merge, MergeOutputRow};
 

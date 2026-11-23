@@ -32,6 +32,14 @@ pub(crate) fn execute_scan(
                 .unwrap_or(false)
         });
     }
+    crate::executor::rls::filter_rows_by_rls(
+        &scan.bound.table,
+        &mut scanned,
+        ctx,
+        catalog,
+        storage,
+        clock,
+    )?;
     Ok(scanned)
 }
 

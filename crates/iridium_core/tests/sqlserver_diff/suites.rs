@@ -17,6 +17,7 @@ pub fn all_suites() -> Vec<DiffSuite> {
         xml_and_openxml(),
         catalog_and_metadata_parity(),
         enterprise_result_sets_schemabinding_ddl_triggers_applock_collation(),
+        security_governance_and_query_fidelity(),
     ]
 }
 
@@ -988,6 +989,201 @@ fn enterprise_result_sets_schemabinding_ddl_triggers_applock_collation() -> Diff
                         DECRYPTBYPASSPHRASE('wrong_pass', @c1),
                         CAST(DECRYPTBYPASSPHRASE('test_pass', @c2, 1, 'ctx1') AS VARCHAR(50)),
                         DECRYPTBYPASSPHRASE('test_pass', @c2, 1, 'ctx2');",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn security_governance_and_query_fidelity() -> DiffSuite {
+    DiffSuite {
+        name: "security_governance_and_query_fidelity",
+        category: "RLS, Masking, Updatable Views, Nested XML & MAXRECURSION",
+        min_sql_version: 16,
+        setup_batches: &[
+            "CREATE TABLE dbo.AlterBackfill (
+                Id INT PRIMARY KEY,
+                Label NVARCHAR(40) NOT NULL
+             );
+             INSERT INTO dbo.AlterBackfill VALUES (1, N'One'), (2, N'Two');",
+            "CREATE TABLE dbo.XmlGroups (GrpId INT PRIMARY KEY, GrpName NVARCHAR(40));
+             CREATE TABLE dbo.XmlItems (ItemId INT PRIMARY KEY, GrpId INT, ItemName NVARCHAR(40));
+             INSERT INTO dbo.XmlGroups VALUES (1, N'A&B'), (2, N'Clean');
+             INSERT INTO dbo.XmlItems VALUES (10, 1, N'X < Y'), (11, 1, N'P & Q'), (20, 2, N'Solo');",
+            "CREATE TABLE dbo.UpdBase (
+                Id INT PRIMARY KEY,
+                Category NVARCHAR(20) NOT NULL,
+                Qty INT NOT NULL
+             );
+             INSERT INTO dbo.UpdBase VALUES (1, N'Books', 10), (2, N'Tools', 20);",
+            "CREATE VIEW dbo.vBooksOnly AS
+             SELECT Id, Category AS Cat, Qty FROM dbo.UpdBase WHERE Category = N'Books'
+             WITH CHECK OPTION;",
+            "CREATE TABLE dbo.MaskedLedger (
+                Id INT PRIMARY KEY,
+                Email VARCHAR(100) MASKED WITH (FUNCTION = 'email()') NULL,
+                Code VARCHAR(20) MASKED WITH (FUNCTION = 'partial(2, \"XXX\", 2)') NULL,
+                Amount INT MASKED WITH (FUNCTION = 'default()') NOT NULL,
+                EventDate DATE MASKED WITH (FUNCTION = 'datetime(\"Y\")') NULL
+             );
+             INSERT INTO dbo.MaskedLedger VALUES
+                (1, 'bob@example.com', 'AB1234CD', 4200, '2024-05-19'),
+                (2, NULL, 'XY', 100, NULL);
+             CREATE USER diff_mask_user WITHOUT LOGIN;
+             GRANT SELECT ON dbo.MaskedLedger TO diff_mask_user;",
+            "CREATE TABLE dbo.RlsOrders (
+                OrderId INT PRIMARY KEY,
+                TenantId INT NOT NULL,
+                Note NVARCHAR(40) NOT NULL
+             );
+             INSERT INTO dbo.RlsOrders VALUES
+                (1, 100, N'T100-1'),
+                (2, 100, N'T100-2'),
+                (3, 200, N'T200-1');",
+            "CREATE FUNCTION dbo.fn_diff_rls(@TenantId INT)
+             RETURNS TABLE
+             WITH SCHEMABINDING
+             AS
+             RETURN SELECT 1 AS allow_row
+                    WHERE @TenantId = CAST(SESSION_CONTEXT(N'DiffTenant') AS INT)
+                       OR CAST(SESSION_CONTEXT(N'DiffBypass') AS INT) = 1;",
+            "CREATE SECURITY POLICY dbo.DiffTenantPolicy
+                ADD FILTER PREDICATE dbo.fn_diff_rls(TenantId) ON dbo.RlsOrders,
+                ADD BLOCK PREDICATE dbo.fn_diff_rls(TenantId) ON dbo.RlsOrders AFTER INSERT,
+                ADD BLOCK PREDICATE dbo.fn_diff_rls(TenantId) ON dbo.RlsOrders AFTER UPDATE
+             WITH (STATE = ON);",
+        ],
+        steps: &[
+            DiffStep::Query {
+                label: "option_maxrecursion_explicit_default_zero_and_error_530",
+                sql: "DECLARE @ok_cnt INT, @err_explicit INT = 0, @err_default INT = 0, @zero_cnt INT;
+                      WITH c1 AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c1 WHERE n < 4)
+                      SELECT @ok_cnt = COUNT(*) FROM c1 OPTION (MAXRECURSION 3);
+                      BEGIN TRY
+                          WITH c2 AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c2 WHERE n < 5)
+                          SELECT COUNT(*) FROM c2 OPTION (MAXRECURSION 3);
+                      END TRY
+                      BEGIN CATCH
+                          SET @err_explicit = ERROR_NUMBER();
+                      END CATCH
+                      BEGIN TRY
+                          WITH c3 AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c3 WHERE n <= 101)
+                          SELECT COUNT(*) FROM c3;
+                      END TRY
+                      BEGIN CATCH
+                          SET @err_default = ERROR_NUMBER();
+                      END CATCH;
+                      WITH c4 AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c4 WHERE n < 120)
+                      SELECT @zero_cnt = COUNT(*) FROM c4 OPTION (MAXRECURSION 0);
+                      SELECT @ok_cnt, @err_explicit, @err_default, @zero_cnt;",
+                ordered: true,
+            },
+            DiffStep::ExecOk {
+                label: "alter_table_add_col_setup",
+                sql: "ALTER TABLE dbo.AlterBackfill ADD NullDef INT NULL DEFAULT 7;
+                      ALTER TABLE dbo.AlterBackfill ADD WithVals INT NULL DEFAULT 9 WITH VALUES;
+                      ALTER TABLE dbo.AlterBackfill ADD NotNullDef NVARCHAR(10) NOT NULL DEFAULT N'ok';
+                      INSERT INTO dbo.AlterBackfill (Id, Label) VALUES (3, N'Three');",
+            },
+            DiffStep::Query {
+                label: "alter_table_add_col_default_not_null_and_with_values",
+                sql: "DECLARE @err4901 INT = 0;
+                      BEGIN TRY
+                          ALTER TABLE dbo.AlterBackfill ADD BadNN INT NOT NULL;
+                      END TRY
+                      BEGIN CATCH
+                          SET @err4901 = ERROR_NUMBER();
+                      END CATCH
+                      SELECT Id, NullDef, WithVals, NotNullDef, @err4901 AS Err4901
+                      FROM dbo.AlterBackfill ORDER BY Id;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "nested_for_xml_type_composition_and_value",
+                sql: "SELECT
+                        (SELECT
+                            g.GrpId AS '@id',
+                            g.GrpName AS 'name',
+                            (SELECT i.ItemName AS 'it'
+                             FROM dbo.XmlItems i
+                             WHERE i.GrpId = g.GrpId
+                             ORDER BY i.ItemId
+                             FOR XML PATH(''), TYPE) AS 'items'
+                         FROM dbo.XmlGroups g
+                         ORDER BY g.GrpId
+                         FOR XML PATH('grp'), ROOT('all')),
+                        STUFF((SELECT N', ' + ItemName
+                               FROM dbo.XmlItems
+                               ORDER BY ItemId
+                               FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, N'');",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "updatable_views_and_with_check_option_error_550",
+                sql: "INSERT INTO dbo.vBooksOnly (Id, Cat, Qty) VALUES (3, N'Books', 30);
+                      DECLARE @ins_err INT = 0, @upd_err INT = 0;
+                      BEGIN TRY
+                          INSERT INTO dbo.vBooksOnly (Id, Cat, Qty) VALUES (4, N'Tools', 40);
+                      END TRY
+                      BEGIN CATCH
+                          SET @ins_err = ERROR_NUMBER();
+                      END CATCH
+                      UPDATE dbo.vBooksOnly SET Qty = Qty + 5;
+                      BEGIN TRY
+                          UPDATE dbo.vBooksOnly SET Cat = N'Other' WHERE Id = 1;
+                      END TRY
+                      BEGIN CATCH
+                          SET @upd_err = ERROR_NUMBER();
+                      END CATCH
+                      DELETE FROM dbo.vBooksOnly WHERE Id IN (2, 3);
+                      SELECT Id, Category, Qty, @ins_err AS InsErr, @upd_err AS UpdErr
+                      FROM dbo.UpdBase ORDER BY Id;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "dynamic_data_masking_and_unmask_permissions",
+                sql: "DECLARE @m_email VARCHAR(100), @m_code VARCHAR(20), @m_amt INT, @m_dt DATE, @m_null_email VARCHAR(100), @m_short_code VARCHAR(20);
+                      DECLARE @u_email VARCHAR(100), @u_amt INT;
+                      EXECUTE AS USER = 'diff_mask_user';
+                      SELECT @m_email = Email, @m_code = Code, @m_amt = Amount, @m_dt = EventDate
+                      FROM dbo.MaskedLedger WHERE Email = 'bob@example.com';
+                      SELECT @m_null_email = Email, @m_short_code = Code
+                      FROM dbo.MaskedLedger WHERE Id = 2;
+                      REVERT;
+                      GRANT UNMASK TO diff_mask_user;
+                      EXECUTE AS USER = 'diff_mask_user';
+                      SELECT @u_email = Email, @u_amt = Amount FROM dbo.MaskedLedger WHERE Id = 1;
+                      REVERT;
+                      REVOKE UNMASK FROM diff_mask_user;
+                      SELECT @m_email, @m_code, @m_amt, @m_dt, @m_null_email, @m_short_code, @u_email, @u_amt,
+                             (SELECT COUNT(*) FROM sys.masked_columns WHERE object_id = OBJECT_ID('dbo.MaskedLedger') AND is_masked = 1);",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "row_level_security_filter_and_block_predicates",
+                sql: "EXEC sp_set_session_context @key = N'DiffTenant', @value = 100;
+                      EXEC sp_set_session_context @key = N'DiffBypass', @value = 0;
+                      DECLARE @t100_cnt INT = (SELECT COUNT(*) FROM dbo.RlsOrders);
+                      INSERT INTO dbo.RlsOrders VALUES (4, 100, N'T100-3');
+                      DECLARE @blk_ins INT = 0, @blk_upd INT = 0;
+                      BEGIN TRY
+                          INSERT INTO dbo.RlsOrders VALUES (5, 200, N'Forbidden');
+                      END TRY
+                      BEGIN CATCH
+                          SET @blk_ins = ERROR_NUMBER();
+                      END CATCH
+                      BEGIN TRY
+                          UPDATE dbo.RlsOrders SET TenantId = 200 WHERE OrderId = 1;
+                      END TRY
+                      BEGIN CATCH
+                          SET @blk_upd = ERROR_NUMBER();
+                      END CATCH
+                      DELETE FROM dbo.RlsOrders WHERE OrderId IN (2, 3);
+                      ALTER SECURITY POLICY dbo.DiffTenantPolicy WITH (STATE = OFF);
+                      DECLARE @all_cnt INT = (SELECT COUNT(*) FROM dbo.RlsOrders);
+                      DECLARE @pol_cnt INT = (SELECT COUNT(*) FROM sys.security_policies WHERE name = 'DiffTenantPolicy');
+                      DECLARE @pred_cnt INT = (SELECT COUNT(*) FROM sys.security_predicates WHERE object_id = OBJECT_ID('dbo.DiffTenantPolicy'));
+                      SELECT @t100_cnt, @blk_ins, @blk_upd, @all_cnt, @pol_cnt, @pred_cnt;",
                 ordered: true,
             },
         ],

@@ -256,6 +256,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             query,
             or_alter,
             is_schema_bound,
+            with_check_option,
         } => {
             let mut lowered_query = lower_select(query)?;
             let lowered_ctes = ctes
@@ -301,6 +302,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         query: lowered_query,
                         or_alter,
                         is_schema_bound,
+                        with_check_option,
                     },
                 )),
             ))
@@ -478,6 +480,8 @@ pub fn lower_column_def(
         collation: c.collation,
         is_clustered: c.is_clustered,
         ansi_padding_on: true,
+        with_values: c.with_values,
+        masking_function: c.masking_function,
     })
 }
 
@@ -591,6 +595,15 @@ pub fn lower_alter_action(
             executor_ast::statements::ddl::AlterTableAction::SetSystemVersioning {
                 enabled,
                 history_table: history_table.map(lower_object_name),
+            },
+        ),
+        ast::AlterTableAction::SetColumnMask {
+            column,
+            masking_function,
+        } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::SetColumnMask {
+                column,
+                masking_function,
             },
         ),
     }

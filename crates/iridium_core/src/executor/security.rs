@@ -146,12 +146,14 @@ pub(crate) fn check_object_permission(
     let mut granted = (is_datareader && perm_upper == "SELECT")
         || (is_datawriter && matches!(perm_upper.as_str(), "INSERT" | "UPDATE" | "DELETE"));
 
+    let schema_id = catalog.get_schema_id(schema).map(|id| id as i32);
     for perm in catalog.get_permissions() {
         if !active_ids.contains(&perm.grantee_principal_id) {
             continue;
         }
         let scope_matches = (perm.class == 0 && perm.major_id == 0)
-            || (perm.class == 1 && perm.major_id == object_id);
+            || (perm.class == 1 && perm.major_id == object_id)
+            || (perm.class == 3 && schema_id == Some(perm.major_id));
         if !scope_matches {
             continue;
         }
@@ -174,4 +176,73 @@ pub(crate) fn check_object_permission(
     } else {
         Err(deny_err())
     }
+}
+
+/// Returns `true` if the active effective user is allowed to see unmasked data on `(schema, table_id)`.
+/// `dbo`, `sa`, `db_owner` members, and principals with `UNMASK` (at DATABASE, SCHEMA, or OBJECT scope)
+/// see unmasked values; explicit `DENY UNMASK` overrides `GRANT UNMASK`.
+pub(crate) fn user_has_unmask(
+    catalog: &dyn Catalog,
+    ctx: &ExecutionContext<'_>,
+    schema: &str,
+    table_id: u32,
+) -> bool {
+    let Some(user) = effective_user(ctx) else {
+        return true;
+    };
+    if is_privileged_user(user) {
+        return true;
+    }
+    let principals = catalog.get_principals();
+    let Some(user_principal) = principals
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(user))
+    else {
+        return true;
+    };
+    let role_members = catalog.get_role_members();
+    let mut active_ids: HashSet<i32> = HashSet::new();
+    active_ids.insert(user_principal.principal_id);
+    active_ids.insert(0); // public
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for rm in role_members {
+            if active_ids.contains(&rm.member_principal_id)
+                && active_ids.insert(rm.role_principal_id)
+            {
+                changed = true;
+            }
+        }
+    }
+    for p in principals {
+        if active_ids.contains(&p.principal_id) && p.name.eq_ignore_ascii_case("db_owner") {
+            return true;
+        }
+    }
+    let schema_id = catalog.get_schema_id(schema).map(|id| id as i32);
+    let mut granted = false;
+    for perm in catalog.get_permissions() {
+        if !active_ids.contains(&perm.grantee_principal_id) {
+            continue;
+        }
+        let scope_matches = (perm.class == 0 && perm.major_id == 0)
+            || (perm.class == 1 && perm.major_id == table_id as i32)
+            || (perm.class == 3 && schema_id == Some(perm.major_id));
+        if !scope_matches {
+            continue;
+        }
+        if !perm.permission_name.eq_ignore_ascii_case("UNMASK")
+            && !perm.permission_name.eq_ignore_ascii_case("CONTROL")
+        {
+            continue;
+        }
+        if perm.state.eq_ignore_ascii_case("D") {
+            return false;
+        }
+        if perm.state.eq_ignore_ascii_case("G") || perm.state.eq_ignore_ascii_case("W") {
+            granted = true;
+        }
+    }
+    granted
 }

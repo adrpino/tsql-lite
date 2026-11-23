@@ -535,7 +535,113 @@ impl<'a> ScriptExecutor<'a> {
             _ => {}
         }
 
+        let mut add_col_backfill: Option<(crate::ast::Expr, crate::types::DataType)> = None;
+        let mut add_col_identity_backfill: Option<(i64, i64)> = None;
+        if let crate::ast::AlterTableAction::AddColumn(ref col_spec) = stmt.action {
+            let is_rowversion = matches!(col_spec.data_type, crate::ast::DataTypeSpec::RowVersion);
+            let (resolved_dt, udt_nullable) =
+                crate::executor::type_mapping::resolve_data_type_spec_with_nullability(
+                    &col_spec.data_type,
+                    self.catalog,
+                );
+            let effective_nullable = if col_spec.nullable_explicit {
+                col_spec.nullable
+            } else if is_rowversion {
+                false
+            } else if let Some(u) = udt_nullable {
+                u
+            } else {
+                ctx.options.ansi_null_dflt_on
+            };
+            let has_rows = self
+                .storage
+                .scan_rows(table.id)
+                .ok()
+                .and_then(|iter| iter.collect::<Result<Vec<_>, _>>().ok())
+                .is_some_and(|rows| rows.iter().any(|r| !r.deleted));
+            if has_rows
+                && !effective_nullable
+                && col_spec.default.is_none()
+                && col_spec.identity.is_none()
+                && col_spec.computed_expr.is_none()
+                && !is_rowversion
+            {
+                return Err(DbError::Custom {
+                    class: 16,
+                    number: 4901,
+                    message: format!(
+                        "ALTER TABLE only allows columns to be added that can contain nulls, or have a DEFAULT definition specified, or the column being added is an identity or timestamp column, or alternatively if none of the previous conditions are satisfied the table must be empty to allow addition of this column. Column '{}' cannot be added to non-empty table '{}' because it does not satisfy these conditions.",
+                        col_spec.name, table.name
+                    ),
+                });
+            }
+            if has_rows && (!effective_nullable || col_spec.with_values) {
+                if let Some(ref def_expr) = col_spec.default {
+                    add_col_backfill = Some((def_expr.clone(), resolved_dt));
+                }
+            }
+            if has_rows && col_spec.identity.is_some() {
+                add_col_identity_backfill = col_spec.identity;
+            }
+        }
+
         self.schema(ctx).alter_table(stmt)?;
+
+        if let Some((def_expr, target_dt)) = add_col_backfill {
+            let mut rows_vec = self
+                .storage
+                .scan_rows(table.id)?
+                .collect::<Result<Vec<_>, DbError>>()?;
+            for row in rows_vec.iter_mut() {
+                if row.deleted {
+                    continue;
+                }
+                let raw = crate::executor::evaluator::eval_expr(
+                    &def_expr,
+                    &[],
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
+                let coerced = if raw.is_null() {
+                    raw
+                } else {
+                    crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                        raw,
+                        &target_dt,
+                        &ctx.options.dateformat,
+                    )?
+                };
+                if let Some(last) = row.values.last_mut() {
+                    *last = coerced;
+                }
+            }
+            self.storage.replace_table(table.id, rows_vec)?;
+        } else if let Some((seed, inc)) = add_col_identity_backfill {
+            let mut rows_vec = self
+                .storage
+                .scan_rows(table.id)?
+                .collect::<Result<Vec<_>, DbError>>()?;
+            let mut cur = seed;
+            for row in rows_vec.iter_mut() {
+                if row.deleted {
+                    continue;
+                }
+                if let Some(last) = row.values.last_mut() {
+                    *last = crate::types::Value::Int(cur as i32);
+                }
+                cur += inc;
+            }
+            self.storage.replace_table(table.id, rows_vec)?;
+            if let Some(tbl_mut) = self.catalog.find_table_mut(&table.schema_name, &table.name) {
+                if let Some(last_col) = tbl_mut.columns.last_mut() {
+                    if let Some(ref mut id) = last_col.identity {
+                        id.current = cur;
+                    }
+                }
+            }
+        }
 
         let rows = {
             let rows = match self.storage.scan_rows(table.id) {
@@ -729,6 +835,147 @@ impl<'a> ScriptExecutor<'a> {
             }
             CatalogMetadataAction::AddFilegroup { name } => {
                 self.catalog.add_filegroup(name);
+            }
+            CatalogMetadataAction::CreateSecurityPolicy {
+                name,
+                predicates,
+                state_on,
+                schema_binding,
+            } => {
+                let schema = name.schema_or_dbo().to_string();
+                let schema_id = self
+                    .catalog
+                    .get_schema_id(&schema)
+                    .ok_or_else(|| DbError::schema_not_found(&schema))?;
+                if self.catalog.get_security_policies().iter().any(|p| {
+                    p.schema.eq_ignore_ascii_case(&schema)
+                        && p.name.eq_ignore_ascii_case(&name.name)
+                }) {
+                    return Err(DbError::Execution(format!(
+                        "There is already an object named '{}' in the database.",
+                        name.name
+                    )));
+                }
+                let object_id = self.catalog.alloc_object_id();
+                let mut preds = Vec::with_capacity(predicates.len());
+                for (i, p) in predicates.into_iter().enumerate() {
+                    preds.push(crate::catalog::SecurityPredicateDef {
+                        predicate_id: (i + 1) as i32,
+                        kind: if p.is_block {
+                            crate::catalog::SecurityPredicateKind::Block
+                        } else {
+                            crate::catalog::SecurityPredicateKind::Filter
+                        },
+                        block_op: p.block_op,
+                        function_schema: p.function.schema_or_dbo().to_string(),
+                        function_name: p.function.name,
+                        function_args: p.function_args,
+                        target_schema: p.target.schema_or_dbo().to_string(),
+                        target_table: p.target.name,
+                    });
+                }
+                self.catalog
+                    .upsert_security_policy(crate::catalog::SecurityPolicyDef {
+                        object_id,
+                        schema_id,
+                        schema,
+                        name: name.name,
+                        is_enabled: state_on,
+                        is_schema_bound: schema_binding,
+                        predicates: preds,
+                    })?;
+            }
+            CatalogMetadataAction::AlterSecurityPolicy { name, actions } => {
+                let schema = name.schema_or_dbo().to_string();
+                let mut policy = self
+                    .catalog
+                    .get_security_policies()
+                    .iter()
+                    .find(|p| {
+                        p.schema.eq_ignore_ascii_case(&schema)
+                            && p.name.eq_ignore_ascii_case(&name.name)
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        DbError::Execution(format!(
+                            "Cannot alter the security policy '{}.{}', because it does not exist or you do not have permission.",
+                            schema, name.name
+                        ))
+                    })?;
+                for act in actions {
+                    match act {
+                        crate::ast::AlterSecurityPolicyAction::SetState(on) => {
+                            policy.is_enabled = on;
+                        }
+                        crate::ast::AlterSecurityPolicyAction::AddPredicate(p) => {
+                            let next_id = policy
+                                .predicates
+                                .iter()
+                                .map(|pr| pr.predicate_id)
+                                .max()
+                                .unwrap_or(0)
+                                + 1;
+                            policy
+                                .predicates
+                                .push(crate::catalog::SecurityPredicateDef {
+                                    predicate_id: next_id,
+                                    kind: if p.is_block {
+                                        crate::catalog::SecurityPredicateKind::Block
+                                    } else {
+                                        crate::catalog::SecurityPredicateKind::Filter
+                                    },
+                                    block_op: p.block_op,
+                                    function_schema: p.function.schema_or_dbo().to_string(),
+                                    function_name: p.function.name,
+                                    function_args: p.function_args,
+                                    target_schema: p.target.schema_or_dbo().to_string(),
+                                    target_table: p.target.name,
+                                });
+                        }
+                        crate::ast::AlterSecurityPolicyAction::AlterPredicate(p) => {
+                            let kind = if p.is_block {
+                                crate::catalog::SecurityPredicateKind::Block
+                            } else {
+                                crate::catalog::SecurityPredicateKind::Filter
+                            };
+                            let t_sch = p.target.schema_or_dbo().to_string();
+                            if let Some(existing) = policy.predicates.iter_mut().find(|pr| {
+                                pr.kind == kind
+                                    && pr.target_schema.eq_ignore_ascii_case(&t_sch)
+                                    && pr.target_table.eq_ignore_ascii_case(&p.target.name)
+                                    && pr.block_op == p.block_op
+                            }) {
+                                existing.function_schema = p.function.schema_or_dbo().to_string();
+                                existing.function_name = p.function.name;
+                                existing.function_args = p.function_args;
+                            }
+                        }
+                        crate::ast::AlterSecurityPolicyAction::DropPredicate {
+                            is_block,
+                            target,
+                            block_op,
+                        } => {
+                            let kind = if is_block {
+                                crate::catalog::SecurityPredicateKind::Block
+                            } else {
+                                crate::catalog::SecurityPredicateKind::Filter
+                            };
+                            let t_sch = target.schema_or_dbo().to_string();
+                            policy.predicates.retain(|pr| {
+                                !(pr.kind == kind
+                                    && pr.target_schema.eq_ignore_ascii_case(&t_sch)
+                                    && pr.target_table.eq_ignore_ascii_case(&target.name)
+                                    && (!is_block || pr.block_op == block_op))
+                            });
+                        }
+                    }
+                }
+                self.catalog.upsert_security_policy(policy)?;
+            }
+            CatalogMetadataAction::DropSecurityPolicy { name, if_exists } => {
+                let schema = name.schema_or_dbo().to_string();
+                self.catalog
+                    .drop_security_policy(&schema, &name.name, if_exists)?;
             }
         }
         Ok(())

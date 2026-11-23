@@ -99,6 +99,41 @@ pub enum CatalogMetadataAction {
     AddFilegroup {
         name: String,
     },
+    CreateSecurityPolicy {
+        name: ObjectName,
+        predicates: Vec<SecurityPredicateSpec>,
+        state_on: bool,
+        schema_binding: bool,
+    },
+    AlterSecurityPolicy {
+        name: ObjectName,
+        actions: Vec<AlterSecurityPolicyAction>,
+    },
+    DropSecurityPolicy {
+        name: ObjectName,
+        if_exists: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SecurityPredicateSpec {
+    pub is_block: bool,
+    pub block_op: Option<crate::catalog::SecurityBlockOp>,
+    pub function: ObjectName,
+    pub function_args: Vec<String>,
+    pub target: ObjectName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AlterSecurityPolicyAction {
+    AddPredicate(SecurityPredicateSpec),
+    AlterPredicate(SecurityPredicateSpec),
+    DropPredicate {
+        is_block: bool,
+        target: ObjectName,
+        block_op: Option<crate::catalog::SecurityBlockOp>,
+    },
+    SetState(bool),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +234,10 @@ pub enum AlterTableAction {
         enabled: bool,
         history_table: Option<ObjectName>,
     },
+    SetColumnMask {
+        column: String,
+        masking_function: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +250,8 @@ pub struct CreateViewStmt {
     pub or_alter: bool,
     #[serde(default)]
     pub is_schema_bound: bool,
+    #[serde(default)]
+    pub with_check_option: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +300,10 @@ pub struct ColumnSpec {
     pub collation: Option<String>,
     pub is_clustered: bool,
     pub ansi_padding_on: bool,
+    #[serde(default)]
+    pub with_values: bool,
+    #[serde(default)]
+    pub masking_function: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

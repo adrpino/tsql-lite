@@ -835,6 +835,8 @@ pub fn parse_insert_bulk(parser: &mut Parser) -> ParseResult<InsertBulkStmt> {
             foreign_key: None,
             collation: None,
             is_clustered: false,
+            with_values: false,
+            masking_function: None,
         })
     })?;
     parser.expect_rparen()?;

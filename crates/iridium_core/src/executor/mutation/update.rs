@@ -32,7 +32,8 @@ impl<'a> MutationExecutor<'a> {
                 stmt.table.schema = Some("dbo".to_string());
             }
         }
-        let target_alias = stmt.table.name.clone();
+        let mut target_alias = stmt.table.name.clone();
+        let mut view_check_predicates = Vec::new();
         let resolved_direct =
             resolve_table_for_mutation(stmt.from.as_ref(), &stmt.table, |schema, name| {
                 self.catalog.find_table(schema, name).cloned().or_else(|| {
@@ -71,55 +72,118 @@ impl<'a> MutationExecutor<'a> {
                 (table, joined_rows)
             }
             Err(orig_err) => {
-                let Some((cte, cte_name)) =
-                    resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
-                else {
-                    return Err(orig_err);
-                };
-                let base_target = cte
-                    .base_targets
-                    .iter()
-                    .find(|bt| {
-                        stmt.assignments.iter().all(|a| {
-                            a.column.starts_with('@')
-                                || bt
-                                    .table_def
-                                    .columns
-                                    .iter()
-                                    .any(|c| c.name.eq_ignore_ascii_case(&a.column))
+                let view_schema = stmt.table.schema_or_dbo().to_string();
+                let view_name = stmt.table.name.clone();
+                if stmt.from.is_none() && self.catalog.find_view(&view_schema, &view_name).is_some()
+                {
+                    let view_target = super::view_dml::resolve_updatable_view(
+                        self.catalog,
+                        &view_schema,
+                        &view_name,
+                    )?
+                    .ok_or(orig_err)?;
+                    for assign in &mut stmt.assignments {
+                        if !assign.column.starts_with('@') {
+                            assign.column =
+                                view_target.map_view_column(&assign.column, &view_name)?;
+                        }
+                        assign.expr = super::view_dml::rewrite_expr_columns(
+                            &assign.expr,
+                            &view_target.columns,
+                            &view_name,
+                            &view_target.base_table.name,
+                        );
+                    }
+                    let rewritten_sel = stmt.selection.as_ref().map(|sel| {
+                        super::view_dml::rewrite_expr_columns(
+                            sel,
+                            &view_target.columns,
+                            &view_name,
+                            &view_target.base_table.name,
+                        )
+                    });
+                    let combined_sel = view_target.combined_where(rewritten_sel);
+                    stmt.table = view_target.base_table.clone();
+                    target_alias = view_target.base_table.name.clone();
+                    view_check_predicates = view_target.check_predicates;
+                    let table = view_target.base_table_def;
+                    crate::executor::security::check_object_permission(
+                        self.catalog,
+                        ctx,
+                        "UPDATE",
+                        table.schema_or_dbo(),
+                        &table.name,
+                        table.id as i32,
+                    )?;
+                    let query = build_mutation_query(
+                        None,
+                        &stmt.table,
+                        &table,
+                        &stmt.table.name,
+                        combined_sel,
+                        stmt.top.clone(),
+                    );
+                    let query_executor = QueryExecutor {
+                        catalog: self.catalog,
+                        storage: self.storage,
+                        clock: self.clock,
+                    };
+                    let prev_target = ctx.session.extras.mutation_target_id.replace(table.id);
+                    let joined_res = query_executor.execute_to_joined_rows(query, ctx);
+                    ctx.session.extras.mutation_target_id = prev_target;
+                    let joined_rows = joined_res?;
+                    (table, joined_rows)
+                } else {
+                    let Some((cte, cte_name)) =
+                        resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
+                    else {
+                        return Err(orig_err);
+                    };
+                    let base_target = cte
+                        .base_targets
+                        .iter()
+                        .find(|bt| {
+                            stmt.assignments.iter().all(|a| {
+                                a.column.starts_with('@')
+                                    || bt
+                                        .table_def
+                                        .columns
+                                        .iter()
+                                        .any(|c| c.name.eq_ignore_ascii_case(&a.column))
+                            })
                         })
-                    })
-                    .or_else(|| cte.base_targets.first())
-                    .cloned()
-                    .ok_or_else(|| {
-                        DbError::Execution(format!(
-                            "CTE '{}' is not updatable: no underlying base table found",
-                            cte_name
-                        ))
-                    })?;
+                        .or_else(|| cte.base_targets.first())
+                        .cloned()
+                        .ok_or_else(|| {
+                            DbError::Execution(format!(
+                                "CTE '{}' is not updatable: no underlying base table found",
+                                cte_name
+                            ))
+                        })?;
 
-                let query = build_mutation_query(
-                    stmt.from.as_ref(),
-                    &stmt.table,
-                    &cte.table_def,
-                    &cte_name,
-                    stmt.selection.clone(),
-                    stmt.top.clone(),
-                );
-                let query_executor = QueryExecutor {
-                    catalog: self.catalog,
-                    storage: self.storage,
-                    clock: self.clock,
-                };
-                let cte_rows = query_executor.execute_to_joined_rows(query, ctx)?;
-                let mapped = attach_base_rows_from_cte(
-                    cte_rows,
-                    &cte_name,
-                    &target_alias,
-                    &base_target,
-                    self.storage,
-                )?;
-                (base_target.table_def, mapped)
+                    let query = build_mutation_query(
+                        stmt.from.as_ref(),
+                        &stmt.table,
+                        &cte.table_def,
+                        &cte_name,
+                        stmt.selection.clone(),
+                        stmt.top.clone(),
+                    );
+                    let query_executor = QueryExecutor {
+                        catalog: self.catalog,
+                        storage: self.storage,
+                        clock: self.clock,
+                    };
+                    let cte_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                    let mapped = attach_base_rows_from_cte(
+                        cte_rows,
+                        &cte_name,
+                        &target_alias,
+                        &base_target,
+                        self.storage,
+                    )?;
+                    (base_target.table_def, mapped)
+                }
             }
         };
 
@@ -254,6 +318,79 @@ impl<'a> MutationExecutor<'a> {
         let mut inserted_rows_for_output = Vec::new();
         let mut deleted_rows_for_output = Vec::new();
         let rowcount_limit = rowcount_limit(ctx);
+        // Atomic pre-validation of view WITH CHECK OPTION and RLS BEFORE/AFTER UPDATE block predicates
+        // before any storage mutation.
+        let has_rls_update_blocks = !crate::executor::rls::active_block_predicates(
+            self.catalog,
+            &table,
+            crate::catalog::SecurityBlockOp::BeforeUpdate,
+        )
+        .is_empty()
+            || !crate::executor::rls::active_block_predicates(
+                self.catalog,
+                &table,
+                crate::catalog::SecurityBlockOp::AfterUpdate,
+            )
+            .is_empty();
+        if !view_check_predicates.is_empty() || has_rls_update_blocks {
+            let mut old_preview_rows = Vec::new();
+            let mut preview_rows = Vec::new();
+            let mut preview_seen = HashSet::new();
+            let _ = visit_target_rows(
+                joined_rows.clone(),
+                table_id,
+                &target_alias,
+                rowcount_limit,
+                &mut preview_seen,
+                |stored_row, _idx, joined_row| {
+                    old_preview_rows.push(stored_row.clone());
+                    let mut new_row = stored_row.clone();
+                    apply_assignments(
+                        &table,
+                        &mut new_row,
+                        &stmt.assignments,
+                        joined_row,
+                        ctx,
+                        self.catalog,
+                        self.storage,
+                        self.clock,
+                    )?;
+                    preview_rows.push(new_row);
+                    Ok(())
+                },
+            )?;
+            if has_rls_update_blocks {
+                crate::executor::rls::enforce_rls_block_predicates(
+                    &table,
+                    &old_preview_rows,
+                    crate::catalog::SecurityBlockOp::BeforeUpdate,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
+                crate::executor::rls::enforce_rls_block_predicates(
+                    &table,
+                    &preview_rows,
+                    crate::catalog::SecurityBlockOp::AfterUpdate,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
+            }
+            if !view_check_predicates.is_empty() {
+                super::view_dml::validate_view_check_option(
+                    &table,
+                    &preview_rows,
+                    &view_check_predicates,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
+            }
+        }
         let mut updated_indices = HashSet::new();
         let updated_count = visit_target_rows(
             joined_rows,

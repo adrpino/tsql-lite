@@ -209,9 +209,13 @@ pub(crate) fn create_table(
     let table_id = executor.catalog.alloc_table_id();
 
     let mut column_fks: Vec<(String, crate::ast::ForeignKeyRef)> = Vec::new();
+    let mut column_masks: Vec<(String, String)> = Vec::new();
     for spec in &stmt.columns {
         if let Some(fk) = &spec.foreign_key {
             column_fks.push((spec.name.clone(), fk.clone()));
+        }
+        if let Some(mask_fn) = &spec.masking_function {
+            column_masks.push((spec.name.clone(), mask_fn.clone()));
         }
     }
 
@@ -266,6 +270,11 @@ pub(crate) fn create_table(
     }
 
     executor.catalog.register_table(table.clone());
+    for (col_name, mask_fn) in column_masks {
+        executor
+            .catalog
+            .set_column_mask(table_id, &col_name, Some(mask_fn));
+    }
     executor.storage.ensure_table(table_id)?;
 
     if let Some((start_col, end_col)) = period_cols {
@@ -360,6 +369,7 @@ pub(crate) fn drop_table(
         )));
     }
     let table_id = executor.catalog.drop_table(&schema_name, &stmt.name.name)?;
+    executor.catalog.remove_table_masks(table_id);
     executor.storage.remove_table(table_id)?;
     Ok(())
 }
@@ -417,6 +427,7 @@ pub(crate) fn create_view(
         query: std::sync::Arc::new(view_stmt),
         definition_sql: String::new(),
         is_schema_bound: stmt.is_schema_bound,
+        with_check_option: stmt.with_check_option,
     };
     if stmt.or_alter {
         executor.catalog.replace_view(view)
@@ -598,14 +609,40 @@ pub(crate) fn alter_table(
 
     match stmt.action {
         AlterTableAction::AddColumn(col_spec) => {
+            let mask_fn = col_spec.masking_function.clone();
+            let col_name = col_spec.name.clone();
             let col = build_column_def(executor, col_spec)?;
             let table_mut = executor
                 .catalog
                 .find_table_mut(&schema_name, &stmt.table.name)
                 .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
             table_mut.columns.push(col);
+            if let Some(mask) = mask_fn {
+                executor
+                    .catalog
+                    .set_column_mask(table_id, &col_name, Some(mask));
+            }
 
             schema_physical::add_null_column_to_table(executor, table_id)?;
+        }
+        AlterTableAction::SetColumnMask {
+            column,
+            masking_function,
+        } => {
+            let exists = executor
+                .catalog
+                .find_table(&schema_name, &stmt.table.name)
+                .is_some_and(|t| {
+                    t.columns
+                        .iter()
+                        .any(|c| c.name.eq_ignore_ascii_case(&column))
+                });
+            if !exists {
+                return Err(DbError::column_not_found(&column));
+            }
+            executor
+                .catalog
+                .set_column_mask(table_id, &column, masking_function);
         }
         AlterTableAction::DropColumn(col_name) => {
             if let Some(dep) =
@@ -631,6 +668,7 @@ pub(crate) fn alter_table(
                 .position(|c| c.name.eq_ignore_ascii_case(&col_name))
                 .ok_or_else(|| DbError::column_not_found(&col_name))?;
             table_mut.columns.remove(col_idx);
+            executor.catalog.set_column_mask(table_id, &col_name, None);
 
             schema_physical::drop_column_from_table(executor, table_id, col_idx)?;
         }

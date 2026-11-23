@@ -17,6 +17,13 @@ impl ObjectResolver for CatalogImpl {
         if let Some(view) = self.find_view(schema, name) {
             return Some(view.object_id);
         }
+        if let Some(policy) = self
+            .security_policies
+            .iter()
+            .find(|p| p.schema.eq_ignore_ascii_case(schema) && p.name.eq_ignore_ascii_case(name))
+        {
+            return Some(policy.object_id);
+        }
         let trigger = self
             .triggers
             .get(&(normalize_identifier(schema), normalize_identifier(name)))?;

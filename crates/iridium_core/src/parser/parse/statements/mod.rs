@@ -7,6 +7,7 @@ pub mod dml;
 pub mod drop;
 pub mod other;
 pub mod query;
+pub mod security_policy;
 pub mod transaction;
 
 pub use query::parse_multipart_name;

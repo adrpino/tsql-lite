@@ -65,6 +65,7 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                 selection,
                 order_by,
                 top,
+                max_recursion,
             } = *sa;
             let mut joins = Vec::new();
             let from_tr = if let Some(from_ref) = from {
@@ -106,6 +107,7 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
                                 })
                             })
                             .transpose()?,
+                        max_recursion,
                     },
                 )),
             ))
@@ -303,6 +305,7 @@ pub fn lower_select(
                         }
                     }),
                     grouping_sets,
+                    max_recursion: ex.max_recursion,
                 }))
             })
             .transpose()?,
@@ -1097,6 +1100,8 @@ pub fn lower_insert_bulk(
                     collation: c.collation,
                     is_clustered: c.is_clustered,
                     ansi_padding_on: true,
+                    with_values: c.with_values,
+                    masking_function: c.masking_function,
                 })
             })
             .collect::<Result<Vec<_>, DbError>>()?,

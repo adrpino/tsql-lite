@@ -24,7 +24,23 @@ pub(crate) fn execute_flat_select(
     let columns = expand_projection_columns(&projection, schema_row);
     let projected_rows = project_flat_rows(catalog, storage, clock, &projection, &rows, ctx)?;
 
-    let expr_types = expand_projection_types(&projection, schema_row);
+    let mut expr_types = expand_projection_types(&projection, schema_row);
+    // Preserve declared XML type for @var projections (needed for unescaped FOR XML embedding).
+    if expr_types.len() == projection.len() {
+        for (i, item) in projection.iter().enumerate() {
+            if expr_types[i].is_none() {
+                if let Expr::Identifier(var_name) = &item.expr {
+                    if var_name.starts_with('@') {
+                        if let Some((ty, _)) = ctx.session.variables.get(var_name) {
+                            if matches!(ty, DataType::Xml) {
+                                expr_types[i] = Some(DataType::Xml);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let expr_nulls = expand_projection_nullabilities(&projection, schema_row);
     let row_types = derive_types_from_rows(&projected_rows, columns.len());
 
@@ -58,7 +74,9 @@ pub(crate) fn project_flat_rows(
     rows: &[JoinedRow],
     ctx: &mut ExecutionContext,
 ) -> Result<Vec<Vec<Value>>, DbError> {
-    rows.iter()
+    let masked_rows = crate::executor::masking::apply_dynamic_masking_to_rows(catalog, ctx, rows);
+    masked_rows
+        .iter()
         .map(|row| {
             let mut out = Vec::new();
             for item in projection {
@@ -227,6 +245,13 @@ fn infer_expr_type(expr: &Expr, sample: Option<&JoinedRow>) -> Option<DataType> 
             | crate::ast::BinaryOp::BitwiseOr
             | crate::ast::BinaryOp::BitwiseXor => Some(DataType::Int),
         },
+        Expr::Subquery(sub) => {
+            if sub.for_xml().is_some_and(|fx| fx.type_directive) {
+                Some(DataType::Xml)
+            } else {
+                None
+            }
+        }
         Expr::Case {
             when_clauses,
             else_result,

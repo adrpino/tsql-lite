@@ -55,7 +55,12 @@ pub fn parse_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
         } else if let Some(for_json) = parse_for_json_clause(parser)? {
             current.extra.get_or_insert_with(Default::default).for_json = Some(for_json);
         }
-        skip_query_option_clause(parser)?;
+        if let Some(max_rec) = parse_query_option_clause(parser)? {
+            current
+                .extra
+                .get_or_insert_with(Default::default)
+                .max_recursion = Some(max_rec);
+        }
         return Ok(current);
     }
     parser.expect_keyword(Keyword::Select)?;
@@ -72,7 +77,12 @@ pub fn parse_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> {
         current.extra.get_or_insert_with(Default::default).for_json = Some(for_json);
     }
 
-    skip_query_option_clause(parser)?;
+    if let Some(max_rec) = parse_query_option_clause(parser)? {
+        current
+            .extra
+            .get_or_insert_with(Default::default)
+            .max_recursion = Some(max_rec);
+    }
     Ok(current)
 }
 
@@ -274,11 +284,17 @@ fn parse_for_json_clause(parser: &mut Parser) -> ParseResult<Option<ForJsonClaus
 }
 
 pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
+    let _ = parse_query_option_clause(parser)?;
+    Ok(())
+}
+
+pub(crate) fn parse_query_option_clause(parser: &mut Parser) -> ParseResult<Option<u16>> {
     let is_option = match parser.peek() {
         Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("OPTION"),
         Some(Token::Keyword(k)) => k.as_sql().eq_ignore_ascii_case("OPTION"),
         _ => false,
     };
+    let mut max_recursion: Option<u16> = None;
     if is_option && matches!(parser.peek_at(1), Some(Token::LParen)) {
         let _ = parser.next(); // OPTION
         let _ = parser.next(); // (
@@ -287,12 +303,39 @@ pub(crate) fn skip_query_option_clause(parser: &mut Parser) -> ParseResult<()> {
             match parser.next() {
                 Some(Token::LParen) => depth += 1,
                 Some(Token::RParen) => depth -= 1,
+                Some(Token::Identifier(id))
+                    if depth == 1 && id.eq_ignore_ascii_case("MAXRECURSION") =>
+                {
+                    let neg = if matches!(parser.peek(), Some(Token::Operator(op)) if op == "-") {
+                        let _ = parser.next();
+                        true
+                    } else {
+                        false
+                    };
+                    match parser.next() {
+                        Some(Token::Number { raw, .. }) => {
+                            let parsed = raw.parse::<i64>().unwrap_or(-1);
+                            let val = if neg { -parsed } else { parsed };
+                            if !(0..=32767).contains(&val) {
+                                return Err(parser.error(Expected::Description(
+                                    "MAXRECURSION value between 0 and 32767",
+                                )));
+                            }
+                            max_recursion = Some(val as u16);
+                        }
+                        _ => {
+                            return parser.backtrack(Expected::Description(
+                                "integer between 0 and 32767 for MAXRECURSION",
+                            ));
+                        }
+                    }
+                }
                 Some(_) => {}
                 None => return parser.backtrack(Expected::Description(")")),
             }
         }
     }
-    Ok(())
+    Ok(max_recursion)
 }
 
 fn parse_single_select(parser: &mut Parser) -> ParseResult<SelectStmt> {
@@ -440,6 +483,7 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
             for_json: None,
             grouping_sets,
             windows,
+            max_recursion: None,
         }))
     };
 

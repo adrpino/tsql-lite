@@ -29,7 +29,7 @@ impl<'a> MutationExecutor<'a> {
                 stmt.table.schema = Some("dbo".to_string());
             }
         }
-        let target_alias = stmt.table.name.clone();
+        let mut target_alias = stmt.table.name.clone();
         let resolved_direct =
             resolve_table_for_mutation(stmt.from.as_ref(), &stmt.table, |schema, name| {
                 self.catalog.find_table(schema, name).cloned().or_else(|| {
@@ -68,40 +68,105 @@ impl<'a> MutationExecutor<'a> {
                 (table, joined_rows)
             }
             Err(orig_err) => {
-                let Some((cte, cte_name)) =
-                    resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
-                else {
-                    return Err(orig_err);
+                let view_schema = stmt.table.schema_or_dbo().to_string();
+                let view_name = stmt.table.name.clone();
+                let is_simple_view_delete = match &stmt.from {
+                    None => true,
+                    Some(fc) => {
+                        fc.joins.is_empty()
+                            && fc.applies.is_empty()
+                            && (fc.tables.is_empty()
+                                || (fc.tables.len() == 1
+                                    && matches!(
+                                        &fc.tables[0].factor,
+                                        crate::ast::TableFactor::Named(obj)
+                                            if obj.name.eq_ignore_ascii_case(&view_name)
+                                    )))
+                    }
                 };
-                let base_target = cte.base_targets.first().cloned().ok_or_else(|| {
-                    DbError::Execution(format!(
-                        "CTE '{}' is not updatable: no underlying base table found",
-                        cte_name
-                    ))
-                })?;
+                if is_simple_view_delete
+                    && self.catalog.find_view(&view_schema, &view_name).is_some()
+                {
+                    let view_target = super::view_dml::resolve_updatable_view(
+                        self.catalog,
+                        &view_schema,
+                        &view_name,
+                    )?
+                    .ok_or(orig_err)?;
+                    let rewritten_sel = stmt.selection.as_ref().map(|sel| {
+                        super::view_dml::rewrite_expr_columns(
+                            sel,
+                            &view_target.columns,
+                            &view_name,
+                            &view_target.base_table.name,
+                        )
+                    });
+                    let combined_sel = view_target.combined_where(rewritten_sel);
+                    stmt.table = view_target.base_table.clone();
+                    target_alias = view_target.base_table.name.clone();
+                    let table = view_target.base_table_def;
+                    crate::executor::security::check_object_permission(
+                        self.catalog,
+                        ctx,
+                        "DELETE",
+                        table.schema_or_dbo(),
+                        &table.name,
+                        table.id as i32,
+                    )?;
+                    let query = build_mutation_query(
+                        None,
+                        &stmt.table,
+                        &table,
+                        &stmt.table.name,
+                        combined_sel,
+                        stmt.top.clone(),
+                    );
+                    let query_executor = QueryExecutor {
+                        catalog: self.catalog,
+                        storage: self.storage,
+                        clock: self.clock,
+                    };
+                    let prev_target = ctx.session.extras.mutation_target_id.replace(table.id);
+                    let joined_res = query_executor.execute_to_joined_rows(query, ctx);
+                    ctx.session.extras.mutation_target_id = prev_target;
+                    let joined_rows = joined_res?;
+                    (table, joined_rows)
+                } else {
+                    let Some((cte, cte_name)) =
+                        resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
+                    else {
+                        return Err(orig_err);
+                    };
+                    let base_target = cte.base_targets.first().cloned().ok_or_else(|| {
+                        DbError::Execution(format!(
+                            "CTE '{}' is not updatable: no underlying base table found",
+                            cte_name
+                        ))
+                    })?;
 
-                let query = build_mutation_query(
-                    stmt.from.as_ref(),
-                    &stmt.table,
-                    &cte.table_def,
-                    &cte_name,
-                    stmt.selection.clone(),
-                    stmt.top.clone(),
-                );
-                let query_executor = QueryExecutor {
-                    catalog: self.catalog,
-                    storage: self.storage,
-                    clock: self.clock,
-                };
-                let cte_rows = query_executor.execute_to_joined_rows(query, ctx)?;
-                let mapped = attach_base_rows_from_cte(
-                    cte_rows,
-                    &cte_name,
-                    &target_alias,
-                    &base_target,
-                    self.storage,
-                )?;
-                (base_target.table_def, mapped)
+                    let query = build_mutation_query(
+                        stmt.from.as_ref(),
+                        &stmt.table,
+                        &cte.table_def,
+                        &cte_name,
+                        stmt.selection.clone(),
+                        stmt.top.clone(),
+                    );
+                    let query_executor = QueryExecutor {
+                        catalog: self.catalog,
+                        storage: self.storage,
+                        clock: self.clock,
+                    };
+                    let cte_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                    let mapped = attach_base_rows_from_cte(
+                        cte_rows,
+                        &cte_name,
+                        &target_alias,
+                        &base_target,
+                        self.storage,
+                    )?;
+                    (base_target.table_def, mapped)
+                }
             }
         };
 
@@ -204,6 +269,15 @@ impl<'a> MutationExecutor<'a> {
             rowcount_limit,
             &mut deleted_indices,
             |stored_row, _idx, _joined_row| {
+                crate::executor::rls::enforce_rls_block_predicates(
+                    &table,
+                    std::slice::from_ref(stored_row),
+                    crate::catalog::SecurityBlockOp::BeforeDelete,
+                    ctx,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
                 if has_incoming_fks {
                     enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
                 }

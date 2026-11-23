@@ -29,11 +29,27 @@ impl<'a> MutationExecutor<'a> {
         let schema = stmt.table.schema_or_dbo().to_string();
         let table_name = stmt.table.name.clone();
 
-        let table = self
-            .catalog
-            .find_table(&schema, &table_name)
-            .ok_or_else(|| DbError::table_not_found(&schema, &table_name))?;
-        let table = table.clone();
+        let mut view_check_predicates = Vec::new();
+        let table = if let Some(t) = self.catalog.find_table(&schema, &table_name) {
+            t.clone()
+        } else if let Some(view_target) =
+            super::view_dml::resolve_updatable_view(self.catalog, &schema, &table_name)?
+        {
+            if let Some(ref cols) = stmt.columns {
+                let mut mapped = Vec::with_capacity(cols.len());
+                for c in cols {
+                    mapped.push(view_target.map_view_column(c, &table_name)?);
+                }
+                stmt.columns = Some(mapped);
+            } else {
+                stmt.columns = Some(view_target.default_insert_columns(&table_name)?);
+            }
+            stmt.table = view_target.base_table;
+            view_check_predicates = view_target.check_predicates;
+            view_target.base_table_def
+        } else {
+            return Err(DbError::table_not_found(&schema, &table_name));
+        };
 
         let table_id = table.id;
 
@@ -56,6 +72,27 @@ impl<'a> MutationExecutor<'a> {
         let rows =
             self.collect_insert_rows(&table, &insert_columns, &stmt.source, ctx, rowcount_limit)?;
         let inserted_count = rows.len();
+
+        if !view_check_predicates.is_empty() {
+            super::view_dml::validate_view_check_option(
+                &table,
+                &rows,
+                &view_check_predicates,
+                ctx,
+                self.catalog,
+                self.storage,
+                self.clock,
+            )?;
+        }
+        crate::executor::rls::enforce_rls_block_predicates(
+            &table,
+            &rows,
+            crate::catalog::SecurityBlockOp::AfterInsert,
+            ctx,
+            self.catalog,
+            self.storage,
+            self.clock,
+        )?;
 
         if !instead_of_triggers.is_empty() {
             ctx.set_last_rowcount(inserted_count);

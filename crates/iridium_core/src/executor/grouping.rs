@@ -290,6 +290,10 @@ impl<'a> GroupExecutor<'a> {
                 }
             }
         }
+        let rows = match super::masking::apply_dynamic_masking_to_rows(self.catalog, ctx, &rows) {
+            std::borrow::Cow::Borrowed(_) => rows,
+            std::borrow::Cow::Owned(masked) => masked,
+        };
         let groups = self.build_groups(rows, &group_by, ctx)?;
         let mut projected_rows = Vec::new();
 

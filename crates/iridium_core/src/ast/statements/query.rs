@@ -30,6 +30,8 @@ pub struct SelectExtra {
     pub for_json: Option<ForJsonClause>,
     #[serde(default)]
     pub grouping_sets: Vec<Vec<Expr>>,
+    #[serde(default)]
+    pub max_recursion: Option<u16>,
 }
 
 impl SelectStmt {
@@ -46,6 +48,10 @@ impl SelectStmt {
             .as_deref()
             .map(|e| e.grouping_sets.as_slice())
             .unwrap_or(&[])
+    }
+
+    pub fn max_recursion(&self) -> Option<u16> {
+        self.extra.as_deref().and_then(|e| e.max_recursion)
     }
 }
 

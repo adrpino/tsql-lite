@@ -112,6 +112,7 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                             selection: s.selection,
                             order_by: s.order_by,
                             top: s.top,
+                            max_recursion: s.extra.as_deref().and_then(|e| e.max_recursion),
                         },
                     ))))
                 } else {
@@ -322,6 +323,13 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                             default_schema,
                         }),
                     ))));
+                }
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SECURITY"))
+                    && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("POLICY"))
+                {
+                    let _ = parser.next(); // SECURITY
+                    let _ = parser.next(); // POLICY
+                    return statements::security_policy::parse_create_security_policy(parser);
                 }
                 if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ROLE"))
                 {

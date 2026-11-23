@@ -334,10 +334,10 @@ pub struct TableScanIterator {
 impl RowIterator for TableScanIterator {
     fn next_row(
         &mut self,
-        _ctx: &mut ExecutionContext,
-        _catalog: &dyn Catalog,
+        ctx: &mut ExecutionContext,
+        catalog: &dyn Catalog,
         storage: &dyn Storage,
-        _clock: &dyn Clock,
+        clock: &dyn Clock,
     ) -> Result<Option<JoinedRow>, DbError> {
         loop {
             let row = storage.get_row(self.bound.table.id, self.next_index)?;
@@ -345,7 +345,16 @@ impl RowIterator for TableScanIterator {
                 Some(stored) => {
                     let idx = self.next_index;
                     self.next_index += 1;
-                    if !stored.deleted {
+                    if !stored.deleted
+                        && crate::executor::rls::row_passes_rls_filter(
+                            &self.bound.table,
+                            &stored,
+                            ctx,
+                            catalog,
+                            storage,
+                            clock,
+                        )?
+                    {
                         return Ok(Some(vec![ContextTable {
                             table: self.bound.table.clone(),
                             alias: self.bound.alias.clone(),

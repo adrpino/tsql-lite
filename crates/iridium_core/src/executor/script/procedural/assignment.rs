@@ -191,7 +191,12 @@ impl<'a> ScriptExecutor<'a> {
                 limit = limit.min(ctx.options.rowcount as usize);
             }
             ctx.set_last_rowcount(limit);
-            for row in &joined_rows[..limit] {
+            let masked_slice = crate::executor::masking::apply_dynamic_masking_to_rows(
+                self.catalog as &dyn Catalog,
+                ctx,
+                &joined_rows[..limit],
+            );
+            for row in masked_slice.iter() {
                 for t in &stmt.targets {
                     let val = eval_expr(
                         &t.expr,

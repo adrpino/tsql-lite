@@ -192,6 +192,7 @@ impl VirtualTable for SysMaskedColumns {
             "masked_columns",
             vec![
                 ("object_id", DataType::Int, false),
+                ("name", DataType::NVarChar { max_len: 128 }, false),
                 ("column_id", DataType::Int, false),
                 ("is_masked", DataType::Bit, false),
                 (
@@ -203,8 +204,30 @@ impl VirtualTable for SysMaskedColumns {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut out = Vec::new();
+        for m in catalog.get_masked_columns() {
+            if let Some(tbl) = catalog.get_tables().iter().find(|t| t.id == m.table_id) {
+                if let Some((idx, col)) = tbl
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.name.eq_ignore_ascii_case(&m.column_name))
+                {
+                    out.push(StoredRow {
+                        values: vec![
+                            Value::Int(tbl.id as i32),
+                            Value::NVarChar(col.name.clone()),
+                            Value::Int((idx + 1) as i32),
+                            Value::Bit(true),
+                            Value::NVarChar(m.masking_function.clone()),
+                        ],
+                        deleted: false,
+                    });
+                }
+            }
+        }
+        out
     }
 }
 

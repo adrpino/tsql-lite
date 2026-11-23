@@ -25,6 +25,7 @@ impl VirtualTable for SysViews {
                 ("is_ms_shipped", DataType::Bit, false),
                 ("is_published", DataType::Bit, false),
                 ("is_schema_published", DataType::Bit, false),
+                ("with_check_option", DataType::Bit, false),
             ],
         )
     }
@@ -55,6 +56,7 @@ impl VirtualTable for SysViews {
                     Value::Bit(false),
                     Value::Bit(false),
                     Value::Bit(false),
+                    Value::Bit(v.with_check_option),
                 ],
                 deleted: false,
             });

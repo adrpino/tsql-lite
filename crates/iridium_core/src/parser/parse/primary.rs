@@ -230,28 +230,38 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
                 parse_expr(parser)?
             };
             parser.expect_rparen()?;
-            // Support SQL Server XML .value(xpath, sqltype) postfix on parenthesized subqueries/expressions,
+            // Support SQL Server XML .value/.exist/.query postfix on parenthesized subqueries/expressions,
             // e.g. (SELECT ',' + name FROM t FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)')
-            if matches!(parser.peek(), Some(Token::Dot))
-                && matches!(
-                    parser.peek_at(1),
-                    Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("VALUE")
-                )
-                || (matches!(parser.peek(), Some(Token::Dot))
-                    && matches!(
-                        parser.peek_at(1),
-                        Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("VALUE")
-                    ))
+            let mut expr = expr;
+            while matches!(parser.peek(), Some(Token::Dot))
+                && matches!(parser.peek_at(2), Some(Token::LParen))
             {
-                if matches!(parser.peek_at(2), Some(Token::LParen)) {
-                    let _ = parser.next(); // .
-                    let _ = parser.next(); // value
-                    let _ = parser.next(); // (
-                    let _xpath = parse_expr(parser)?;
-                    parser.expect_comma()?;
-                    let _sql_type = parse_expr(parser)?;
-                    parser.expect_rparen()?;
+                let method_name = match parser.peek_at(1) {
+                    Some(Token::Identifier(id)) => Some(id.to_ascii_uppercase()),
+                    Some(Token::Keyword(k)) => Some(k.as_sql().to_ascii_uppercase()),
+                    _ => None,
+                };
+                let Some(internal_fn) = method_name.as_deref().and_then(|m| match m {
+                    "VALUE" => Some("__XML_VALUE"),
+                    "EXIST" => Some("__XML_EXIST"),
+                    "QUERY" => Some("__XML_QUERY"),
+                    _ => None,
+                }) else {
+                    break;
+                };
+                let _ = parser.next(); // .
+                let _ = parser.next(); // method
+                let _ = parser.next(); // (
+                let mut m_args = vec![expr];
+                if !matches!(parser.peek(), Some(Token::RParen)) {
+                    m_args.extend(parse_comma_list(parser, parse_expr)?);
                 }
+                parser.expect_rparen()?;
+                expr = Expr::FunctionCall {
+                    name: internal_fn.to_string(),
+                    args: m_args,
+                    within_group: None,
+                };
             }
             Ok(expr)
         }

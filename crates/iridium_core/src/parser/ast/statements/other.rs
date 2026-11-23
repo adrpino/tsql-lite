@@ -39,6 +39,7 @@ pub struct SelectAssignStmt {
     pub selection: Option<Expr>,
     pub order_by: Vec<super::query::OrderByExpr>,
     pub top: Option<super::query::TopSpec>,
+    pub max_recursion: Option<u16>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -418,6 +419,7 @@ pub enum CreateStmt {
         query: SelectStmt,
         or_alter: bool,
         is_schema_bound: bool,
+        with_check_option: bool,
     },
     Procedure {
         name: Vec<String>,
@@ -489,6 +491,10 @@ pub struct ColumnDef {
     pub foreign_key: Option<ForeignKeyRef>,
     pub collation: Option<String>,
     pub is_clustered: bool,
+    #[serde(default)]
+    pub with_values: bool,
+    #[serde(default)]
+    pub masking_function: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -526,6 +532,10 @@ pub enum AlterTableAction {
     SetSystemVersioning {
         enabled: bool,
         history_table: Option<Vec<String>>,
+    },
+    SetColumnMask {
+        column: String,
+        masking_function: Option<String>,
     },
 }
 

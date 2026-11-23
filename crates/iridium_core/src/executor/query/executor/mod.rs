@@ -123,16 +123,35 @@ impl<'a> QueryExecutor<'a> {
     }
 }
 
+fn xml_escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\r' => out.push_str("&#x0D;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn format_for_xml_result(
     result: &QueryResult,
     projection_items: &[crate::ast::SelectItem],
     for_xml: &crate::ast::ForXmlClause,
 ) -> QueryResult {
     let xml_col = "XML_F52E2B61-18A1-11d1-B105-00805F49916B".to_string();
+    let out_type = if for_xml.type_directive {
+        crate::types::DataType::Xml
+    } else {
+        crate::types::DataType::NVarChar { max_len: 0 }
+    };
     if result.rows.is_empty() && for_xml.root.is_none() {
         return QueryResult {
             columns: vec![xml_col],
-            column_types: vec![crate::types::DataType::NVarChar { max_len: 0 }],
+            column_types: vec![out_type],
             column_nullabilities: vec![true],
             rows: Vec::new(),
             ..Default::default()
@@ -160,6 +179,10 @@ fn format_for_xml_result(
                 continue;
             }
             let text = val.to_string_value();
+            let is_xml_typed = matches!(
+                result.column_types.get(i),
+                Some(crate::types::DataType::Xml)
+            );
             let is_unnamed_expr = projection_items.get(i).is_some_and(|item| {
                 item.alias.is_none()
                     && !matches!(
@@ -170,16 +193,22 @@ fn format_for_xml_result(
             let col_name = result.columns.get(i).map(String::as_str).unwrap_or("");
             if let Some(attr_name) = col_name.strip_prefix('@') {
                 attrs.push((attr_name.to_string(), text));
-            } else if is_raw_mode && !is_unnamed_expr && !col_name.is_empty() {
+            } else if is_raw_mode && !is_unnamed_expr && !col_name.is_empty() && !is_xml_typed {
                 attrs.push((col_name.to_string(), text));
             } else {
                 let is_raw_text = is_unnamed_expr
                     || col_name.is_empty()
+                    || col_name == "*"
                     || col_name.eq_ignore_ascii_case("text()");
-                if is_raw_text {
-                    children.push(text);
+                let body = if is_xml_typed {
+                    text
                 } else {
-                    children.push(format!("<{col_name}>{text}</{col_name}>"));
+                    xml_escape_text(&text)
+                };
+                if is_raw_text {
+                    children.push(body);
+                } else {
+                    children.push(format!("<{col_name}>{body}</{col_name}>"));
                 }
             }
         }
@@ -223,7 +252,7 @@ fn format_for_xml_result(
 
     QueryResult {
         columns: vec![xml_col],
-        column_types: vec![crate::types::DataType::NVarChar { max_len: 0 }],
+        column_types: vec![out_type],
         column_nullabilities: vec![true],
         rows: vec![vec![crate::types::Value::VarChar(xml)]],
         ..Default::default()

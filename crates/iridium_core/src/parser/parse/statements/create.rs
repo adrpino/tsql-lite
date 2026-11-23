@@ -177,6 +177,27 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
     for _ in 0..paren_depth {
         parser.expect_rparen()?;
     }
+    let mut with_check_option = false;
+    if parser.at_keyword(Keyword::With) {
+        let saved = parser.save();
+        let _ = parser.next();
+        if parser.at_keyword(Keyword::Check) {
+            let _ = parser.next();
+            let is_option = match parser.peek() {
+                Some(Token::Identifier(id)) => id.eq_ignore_ascii_case("OPTION"),
+                Some(Token::Keyword(k)) => k.as_sql().eq_ignore_ascii_case("OPTION"),
+                _ => false,
+            };
+            if is_option {
+                let _ = parser.next();
+                with_check_option = true;
+            } else {
+                parser.restore(saved);
+            }
+        } else {
+            parser.restore(saved);
+        }
+    }
     Ok(CreateStmt::View {
         name,
         columns,
@@ -184,6 +205,7 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         query,
         or_alter: false,
         is_schema_bound,
+        with_check_option,
     })
 }
 

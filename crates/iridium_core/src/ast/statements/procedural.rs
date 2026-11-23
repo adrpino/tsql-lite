@@ -177,6 +177,8 @@ pub struct SelectAssignStmt {
     pub order_by: Vec<crate::ast::statements::query::OrderByExpr>,
     #[serde(default)]
     pub top: Option<crate::ast::statements::query::TopSpec>,
+    #[serde(default)]
+    pub max_recursion: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

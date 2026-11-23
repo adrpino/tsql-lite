@@ -61,6 +61,77 @@ pub struct FilegroupDef {
     pub is_read_only: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MaskedColumnDef {
+    pub table_id: u32,
+    pub column_name: String,
+    pub masking_function: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SecurityPredicateKind {
+    Filter,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SecurityBlockOp {
+    /// Applies to all DML writes when no explicit operation is specified.
+    All,
+    AfterInsert,
+    AfterUpdate,
+    BeforeUpdate,
+    BeforeDelete,
+}
+
+impl SecurityBlockOp {
+    pub fn op_code(self) -> i32 {
+        match self {
+            SecurityBlockOp::All => 0,
+            SecurityBlockOp::AfterInsert => 1,
+            SecurityBlockOp::AfterUpdate => 2,
+            SecurityBlockOp::BeforeUpdate => 3,
+            SecurityBlockOp::BeforeDelete => 4,
+        }
+    }
+
+    pub fn op_desc(self) -> &'static str {
+        match self {
+            SecurityBlockOp::All => "",
+            SecurityBlockOp::AfterInsert => "AFTER INSERT",
+            SecurityBlockOp::AfterUpdate => "AFTER UPDATE",
+            SecurityBlockOp::BeforeUpdate => "BEFORE UPDATE",
+            SecurityBlockOp::BeforeDelete => "BEFORE DELETE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SecurityPredicateDef {
+    pub predicate_id: i32,
+    pub kind: SecurityPredicateKind,
+    pub block_op: Option<SecurityBlockOp>,
+    /// Predicate TVF schema & name (e.g. `dbo.fn_securitypredicate`).
+    pub function_schema: String,
+    pub function_name: String,
+    /// Column argument names passed from the target table to the predicate TVF.
+    pub function_args: Vec<String>,
+    /// Target table schema & name.
+    pub target_schema: String,
+    pub target_table: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SecurityPolicyDef {
+    pub object_id: i32,
+    pub schema_id: u32,
+    pub schema: String,
+    pub name: String,
+    pub is_enabled: bool,
+    pub is_schema_bound: bool,
+    pub predicates: Vec<SecurityPredicateDef>,
+}
+
 /// Built-in SQL Server database principals (always present even before user DDL).
 pub(crate) fn builtin_principals() -> Vec<PrincipalDef> {
     vec![

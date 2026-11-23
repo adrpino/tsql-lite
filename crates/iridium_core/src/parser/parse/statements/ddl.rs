@@ -61,6 +61,8 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
     let mut foreign_key = None;
     let mut collation = None;
     let mut is_clustered = false;
+    let mut with_values = false;
+    let mut masking_function = None;
 
     loop {
         match parser.peek() {
@@ -223,9 +225,52 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
             {
                 let _ = parser.next();
             }
-            Some(Token::Identifier(id))
-                if id.eq_ignore_ascii_case("MASKED") || id.eq_ignore_ascii_case("ENCRYPTED") =>
-            {
+            Some(Token::Keyword(Keyword::With)) => {
+                let saved = parser.save();
+                let _ = parser.next();
+                if parser.at_keyword(Keyword::Values)
+                    || matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("VALUES"))
+                {
+                    let _ = parser.next();
+                    with_values = true;
+                } else {
+                    parser.restore(saved);
+                    break;
+                }
+            }
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("MASKED") => {
+                let _ = parser.next();
+                if parser.at_keyword(Keyword::With) {
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::LParen)) {
+                        let _ = parser.next(); // (
+                        if parser.at_keyword(Keyword::Function)
+                            || matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("FUNCTION"))
+                        {
+                            let _ = parser.next();
+                            if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                                let _ = parser.next();
+                            }
+                            match parser.next() {
+                                Some(Token::String(func)) | Some(Token::NString(func)) => {
+                                    masking_function = Some(func.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+                        let mut depth = 1usize;
+                        while depth > 0 {
+                            match parser.next() {
+                                Some(Token::LParen) => depth += 1,
+                                Some(Token::RParen) => depth -= 1,
+                                Some(_) => {}
+                                None => return parser.backtrack(Expected::Description(")")),
+                            }
+                        }
+                    }
+                }
+            }
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("ENCRYPTED") => {
                 let _ = parser.next();
                 if parser.at_keyword(Keyword::With) {
                     let _ = parser.next();
@@ -280,6 +325,8 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
         foreign_key,
         collation,
         is_clustered,
+        with_values,
+        masking_function,
     })
 }
 

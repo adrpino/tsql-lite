@@ -4,6 +4,7 @@ mod database_principals;
 pub(crate) mod dependencies;
 mod dm_db;
 mod dm_os;
+mod event_sessions;
 mod fulltext_indexes;
 mod hadr;
 mod host_info;
@@ -212,6 +213,16 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(database_principals::SysDatabasePermissions))
     } else if name.eq_ignore_ascii_case("server_permissions") {
         Some(Box::new(database_principals::SysServerPermissions))
+    } else if name.eq_ignore_ascii_case("server_event_sessions") {
+        Some(Box::new(event_sessions::SysServerEventSessions))
+    } else if name.eq_ignore_ascii_case("server_event_session_events") {
+        Some(Box::new(event_sessions::SysServerEventSessionEvents))
+    } else if name.eq_ignore_ascii_case("server_event_session_actions") {
+        Some(Box::new(event_sessions::SysServerEventSessionActions))
+    } else if name.eq_ignore_ascii_case("server_event_session_targets") {
+        Some(Box::new(event_sessions::SysServerEventSessionTargets))
+    } else if name.eq_ignore_ascii_case("server_event_session_fields") {
+        Some(Box::new(event_sessions::SysServerEventSessionFields))
     } else if name.eq_ignore_ascii_case("fn_builtin_permissions")
         || name
             .to_ascii_lowercase()

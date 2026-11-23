@@ -1,4 +1,5 @@
 pub mod alter;
+pub mod column_encryption;
 pub mod control_flow;
 pub mod create;
 pub mod cursor;

@@ -1308,6 +1308,96 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                           RIGHT(CAST(NULL AS VARCHAR(10)), 2) AS RightNull;",
                 ordered: true,
             },
+            DiffStep::Query {
+                label: "inline_column_constraints_fk_check_and_catalog_parity",
+                sql: "CREATE TABLE dbo.DiffInlineParent (
+                          Id INT NOT NULL CONSTRAINT PK_DiffInlineParent PRIMARY KEY
+                      );
+                      CREATE TABLE dbo.DiffInlineChild (
+                          Id INT NOT NULL CONSTRAINT PK_DiffInlineChild PRIMARY KEY,
+                          ParentId INT NOT NULL CONSTRAINT FK_DiffInlineChild_Parent REFERENCES dbo.DiffInlineParent(Id) ON DELETE CASCADE,
+                          Qty INT NOT NULL CONSTRAINT CK_DiffInlineChild_Qty CHECK (Qty >= 0),
+                          Flag BIT NOT NULL CONSTRAINT DF_DiffInlineChild_Flag DEFAULT (1)
+                      );
+                      INSERT INTO dbo.DiffInlineParent VALUES (1);
+                      INSERT INTO dbo.DiffInlineChild (Id, ParentId, Qty) VALUES (10, 1, 5);
+                      DECLARE @chk_err INT = 0, @fk_err INT = 0;
+                      BEGIN TRY
+                          INSERT INTO dbo.DiffInlineChild (Id, ParentId, Qty) VALUES (11, 1, -1);
+                      END TRY
+                      BEGIN CATCH SET @chk_err = 1; END CATCH
+                      BEGIN TRY
+                          INSERT INTO dbo.DiffInlineChild (Id, ParentId, Qty) VALUES (12, 999, 1);
+                      END TRY
+                      BEGIN CATCH SET @fk_err = 1; END CATCH
+                      DELETE FROM dbo.DiffInlineParent WHERE Id = 1;
+                      SELECT
+                          @chk_err,
+                          @fk_err,
+                          (SELECT COUNT(*) FROM dbo.DiffInlineChild),
+                          (SELECT name FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID('dbo.DiffInlineChild')),
+                          (SELECT name FROM sys.foreign_keys WHERE parent_object_id = OBJECT_ID('dbo.DiffInlineChild'));",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "partition_function_dollar_partition_and_switch_parity",
+                sql: "CREATE PARTITION FUNCTION pf_DiffLeft (INT) AS RANGE LEFT FOR VALUES (10, 20);
+                      CREATE PARTITION FUNCTION pf_DiffRight (INT) AS RANGE RIGHT FOR VALUES (10, 20);
+                      CREATE TABLE dbo.DiffSwitchSrc (Id INT NOT NULL, Val VARCHAR(10));
+                      CREATE TABLE dbo.DiffSwitchDst (Id INT NOT NULL, Val VARCHAR(10));
+                      INSERT INTO dbo.DiffSwitchSrc VALUES (1, 'a'), (2, 'b');
+                      ALTER TABLE dbo.DiffSwitchSrc SWITCH TO dbo.DiffSwitchDst;
+                      SELECT
+                          $PARTITION.pf_DiffLeft(NULL),
+                          $PARTITION.pf_DiffLeft(10),
+                          $PARTITION.pf_DiffLeft(11),
+                          $PARTITION.pf_DiffRight(9),
+                          $PARTITION.pf_DiffRight(10),
+                          $PARTITION.pf_DiffRight(20),
+                          (SELECT COUNT(*) FROM dbo.DiffSwitchSrc),
+                          (SELECT COUNT(*) FROM dbo.DiffSwitchDst);",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "spatial_geometry_geography_and_hierarchyid_parity",
+                sql: "DECLARE @g1 GEOMETRY = geometry::Point(0, 0, 0);
+                      DECLARE @g2 GEOMETRY = geometry::STGeomFromText('POINT(3 4)', 0);
+                      DECLARE @geo GEOGRAPHY = geography::Point(40.7128, -74.0060, 4326);
+                      DECLARE @h HIERARCHYID = hierarchyid::Parse('/1/2/3/');
+                      DECLARE @p HIERARCHYID = hierarchyid::Parse('/1/2/');
+                      SELECT
+                          CAST(@g1.STDistance(@g2) AS INT),
+                          CAST(@g2.STX AS INT),
+                          CAST(@g2.STY AS INT),
+                          @geo.STSrid,
+                          @h.GetLevel(),
+                          @h.IsDescendantOf(@p),
+                          @p.IsDescendantOf(@h),
+                          @h.GetAncestor(1).ToString(),
+                          @h.GetReparentedValue(@p, hierarchyid::Parse('/9/')).ToString();",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "always_encrypted_cmk_cek_ddl_and_catalog_parity",
+                sql: "CREATE COLUMN MASTER KEY [CMK_DiffTest]
+                      WITH (
+                          KEY_STORE_PROVIDER_NAME = N'MSSQL_CERTIFICATE_STORE',
+                          KEY_PATH = N'CurrentUser/my/AABBCCDDEE00112233445566778899FF'
+                      );
+                      CREATE COLUMN ENCRYPTION KEY [CEK_DiffTest]
+                      WITH VALUES (
+                          COLUMN_MASTER_KEY = [CMK_DiffTest],
+                          ALGORITHM = 'RSA_OAEP',
+                          ENCRYPTED_VALUE = 0x016E00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF
+                      );
+                      DECLARE @cmk_name NVARCHAR(128) = (SELECT name FROM sys.column_master_keys WHERE name = 'CMK_DiffTest');
+                      DECLARE @cek_name NVARCHAR(128) = (SELECT name FROM sys.column_encryption_keys WHERE name = 'CEK_DiffTest');
+                      DECLARE @alg NVARCHAR(128) = (SELECT encryption_algorithm_name FROM sys.column_encryption_key_values WHERE column_encryption_key_id = (SELECT column_encryption_key_id FROM sys.column_encryption_keys WHERE name = 'CEK_DiffTest'));
+                      DROP COLUMN ENCRYPTION KEY [CEK_DiffTest];
+                      DROP COLUMN MASTER KEY [CMK_DiffTest];
+                      SELECT @cmk_name, @cek_name, @alg, (SELECT COUNT(*) FROM sys.column_master_keys WHERE name = 'CMK_DiffTest');",
+                ordered: true,
+            },
         ],
     }
 }

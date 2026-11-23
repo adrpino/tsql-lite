@@ -130,11 +130,14 @@ where
 
     if let Statement::Dml(DmlStatement::Select(ref select_stmt)) = stmt {
         if select_stmt.into_table.is_none() {
-            let Statement::Dml(DmlStatement::Select(select_stmt)) = stmt else {
+            let Statement::Dml(DmlStatement::Select(mut select_stmt)) = stmt else {
                 unreachable!()
             };
             let storage_guard = state.storage.read();
             let (cat, stor) = storage_guard.get_refs();
+            if !cat.get_user_databases().is_empty() {
+                super::super::script::db_scope::qualify_select_in_ctx(&mut select_stmt, ctx, cat);
+            }
             let qe = super::super::query::QueryExecutor {
                 catalog: cat,
                 storage: stor,
@@ -454,7 +457,11 @@ where
         clock: &SystemClock,
     };
 
-    let query_plan = super::super::query::plan::RelationalQuery::from(select_stmt.clone());
+    let mut select_owned = select_stmt.clone();
+    if !catalog.get_user_databases().is_empty() {
+        super::super::script::db_scope::qualify_select_in_ctx(&mut select_owned, ctx, catalog);
+    }
+    let query_plan = super::super::query::plan::RelationalQuery::from(select_owned);
     let fake_rows = vec![];
 
     let result = match super::super::query::pipeline::execute_rows_to_result(

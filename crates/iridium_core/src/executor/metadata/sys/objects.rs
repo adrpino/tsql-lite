@@ -30,7 +30,8 @@ impl VirtualTable for SysViews {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
@@ -40,6 +41,11 @@ impl VirtualTable for SysViews {
 
         let mut rows = Vec::new();
         for v in catalog.get_views() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &v.schema, active_db, catalog,
+            ) {
+                continue;
+            }
             let schema_id = v.schema_id;
             let object_id = if v.object_id != 0 {
                 v.object_id
@@ -96,7 +102,8 @@ impl VirtualTable for SysObjects {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let mut rows = Vec::new();
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
@@ -110,6 +117,13 @@ impl VirtualTable for SysObjects {
         let mut fk_idx = 0;
 
         for t in catalog.get_tables() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &t.schema_name,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             rows.push(StoredRow {
                 values: vec![
                     Value::Int(t.id as i32),
@@ -244,6 +258,13 @@ impl VirtualTable for SysObjects {
             }
         }
         for routine in catalog.get_routines() {
+            if !crate::executor::database_catalog::schema_belongs_to_db(
+                &routine.schema,
+                active_db,
+                catalog,
+            ) {
+                continue;
+            }
             let (ty, desc) = match &routine.kind {
                 crate::catalog::RoutineKind::Procedure { .. } => {
                     ("P ".to_string(), "SQL_STORED_PROCEDURE".to_string())

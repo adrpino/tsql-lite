@@ -57,12 +57,13 @@ where
     S: EngineStorage,
 {
     if let Statement::Session(SessionStatement::UseDatabase(database)) = stmt {
-        match super::super::database_catalog::database_id_for_name(database) {
+        let storage_guard = state.storage.read();
+        let (catalog, _) = storage_guard.get_refs();
+        match super::super::database_catalog::database_id_for_name_in(catalog, database) {
             Some(database_id) => {
                 let canonical_name =
-                    super::super::database_catalog::database_name_for_id(database_id)
-                        .unwrap_or(database.as_str())
-                        .to_string();
+                    super::super::database_catalog::database_name_for_id_in(catalog, database_id)
+                        .unwrap_or_else(|| database.clone());
                 ctx.metadata.database = Some(canonical_name);
                 Some(Ok(StmtOutcome::Ok(None)))
             }

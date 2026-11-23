@@ -20,19 +20,39 @@ pub(super) enum ResolvedObject<'a> {
     Trigger,
 }
 
-pub(super) fn parse_object_parts(raw: &str) -> (Option<&str>, &str) {
+pub(super) fn parse_object_parts_with_db(raw: &str) -> (Option<&str>, Option<&str>, &str) {
     let cleaned = raw.trim().trim_matches('[').trim_matches(']');
     let parts: Vec<&str> = cleaned
         .split('.')
         .map(|p| p.trim().trim_matches('[').trim_matches(']'))
-        .filter(|p| !p.is_empty())
         .collect();
     match parts.as_slice() {
-        [] => (None, cleaned),
-        [name] => (None, *name),
-        [schema, name] => (Some(*schema), *name),
-        [.., schema, name] => (Some(*schema), *name),
+        [] => (None, None, cleaned),
+        [name] => (None, None, *name),
+        [schema, name] => (
+            None,
+            if schema.is_empty() {
+                None
+            } else {
+                Some(*schema)
+            },
+            *name,
+        ),
+        [.., db, schema, name] => (
+            if db.is_empty() { None } else { Some(*db) },
+            if schema.is_empty() {
+                None
+            } else {
+                Some(*schema)
+            },
+            *name,
+        ),
     }
+}
+
+pub(super) fn parse_object_parts(raw: &str) -> (Option<&str>, &str) {
+    let (_, schema, name) = parse_object_parts_with_db(raw);
+    (schema, name)
 }
 
 pub(super) fn value_to_object_id(
@@ -60,7 +80,7 @@ pub(super) fn schema_name_by_id(catalog: &dyn Catalog, schema_id: u32) -> Option
         .get_schemas()
         .iter()
         .find(|s| s.id == schema_id)
-        .map(|s| s.name.clone())
+        .map(|s| crate::executor::database_catalog::display_schema_name(&s.name).to_string())
 }
 
 pub(super) fn table_by_object_id(catalog: &dyn Catalog, object_id: i32) -> Option<&TableDef> {

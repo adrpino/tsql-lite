@@ -113,6 +113,37 @@ pub enum CatalogMetadataAction {
         name: ObjectName,
         if_exists: bool,
     },
+    CreateColumnMasterKey {
+        name: String,
+        key_store_provider_name: String,
+        key_path: String,
+        allow_enclave_computations: bool,
+        signature: Option<Vec<u8>>,
+    },
+    DropColumnMasterKey {
+        name: String,
+    },
+    CreateColumnEncryptionKey {
+        name: String,
+        values: Vec<(String, String, Vec<u8>)>,
+    },
+    AlterColumnEncryptionKey {
+        name: String,
+        add: bool,
+        cmk_name: String,
+        algorithm: String,
+        encrypted_value: Vec<u8>,
+    },
+    DropColumnEncryptionKey {
+        name: String,
+    },
+    CreateDatabase {
+        name: String,
+    },
+    DropDatabase {
+        name: String,
+        if_exists: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -238,6 +269,9 @@ pub enum AlterTableAction {
         column: String,
         masking_function: Option<String>,
     },
+    SwitchPartition {
+        target_table: ObjectName,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,6 +350,7 @@ pub enum ReferentialAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForeignKeyRef {
+    pub name: Option<String>,
     pub referenced_table: ObjectName,
     pub referenced_columns: Vec<String>,
     pub on_delete: Option<ReferentialAction>,

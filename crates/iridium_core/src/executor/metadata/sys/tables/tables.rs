@@ -58,7 +58,8 @@ impl VirtualTable for SysTables {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
@@ -68,6 +69,13 @@ impl VirtualTable for SysTables {
         catalog
             .get_tables()
             .iter()
+            .filter(|t| {
+                crate::executor::database_catalog::schema_belongs_to_db(
+                    &t.schema_name,
+                    active_db,
+                    catalog,
+                )
+            })
             .map(|t| StoredRow {
                 values: vec![
                     Value::Int(t.id as i32),                                   // object_id

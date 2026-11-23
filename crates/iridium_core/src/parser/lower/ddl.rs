@@ -472,6 +472,7 @@ pub fn lower_column_def(
         foreign_key: c
             .foreign_key
             .map(|fk| executor_ast::statements::ddl::ForeignKeyRef {
+                name: fk.name,
                 referenced_table: lower_object_name(fk.ref_table),
                 referenced_columns: fk.ref_columns,
                 on_delete: fk.on_delete.map(lower_referential_action),
@@ -604,6 +605,11 @@ pub fn lower_alter_action(
             executor_ast::statements::ddl::AlterTableAction::SetColumnMask {
                 column,
                 masking_function,
+            },
+        ),
+        ast::AlterTableAction::SwitchPartition { target_table } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::SwitchPartition {
+                target_table: lower_object_name(target_table),
             },
         ),
     }

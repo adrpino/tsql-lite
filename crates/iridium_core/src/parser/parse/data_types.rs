@@ -244,6 +244,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                     Ok(DataType::Time)
                 }
                 "XML" => Ok(DataType::Xml),
+                "GEOGRAPHY" | "GEOMETRY" | "HIERARCHYID" => Ok(DataType::NVarChar(None)),
                 "TEXT" => Ok(DataType::Text),
                 "NTEXT" => Ok(DataType::NText),
                 "IMAGE" => Ok(DataType::Image),

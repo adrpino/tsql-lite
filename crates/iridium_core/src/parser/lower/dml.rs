@@ -1091,6 +1091,7 @@ pub fn lower_insert_bulk(
                     computed_expr: c.computed_expr.map(lower_expr).transpose()?,
                     foreign_key: c.foreign_key.map(|fk| {
                         executor_ast::statements::ddl::ForeignKeyRef {
+                            name: fk.name,
                             referenced_table: lower_object_name(fk.ref_table),
                             referenced_columns: fk.ref_columns,
                             on_delete: fk.on_delete.map(super::ddl::lower_referential_action),

@@ -34,7 +34,14 @@ pub(crate) fn eval_schema_id(
         }
         v.to_string_value()
     };
-    Ok(match catalog.get_schema_id(&schema_name) {
+    let current_db = crate::executor::database_catalog::current_database_name(ctx);
+    let eff_schema = crate::executor::database_catalog::resolve_effective_schema(
+        None,
+        &schema_name,
+        current_db,
+        catalog,
+    );
+    Ok(match catalog.get_schema_id(&eff_schema) {
         Some(id) => Value::Int(id as i32),
         None => Value::Null,
     })
@@ -183,8 +190,13 @@ pub(crate) fn eval_object_id(
         return Ok(Value::Null);
     }
     let raw = val.to_string_value();
-    let (schema, name) = super::common::parse_object_parts(&raw);
-    let schema = schema.unwrap_or("dbo");
+    let (obj_db, schema_opt, name) = super::common::parse_object_parts_with_db(&raw);
+    let raw_schema = schema_opt.unwrap_or("dbo");
+    let current_db = crate::executor::database_catalog::current_database_name(ctx);
+    let eff_schema = crate::executor::database_catalog::resolve_effective_schema(
+        obj_db, raw_schema, current_db, catalog,
+    );
+    let schema = eff_schema.as_str();
 
     let object_type = if let Some(arg) = args.get(1) {
         let ty = eval_expr_to_value(arg, row, ctx, catalog, storage, clock)?;

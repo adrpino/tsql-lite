@@ -8,8 +8,8 @@ use super::common::eval_expr_to_value;
 use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
 use crate::executor::database_catalog::{
-    current_database_id, current_database_name, database_id_for_name, database_name_for_id,
-    recovery_model_for_name,
+    current_database_id_in, current_database_name, database_id_for_name_in,
+    database_name_for_id_in, recovery_model_for_name,
 };
 use crate::executor::model::ContextTable;
 
@@ -32,13 +32,13 @@ pub(crate) fn eval_databasepropertyex(
         return Ok(Value::Null);
     }
     let db_name = match db_val {
-        Value::Int(v) => database_name_for_id(v).unwrap_or("").to_string(),
-        Value::BigInt(v) => database_name_for_id(v as i32).unwrap_or("").to_string(),
-        Value::SmallInt(v) => database_name_for_id(v as i32).unwrap_or("").to_string(),
-        Value::TinyInt(v) => database_name_for_id(v as i32).unwrap_or("").to_string(),
+        Value::Int(v) => database_name_for_id_in(catalog, v).unwrap_or_default(),
+        Value::BigInt(v) => database_name_for_id_in(catalog, v as i32).unwrap_or_default(),
+        Value::SmallInt(v) => database_name_for_id_in(catalog, v as i32).unwrap_or_default(),
+        Value::TinyInt(v) => database_name_for_id_in(catalog, v as i32).unwrap_or_default(),
         _ => db_val.to_string_value(),
     };
-    let is_known_db = database_id_for_name(&db_name).is_some();
+    let is_known_db = database_id_for_name_in(catalog, &db_name).is_some();
     let active_db = current_database_name(ctx).to_string();
     if !is_known_db && !active_db.eq_ignore_ascii_case(&db_name) {
         return Ok(Value::Null);
@@ -98,17 +98,33 @@ pub(crate) fn eval_original_db_name(
     Ok(Value::NVarChar(ctx.metadata.original_database.clone()))
 }
 
-pub(crate) fn eval_db_name(args: &[Expr], ctx: &ExecutionContext) -> Result<Value, DbError> {
+pub(crate) fn eval_db_name(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
     if args.len() > 1 {
         return Err(DbError::Execution(
             "DB_NAME expects 0 or 1 arguments".into(),
         ));
     }
     if let Some(arg) = args.first() {
-        let name = match arg {
-            Expr::Integer(i) => database_name_for_id(*i as i32).unwrap_or("").to_string(),
-            Expr::String(s) | Expr::UnicodeString(s) if database_id_for_name(s).is_some() => {
-                s.clone()
+        let val = eval_expr_to_value(arg, row, ctx, catalog, storage, clock)?;
+        if val.is_null() {
+            return Ok(Value::Null);
+        }
+        let name = match val {
+            Value::Int(i) => database_name_for_id_in(catalog, i).unwrap_or_default(),
+            Value::BigInt(i) => database_name_for_id_in(catalog, i as i32).unwrap_or_default(),
+            Value::SmallInt(i) => database_name_for_id_in(catalog, i as i32).unwrap_or_default(),
+            Value::TinyInt(i) => database_name_for_id_in(catalog, i as i32).unwrap_or_default(),
+            Value::VarChar(s) | Value::NVarChar(s) | Value::Char(s) | Value::NChar(s)
+                if database_id_for_name_in(catalog, &s).is_some() =>
+            {
+                s
             }
             _ => return Ok(Value::Null),
         };
@@ -120,18 +136,37 @@ pub(crate) fn eval_db_name(args: &[Expr], ctx: &ExecutionContext) -> Result<Valu
     Ok(Value::NVarChar(current_database_name(ctx).to_string()))
 }
 
-pub(crate) fn eval_db_id(args: &[Expr], ctx: &ExecutionContext) -> Result<Value, DbError> {
+pub(crate) fn eval_db_id(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
     if args.len() > 1 {
         return Err(DbError::Execution("DB_ID expects 0 or 1 arguments".into()));
     }
     if let Some(arg) = args.first() {
-        return Ok(match arg {
-            Expr::Integer(i) if database_name_for_id(*i as i32).is_some() => Value::Int(*i as i32),
-            Expr::String(s) | Expr::UnicodeString(s) => database_id_for_name(s)
-                .map(Value::Int)
-                .unwrap_or(Value::Null),
+        let val = eval_expr_to_value(arg, row, ctx, catalog, storage, clock)?;
+        if val.is_null() {
+            return Ok(Value::Null);
+        }
+        return Ok(match val {
+            Value::Int(i) if database_name_for_id_in(catalog, i).is_some() => Value::Int(i),
+            Value::BigInt(i) if database_name_for_id_in(catalog, i as i32).is_some() => {
+                Value::Int(i as i32)
+            }
+            Value::SmallInt(i) if database_name_for_id_in(catalog, i as i32).is_some() => {
+                Value::Int(i as i32)
+            }
+            Value::VarChar(s) | Value::NVarChar(s) | Value::Char(s) | Value::NChar(s) => {
+                database_id_for_name_in(catalog, &s)
+                    .map(Value::Int)
+                    .unwrap_or(Value::Null)
+            }
             _ => Value::Null,
         });
     }
-    Ok(Value::Int(current_database_id(ctx)))
+    Ok(Value::Int(current_database_id_in(catalog, ctx)))
 }

@@ -140,18 +140,23 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
             name,
             if_exists,
         })))
+    } else if parser.at_keyword(Keyword::Column) {
+        let _ = parser.next();
+        super::column_encryption::parse_drop_column_key(parser)
     } else if parser.at_keyword(Keyword::Database) {
         let _ = parser.next();
-        let _if_exists = consume_if_exists(parser);
-        if matches!(
-            parser.peek(),
-            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
-        ) {
-            let _ = parser.next();
-        }
-        Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-            Vec::new(),
-        )))
+        let if_exists = consume_if_exists(parser);
+        let db_name = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            Some(Token::Keyword(k)) => k.as_sql().to_string(),
+            _ => return parser.backtrack(Expected::Description("database name")),
+        };
+        Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+            Box::new(crate::ast::CatalogMetadataAction::DropDatabase {
+                name: db_name,
+                if_exists,
+            }),
+        ))))
     } else if parser.at_keyword(Keyword::User) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);

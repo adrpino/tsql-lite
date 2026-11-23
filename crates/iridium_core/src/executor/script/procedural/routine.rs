@@ -1,13 +1,75 @@
 use crate::executor::result::QueryResult;
 use crate::types::Value;
 
-pub(crate) fn execute_xp_msver() -> QueryResult {
+pub(crate) fn execute_xp_msver(filters: &[String]) -> QueryResult {
+    let all_rows: &[(i32, &str, Option<i32>, Option<&str>)] = &[
+        (1, "ProductName", None, Some("Microsoft SQL Server")),
+        (2, "ProductVersion", Some(1_048_576), Some("16.0.1000.6")),
+        (3, "Language", Some(1033), Some("English (United States)")),
+        (4, "Platform", None, Some("NT x64")),
+        (5, "Comments", None, Some("SQL")),
+        (6, "CompanyName", None, Some("Microsoft Corporation")),
+        (
+            7,
+            "FileDescription",
+            None,
+            Some("SQL Server Windows NT - 64 Bit"),
+        ),
+        (8, "FileVersion", None, Some("2022.0160.1000.06")),
+        (9, "InternalName", None, Some("SQLSERVR")),
+        (
+            10,
+            "LegalCopyright",
+            None,
+            Some("Microsoft Corp. All rights reserved."),
+        ),
+        (
+            11,
+            "LegalTrademarks",
+            None,
+            Some("Microsoft SQL Server is a registered trademark of Microsoft Corporation."),
+        ),
+        (12, "OriginalFilename", None, Some("SQLSERVR.EXE")),
+        (13, "PrivateBuild", None, None),
+        (14, "SpecialBuild", Some(65_536_000), None),
+        (15, "WindowsVersion", Some(2600), Some("10.0 (20348)")),
+        (16, "ProcessorCount", Some(4), Some("4")),
+        (17, "ProcessorActiveMask", None, Some("000000000000000f")),
+        (18, "ProcessorType", Some(8664), Some("PROCESSOR_AMD_X8664")),
+        (
+            19,
+            "PhysicalMemory",
+            Some(16384),
+            Some("16384 (17179869184)"),
+        ),
+        (20, "Product ID", None, None),
+    ];
+
+    let rows: Vec<Vec<Value>> = all_rows
+        .iter()
+        .filter(|(_, name, _, _)| {
+            filters.is_empty()
+                || filters
+                    .iter()
+                    .any(|req| req.trim().eq_ignore_ascii_case(name))
+        })
+        .map(|(idx, name, iv, cv)| {
+            vec![
+                Value::Int(*idx),
+                Value::NVarChar((*name).to_string()),
+                iv.map(Value::Int).unwrap_or(Value::Null),
+                cv.map(|s| Value::NVarChar(s.to_string()))
+                    .unwrap_or(Value::Null),
+            ]
+        })
+        .collect();
+
     QueryResult {
         columns: vec![
-            "ID".to_string(),
+            "Index".to_string(),
             "Name".to_string(),
             "Internal_Value".to_string(),
-            "Value".to_string(),
+            "Character_Value".to_string(),
         ],
         column_types: vec![
             crate::types::DataType::Int,
@@ -15,51 +77,8 @@ pub(crate) fn execute_xp_msver() -> QueryResult {
             crate::types::DataType::Int,
             crate::types::DataType::NVarChar { max_len: 512 },
         ],
-        column_nullabilities: vec![true, true, true, true],
-        rows: vec![
-            vec![
-                Value::Int(1),
-                Value::NVarChar("ProductName".to_string()),
-                Value::Int(0),
-                Value::NVarChar("iridium_sql".to_string()),
-            ],
-            vec![
-                Value::Int(2),
-                Value::NVarChar("ProductVersion".to_string()),
-                Value::Int(0),
-                Value::NVarChar("16.0.1000.6".to_string()),
-            ],
-            vec![
-                Value::Int(3),
-                Value::NVarChar("Language".to_string()),
-                Value::Int(0),
-                Value::NVarChar("us_english".to_string()),
-            ],
-            vec![
-                Value::Int(4),
-                Value::NVarChar("Platform".to_string()),
-                Value::Int(0),
-                Value::NVarChar("Windows".to_string()),
-            ],
-            vec![
-                Value::Int(5),
-                Value::NVarChar("ProcessorCount".to_string()),
-                Value::Int(1),
-                Value::NVarChar("1".to_string()),
-            ],
-            vec![
-                Value::Int(6),
-                Value::NVarChar("PhysicalMemory".to_string()),
-                Value::Int(0),
-                Value::NVarChar("0".to_string()),
-            ],
-            vec![
-                Value::Int(7),
-                Value::NVarChar("ServerName".to_string()),
-                Value::Int(0),
-                Value::NVarChar("localhost".to_string()),
-            ],
-        ],
+        column_nullabilities: vec![false, false, true, true],
+        rows,
         ..Default::default()
     }
 }

@@ -12,7 +12,7 @@ use crate::executor::context::ExecutionContext;
 use crate::executor::model::ContextTable;
 use crate::executor::scalar::vector;
 use crate::executor::scalar::{
-    bitwise, datetime, logic, math, metadata as tsql_metadata, string, system,
+    bitwise, datetime, logic, math, metadata as tsql_metadata, string, system, tsql_subsystems,
 };
 use crate::executor::{fuzzy, json, metadata as exec_metadata, regexp};
 
@@ -53,6 +53,44 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
         }
         Ok(system::random::eval_newsequentialid())
     }),
+    builtin!("CONTAINS" => tsql_subsystems::eval_contains),
+    builtin!("FREETEXT" => tsql_subsystems::eval_freetext),
+    builtin!("GEOGRAPHY::POINT" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_point(true, args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("GEOMETRY::POINT" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_point(false, args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("GEOGRAPHY::STGEOMFROMTEXT" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_from_text(true, args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("GEOMETRY::STGEOMFROMTEXT" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_from_text(false, args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__METHOD_STDISTANCE" => tsql_subsystems::eval_spatial_distance),
+    builtin!("__METHOD_STASTEXT" => tsql_subsystems::eval_spatial_as_text),
+    builtin!("__METHOD_LAT" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_prop("LAT", args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__METHOD_LONG" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_prop("LONG", args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__METHOD_STX" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_prop("STX", args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__METHOD_STY" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_prop("STY", args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("__METHOD_STSRID" => |args, row, ctx, catalog, storage, clock| {
+        tsql_subsystems::eval_spatial_prop("STSRID", args, row, ctx, catalog, storage, clock)
+    }),
+    builtin!("HIERARCHYID::PARSE" => tsql_subsystems::eval_hierarchyid_parse),
+    builtin!("HIERARCHYID::GETROOT" => tsql_subsystems::eval_hierarchyid_get_root),
+    builtin!("__METHOD_TOSTRING" => tsql_subsystems::eval_method_to_string),
+    builtin!("__METHOD_GETLEVEL" => tsql_subsystems::eval_hierarchyid_get_level),
+    builtin!("__METHOD_ISDESCENDANTOF" => tsql_subsystems::eval_hierarchyid_is_descendant_of),
+    builtin!("__METHOD_GETANCESTOR" => tsql_subsystems::eval_hierarchyid_get_ancestor),
+    builtin!("__METHOD_GETREPARENTEDVALUE" => tsql_subsystems::eval_hierarchyid_get_reparented_value),
     builtin!("ROWCOUNT_BIG" => |args, _row, ctx, _catalog, _storage, _clock| {
         if !args.is_empty() {
             return Err(DbError::Execution("ROWCOUNT_BIG expects no arguments".into()));
@@ -181,12 +219,8 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("ERROR_LINE" => |_args, _row, ctx, _catalog, _storage, _clock| {
         system::diagnostics::eval_error_line(ctx)
     }),
-    builtin!("DB_NAME" => |args, _row, ctx, _catalog, _storage, _clock| {
-        tsql_metadata::eval_db_name(args, ctx)
-    }),
-    builtin!("DB_ID" => |args, _row, ctx, _catalog, _storage, _clock| {
-        tsql_metadata::eval_db_id(args, ctx)
-    }),
+    builtin!("DB_NAME" => tsql_metadata::eval_db_name),
+    builtin!("DB_ID" => tsql_metadata::eval_db_id),
     builtin!("SUSER_SNAME" => |args, _row, ctx, _catalog, _storage, _clock| {
         system::identity::eval_suser_sname(args, ctx)
     }),

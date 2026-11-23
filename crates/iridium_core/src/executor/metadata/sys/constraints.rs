@@ -41,6 +41,33 @@ impl VirtualTable for SysCheckConstraints {
             .unwrap();
         for t in catalog.get_tables() {
             let schema_id = t.schema_id as i32;
+            for col in &t.columns {
+                if let Some(expr) = &col.check {
+                    let is_system_named = col.check_constraint_name.is_none();
+                    let name = col
+                        .check_constraint_name
+                        .clone()
+                        .unwrap_or_else(|| format!("CK__{}__{}", t.name, col.name));
+                    rows.push(StoredRow {
+                        values: vec![
+                            Value::VarChar(name),
+                            Value::Int(object_id),
+                            Value::Int(schema_id),
+                            Value::Int(t.id as i32),
+                            Value::DateTime(epoch),
+                            Value::DateTime(epoch),
+                            Value::Bit(false),
+                            Value::VarChar(format!("({})", format_expr(expr))),
+                            Value::Bit(false),
+                            Value::Bit(false),
+                            Value::Bit(false),
+                            Value::Bit(is_system_named),
+                        ],
+                        deleted: false,
+                    });
+                    object_id += 1;
+                }
+            }
             for chk in &t.check_constraints {
                 rows.push(StoredRow {
                     values: vec![

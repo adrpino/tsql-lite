@@ -76,8 +76,18 @@ impl<'a> ScriptExecutor<'a> {
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
         if stmt.name.name.eq_ignore_ascii_case("xp_msver") {
+            let mut filters = Vec::new();
+            for arg in &stmt.args {
+                let val = eval_expr(&arg.expr, &[], ctx, self.catalog, self.storage, self.clock)?;
+                if !val.is_null() {
+                    let s = val.to_string_value();
+                    if !s.trim().is_empty() {
+                        filters.push(s);
+                    }
+                }
+            }
             self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
-            let mut res = execute_xp_msver();
+            let mut res = execute_xp_msver(&filters);
             res.return_status = Some(0);
             res.is_procedure = true;
             return Ok(Some(res));

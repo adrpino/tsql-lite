@@ -38,7 +38,7 @@ pub fn parse_primary(parser: &mut Parser) -> ParseResult<Expr> {
         Some(Token::Variable(v)) => {
             let v = v.clone();
             let _ = parser.next();
-            Ok(Expr::Variable(v))
+            parse_chained_type_methods(parser, Expr::Variable(v), true)
         }
         Some(Token::BinaryLiteral(hex)) => {
             let hex = hex.clone();
@@ -370,6 +370,82 @@ pub fn parse_try_convert(parser: &mut Parser) -> ParseResult<Expr> {
     })
 }
 
+fn map_instance_method_name(method: &str) -> Option<&'static str> {
+    match method.to_ascii_uppercase().as_str() {
+        "STDISTANCE" => Some("__METHOD_STDISTANCE"),
+        "STASTEXT" => Some("__METHOD_STASTEXT"),
+        "TOSTRING" => Some("__METHOD_TOSTRING"),
+        "GETLEVEL" => Some("__METHOD_GETLEVEL"),
+        "ISDESCENDANTOF" => Some("__METHOD_ISDESCENDANTOF"),
+        "GETANCESTOR" => Some("__METHOD_GETANCESTOR"),
+        "GETREPARENTEDVALUE" => Some("__METHOD_GETREPARENTEDVALUE"),
+        _ => None,
+    }
+}
+
+fn map_instance_property_name(prop: &str) -> Option<&'static str> {
+    match prop.to_ascii_uppercase().as_str() {
+        "LAT" => Some("__METHOD_LAT"),
+        "LONG" => Some("__METHOD_LONG"),
+        "STX" => Some("__METHOD_STX"),
+        "STY" => Some("__METHOD_STY"),
+        "STSRID" => Some("__METHOD_STSRID"),
+        _ => None,
+    }
+}
+
+fn parse_chained_type_methods(
+    parser: &mut Parser,
+    mut expr: Expr,
+    allow_props: bool,
+) -> ParseResult<Expr> {
+    while matches!(parser.peek(), Some(Token::Dot)) {
+        let member = match parser.peek_at(1) {
+            Some(Token::Identifier(id)) => Some(id.to_ascii_uppercase()),
+            Some(Token::Keyword(k)) => Some(k.as_sql().to_ascii_uppercase()),
+            _ => None,
+        };
+        if matches!(parser.peek_at(2), Some(Token::LParen)) {
+            let internal_fn = member.as_deref().and_then(|m| match m {
+                "VALUE" => Some("__XML_VALUE"),
+                "EXIST" => Some("__XML_EXIST"),
+                "QUERY" => Some("__XML_QUERY"),
+                other => map_instance_method_name(other),
+            });
+            let Some(internal_fn) = internal_fn else {
+                break;
+            };
+            let _ = parser.next(); // .
+            let _ = parser.next(); // method
+            let _ = parser.next(); // (
+            let mut m_args = vec![expr];
+            if !matches!(parser.peek(), Some(Token::RParen)) {
+                m_args.extend(parse_comma_list(parser, parse_expr)?);
+            }
+            parser.expect_rparen()?;
+            expr = Expr::FunctionCall {
+                name: internal_fn.to_string(),
+                args: m_args,
+                within_group: None,
+            };
+        } else if allow_props {
+            let Some(internal_fn) = member.as_deref().and_then(map_instance_property_name) else {
+                break;
+            };
+            let _ = parser.next(); // .
+            let _ = parser.next(); // property
+            expr = Expr::FunctionCall {
+                name: internal_fn.to_string(),
+                args: vec![expr],
+                within_group: None,
+            };
+        } else {
+            break;
+        }
+    }
+    Ok(expr)
+}
+
 fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResult<Expr> {
     let mut parts = vec![name];
     loop {
@@ -692,6 +768,27 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
             parse_comma_list(parser, parse_expr)?
         };
         parser.expect_rparen()?;
+        // Check instance method call on a column/qualified column:
+        // e.g. `t.Geo.STDistance(@pt)`, `Node.GetLevel()`, `t.Node.ToString()`.
+        if parts.len() >= 2 {
+            if let Some(internal_fn) = map_instance_method_name(parts.last().unwrap()) {
+                let receiver_parts = parts[..parts.len() - 1].to_vec();
+                let receiver = if receiver_parts.len() == 1 {
+                    Expr::Identifier(receiver_parts.into_iter().next().unwrap())
+                } else {
+                    Expr::QualifiedIdentifier(receiver_parts)
+                };
+                let mut m_args = Vec::with_capacity(args.len() + 1);
+                m_args.push(receiver);
+                m_args.extend(args);
+                let call_expr = Expr::FunctionCall {
+                    name: internal_fn.to_string(),
+                    args: m_args,
+                    within_group: None,
+                };
+                return parse_chained_type_methods(parser, call_expr, true);
+            }
+        }
         let mut function_name = if parts.len() == 1 {
             parts.remove(0)
         } else {
@@ -736,43 +833,12 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
         if parser.at_keyword(Keyword::Over) {
             return parse_window_over(parser, function_name, args, ignore_nulls);
         }
-        let mut call_expr = Expr::FunctionCall {
+        let call_expr = Expr::FunctionCall {
             name: function_name,
             args,
             within_group,
         };
-        // Support chained XML methods on function results, e.g. `EVENTDATA().value('...', 'NVARCHAR(100)')`.
-        while matches!(parser.peek(), Some(Token::Dot))
-            && matches!(parser.peek_at(2), Some(Token::LParen))
-        {
-            let method_name = match parser.peek_at(1) {
-                Some(Token::Identifier(id)) => Some(id.to_ascii_uppercase()),
-                Some(Token::Keyword(k)) => Some(k.as_sql().to_ascii_uppercase()),
-                _ => None,
-            };
-            let Some(internal_fn) = method_name.as_deref().and_then(|m| match m {
-                "VALUE" => Some("__XML_VALUE"),
-                "EXIST" => Some("__XML_EXIST"),
-                "QUERY" => Some("__XML_QUERY"),
-                _ => None,
-            }) else {
-                break;
-            };
-            let _ = parser.next(); // .
-            let _ = parser.next(); // method
-            let _ = parser.next(); // (
-            let mut m_args = vec![call_expr];
-            if !matches!(parser.peek(), Some(Token::RParen)) {
-                m_args.extend(parse_comma_list(parser, parse_expr)?);
-            }
-            parser.expect_rparen()?;
-            call_expr = Expr::FunctionCall {
-                name: internal_fn.to_string(),
-                args: m_args,
-                within_group: None,
-            };
-        }
-        Ok(call_expr)
+        parse_chained_type_methods(parser, call_expr, true)
     } else if parts.len() == 1 {
         let upper = parts[0].to_uppercase();
         if matches!(

@@ -203,7 +203,10 @@ fn test_contained_ag_session_probe_batch_returns_zero() {
 fn test_xp_msver_is_available_for_object_explorer_probes() {
     let mut engine = Engine::new();
     let r = query(&mut engine, "EXEC master.dbo.xp_msver");
-    assert_eq!(r.columns, vec!["ID", "Name", "Internal_Value", "Value"]);
+    assert_eq!(
+        r.columns,
+        vec!["Index", "Name", "Internal_Value", "Character_Value"]
+    );
     assert!(r.rows.len() >= 4);
     assert!(r
         .rows

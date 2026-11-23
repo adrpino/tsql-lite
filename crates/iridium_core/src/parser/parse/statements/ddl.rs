@@ -144,6 +144,7 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                 parser.expect_rparen()?;
             }
             Some(Token::Keyword(Keyword::Constraint)) => {
+                let saved = parser.save();
                 let _ = parser.next();
                 let constraint_name = match parser.next() {
                     Some(Token::Identifier(id)) => id.clone(),
@@ -162,31 +163,63 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                         parser.expect_rparen()?;
                         check_constraint_name = Some(constraint_name);
                     }
-                    _ => return parser.backtrack(Expected::Description("DEFAULT or CHECK")),
+                    Some(Token::Keyword(Keyword::Primary)) => {
+                        parser.expect_keyword(Keyword::Key)?;
+                        let mut col_clustered = true;
+                        if parser.at_keyword(Keyword::Clustered) {
+                            let _ = parser.next();
+                            col_clustered = true;
+                        } else if parser.at_keyword(Keyword::Nonclustered) {
+                            let _ = parser.next();
+                            col_clustered = false;
+                        }
+                        if matches!(parser.peek(), Some(Token::LParen)) {
+                            parser.restore(saved);
+                            break;
+                        }
+                        is_clustered = col_clustered;
+                        is_primary_key = true;
+                        skip_optional_index_storage_clauses(parser)?;
+                    }
+                    Some(Token::Keyword(Keyword::Unique)) => {
+                        let mut col_clustered = false;
+                        if parser.at_keyword(Keyword::Clustered) {
+                            let _ = parser.next();
+                            col_clustered = true;
+                        } else if parser.at_keyword(Keyword::Nonclustered) {
+                            let _ = parser.next();
+                            col_clustered = false;
+                        }
+                        if matches!(parser.peek(), Some(Token::LParen)) {
+                            parser.restore(saved);
+                            break;
+                        }
+                        is_clustered = col_clustered;
+                        is_unique = true;
+                        skip_optional_index_storage_clauses(parser)?;
+                    }
+                    Some(Token::Keyword(Keyword::Foreign)) => {
+                        parser.expect_keyword(Keyword::Key)?;
+                        if matches!(parser.peek(), Some(Token::LParen)) {
+                            parser.restore(saved);
+                            break;
+                        }
+                        parser.expect_keyword(Keyword::References)?;
+                        foreign_key = Some(parse_inline_fk_ref(parser, Some(constraint_name))?);
+                    }
+                    Some(Token::Keyword(Keyword::References)) => {
+                        foreign_key = Some(parse_inline_fk_ref(parser, Some(constraint_name))?);
+                    }
+                    _ => {
+                        return parser.backtrack(Expected::Description(
+                            "DEFAULT, CHECK, PRIMARY KEY, UNIQUE, or REFERENCES",
+                        ))
+                    }
                 }
             }
             Some(Token::Keyword(Keyword::References)) => {
                 let _ = parser.next();
-                let ref_table = super::parse_multipart_name(parser)?;
-                let mut ref_columns = Vec::new();
-                if matches!(parser.peek(), Some(Token::LParen)) {
-                    let _ = parser.next();
-                    ref_columns =
-                        crate::parser::parse::expressions::parse_comma_list(parser, |p| {
-                            match p.next() {
-                                Some(Token::Identifier(id)) => Ok(id.clone()),
-                                Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
-                                _ => p.backtrack(Expected::Description("column name")),
-                            }
-                        })?;
-                    parser.expect_rparen()?;
-                }
-                foreign_key = Some(ForeignKeyRef {
-                    ref_table,
-                    ref_columns,
-                    on_delete: None,
-                    on_update: None,
-                });
+                foreign_key = Some(parse_inline_fk_ref(parser, None)?);
             }
             Some(Token::Keyword(Keyword::As)) => {
                 let _ = parser.next();
@@ -896,6 +929,49 @@ fn parse_signed_int(parser: &mut Parser) -> ParseResult<i64> {
     } else {
         parser.backtrack(Expected::Description("number"))
     }
+}
+
+fn parse_inline_fk_ref(parser: &mut Parser, name: Option<String>) -> ParseResult<ForeignKeyRef> {
+    let ref_table = super::parse_multipart_name(parser)?;
+    let mut ref_columns = Vec::new();
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        ref_columns =
+            crate::parser::parse::expressions::parse_comma_list(parser, |p| match p.next() {
+                Some(Token::Identifier(id)) => Ok(id.clone()),
+                Some(Token::Keyword(kw)) => Ok(kw.as_ref().to_string()),
+                _ => p.backtrack(Expected::Description("column name")),
+            })?;
+        parser.expect_rparen()?;
+    }
+    let mut on_delete = None;
+    let mut on_update = None;
+    while let Some(Token::Keyword(kw)) = parser.peek() {
+        if *kw == Keyword::On {
+            let saved = parser.save();
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Keyword(Keyword::Delete))) {
+                let _ = parser.next();
+                on_delete = Some(parse_referential_action(parser)?);
+            } else if matches!(parser.peek(), Some(Token::Keyword(Keyword::Update))) {
+                let _ = parser.next();
+                on_update = Some(parse_referential_action(parser)?);
+            } else {
+                parser.restore(saved);
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    skip_optional_not_for_replication(parser);
+    Ok(ForeignKeyRef {
+        name,
+        ref_table,
+        ref_columns,
+        on_delete,
+        on_update,
+    })
 }
 
 fn parse_referential_action(parser: &mut Parser) -> ParseResult<ReferentialAction> {

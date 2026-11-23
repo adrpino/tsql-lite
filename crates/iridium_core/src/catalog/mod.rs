@@ -15,9 +15,10 @@ mod view_registry;
 use cow_registry::CowRegistry;
 pub use cow_registry::{CowRegistryIter, CowRegistryView};
 pub use metadata_registry::{
-    FilegroupDef, MaskedColumnDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef,
-    PrincipalDef, RoleMemberDef, SecurityBlockOp, SecurityPolicyDef, SecurityPredicateDef,
-    SecurityPredicateKind,
+    ColumnEncryptionKeyDef, ColumnEncryptionKeyValueDef, ColumnMasterKeyDef, FilegroupDef,
+    MaskedColumnDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef, PrincipalDef,
+    RoleMemberDef, SecurityBlockOp, SecurityPolicyDef, SecurityPredicateDef, SecurityPredicateKind,
+    UserDatabaseDef,
 };
 
 use crate::ast::Expr;
@@ -604,6 +605,47 @@ pub trait Catalog:
     fn get_masked_columns(&self) -> &[MaskedColumnDef] {
         &[]
     }
+    fn get_column_master_keys(&self) -> &[ColumnMasterKeyDef] {
+        &[]
+    }
+    fn get_column_encryption_keys(&self) -> &[ColumnEncryptionKeyDef] {
+        &[]
+    }
+    fn create_column_master_key(&mut self, _def: ColumnMasterKeyDef) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn drop_column_master_key(&mut self, _name: &str) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn create_column_encryption_key(
+        &mut self,
+        _name: String,
+        _values: Vec<(String, String, Vec<u8>)>,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn alter_column_encryption_key(
+        &mut self,
+        _name: &str,
+        _add: bool,
+        _cmk_name: &str,
+        _algorithm: String,
+        _encrypted_value: Vec<u8>,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn drop_column_encryption_key(&mut self, _name: &str) -> Result<(), DbError> {
+        Ok(())
+    }
+    fn get_user_databases(&self) -> &[UserDatabaseDef] {
+        &[]
+    }
+    fn create_database(&mut self, _name: String) -> Result<i32, DbError> {
+        Ok(0)
+    }
+    fn drop_database(&mut self, _name: &str, _if_exists: bool) -> Result<Vec<u32>, DbError> {
+        Ok(Vec::new())
+    }
     fn set_column_mask(
         &mut self,
         _table_id: u32,
@@ -764,6 +806,12 @@ pub struct CatalogImpl {
     table_large_value_out_of_row: Arc<Vec<u32>>,
     #[serde(default, with = "arc_serde")]
     masked_columns: Arc<Vec<MaskedColumnDef>>,
+    #[serde(default, with = "arc_serde")]
+    column_master_keys: Arc<Vec<ColumnMasterKeyDef>>,
+    #[serde(default, with = "arc_serde")]
+    column_encryption_keys: Arc<Vec<ColumnEncryptionKeyDef>>,
+    #[serde(default, with = "arc_serde")]
+    user_databases: Arc<Vec<UserDatabaseDef>>,
     #[serde(default, with = "arc_serde")]
     security_policies: Arc<Vec<SecurityPolicyDef>>,
     #[serde(default, with = "arc_serde")]
@@ -930,6 +978,9 @@ impl Default for CatalogImpl {
             filegroups: Arc::new(Vec::new()),
             table_large_value_out_of_row: Arc::new(Vec::new()),
             masked_columns: Arc::new(Vec::new()),
+            column_master_keys: Arc::new(Vec::new()),
+            column_encryption_keys: Arc::new(Vec::new()),
+            user_databases: Arc::new(Vec::new()),
             security_policies: Arc::new(Vec::new()),
             temporal_tables: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
@@ -1158,6 +1209,267 @@ impl Catalog for CatalogImpl {
     }
     fn get_masked_columns(&self) -> &[MaskedColumnDef] {
         &self.masked_columns
+    }
+    fn get_column_master_keys(&self) -> &[ColumnMasterKeyDef] {
+        &self.column_master_keys
+    }
+    fn get_column_encryption_keys(&self) -> &[ColumnEncryptionKeyDef] {
+        &self.column_encryption_keys
+    }
+    fn create_column_master_key(&mut self, mut def: ColumnMasterKeyDef) -> Result<(), DbError> {
+        let list = Arc::make_mut(&mut self.column_master_keys);
+        if list.iter().any(|k| k.name.eq_ignore_ascii_case(&def.name)) {
+            return Err(DbError::Execution(format!(
+                "There is already a column master key named '{}' in the database.",
+                def.name
+            )));
+        }
+        let next_id = list
+            .iter()
+            .map(|k| k.column_master_key_id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        def.column_master_key_id = next_id;
+        list.push(def);
+        Ok(())
+    }
+    fn drop_column_master_key(&mut self, name: &str) -> Result<(), DbError> {
+        let cmk_id = self
+            .column_master_keys
+            .iter()
+            .find(|k| k.name.eq_ignore_ascii_case(name))
+            .map(|k| k.column_master_key_id)
+            .ok_or_else(|| {
+                DbError::Execution(format!(
+                    "Cannot drop the column master key '{}', because it does not exist.",
+                    name
+                ))
+            })?;
+        if self
+            .column_encryption_keys
+            .iter()
+            .any(|cek| cek.values.iter().any(|v| v.column_master_key_id == cmk_id))
+        {
+            return Err(DbError::Execution(format!(
+                "Cannot drop column master key '{}' because it is referenced by a column encryption key.",
+                name
+            )));
+        }
+        Arc::make_mut(&mut self.column_master_keys).retain(|k| k.column_master_key_id != cmk_id);
+        Ok(())
+    }
+    fn create_column_encryption_key(
+        &mut self,
+        name: String,
+        values: Vec<(String, String, Vec<u8>)>,
+    ) -> Result<(), DbError> {
+        if self
+            .column_encryption_keys
+            .iter()
+            .any(|k| k.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(DbError::Execution(format!(
+                "There is already a column encryption key named '{}' in the database.",
+                name
+            )));
+        }
+        let mut resolved = Vec::with_capacity(values.len());
+        for (cmk_name, algorithm, encrypted_value) in values {
+            let cmk_id = self
+                .column_master_keys
+                .iter()
+                .find(|k| k.name.eq_ignore_ascii_case(&cmk_name))
+                .map(|k| k.column_master_key_id)
+                .ok_or_else(|| {
+                    DbError::Execution(format!(
+                        "Cannot find the column master key '{}', because it does not exist.",
+                        cmk_name
+                    ))
+                })?;
+            resolved.push(ColumnEncryptionKeyValueDef {
+                column_master_key_id: cmk_id,
+                encrypted_value,
+                encryption_algorithm_name: algorithm,
+            });
+        }
+        let list = Arc::make_mut(&mut self.column_encryption_keys);
+        let next_id = list
+            .iter()
+            .map(|k| k.column_encryption_key_id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        list.push(ColumnEncryptionKeyDef {
+            column_encryption_key_id: next_id,
+            name,
+            values: resolved,
+        });
+        Ok(())
+    }
+    fn alter_column_encryption_key(
+        &mut self,
+        name: &str,
+        add: bool,
+        cmk_name: &str,
+        algorithm: String,
+        encrypted_value: Vec<u8>,
+    ) -> Result<(), DbError> {
+        let cmk_id = self
+            .column_master_keys
+            .iter()
+            .find(|k| k.name.eq_ignore_ascii_case(cmk_name))
+            .map(|k| k.column_master_key_id)
+            .ok_or_else(|| {
+                DbError::Execution(format!(
+                    "Cannot find the column master key '{}', because it does not exist.",
+                    cmk_name
+                ))
+            })?;
+        let list = Arc::make_mut(&mut self.column_encryption_keys);
+        let cek = list
+            .iter_mut()
+            .find(|k| k.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| {
+                DbError::Execution(format!(
+                    "Cannot alter the column encryption key '{}', because it does not exist.",
+                    name
+                ))
+            })?;
+        if add {
+            cek.values.push(ColumnEncryptionKeyValueDef {
+                column_master_key_id: cmk_id,
+                encrypted_value,
+                encryption_algorithm_name: algorithm,
+            });
+        } else {
+            cek.values.retain(|v| v.column_master_key_id != cmk_id);
+        }
+        Ok(())
+    }
+    fn drop_column_encryption_key(&mut self, name: &str) -> Result<(), DbError> {
+        let list = Arc::make_mut(&mut self.column_encryption_keys);
+        let before = list.len();
+        list.retain(|k| !k.name.eq_ignore_ascii_case(name));
+        if list.len() == before {
+            return Err(DbError::Execution(format!(
+                "Cannot drop the column encryption key '{}', because it does not exist.",
+                name
+            )));
+        }
+        Ok(())
+    }
+    fn get_user_databases(&self) -> &[UserDatabaseDef] {
+        &self.user_databases
+    }
+    fn create_database(&mut self, name: String) -> Result<i32, DbError> {
+        if crate::executor::database_catalog::is_builtin_database(&name)
+            || self
+                .user_databases
+                .iter()
+                .any(|d| d.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(DbError::Execution(format!(
+                "Database '{}' already exists. Choose a different database name.",
+                name
+            )));
+        }
+        let next_id = self.user_databases.iter().map(|d| d.id).max().unwrap_or(5) + 1;
+        let dbo_key = crate::executor::database_catalog::db_schema_key(&name, "dbo");
+        Arc::make_mut(&mut self.user_databases).push(UserDatabaseDef {
+            id: next_id,
+            name,
+            compatibility_level: 160,
+            recovery_model: "FULL".to_string(),
+        });
+        if self.get_schema_id(&dbo_key).is_none() {
+            let _ = self.create_schema(&dbo_key);
+        }
+        Ok(next_id)
+    }
+    fn drop_database(&mut self, name: &str, if_exists: bool) -> Result<Vec<u32>, DbError> {
+        if crate::executor::database_catalog::is_builtin_database(name) {
+            return Err(DbError::Execution(format!(
+                "Cannot drop the system database '{}'.",
+                name
+            )));
+        }
+        let exists = self
+            .user_databases
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case(name));
+        if !exists {
+            if if_exists {
+                return Ok(Vec::new());
+            }
+            return Err(DbError::Execution(format!(
+                "Cannot drop the database '{}', because it does not exist or you do not have permission.",
+                name
+            )));
+        }
+        let prefix = crate::executor::database_catalog::db_schema_prefix(name);
+        let matches_db = |schema: &str| schema.to_ascii_lowercase().starts_with(&prefix);
+
+        let tables_to_drop: Vec<(String, String, u32)> = self
+            .get_tables()
+            .iter()
+            .filter(|t| matches_db(&t.schema_name))
+            .map(|t| (t.schema_name.clone(), t.name.clone(), t.id))
+            .collect();
+        let mut dropped_table_ids = Vec::with_capacity(tables_to_drop.len());
+        for (schema, tname, tid) in tables_to_drop {
+            let _ = self.drop_table(&schema, &tname);
+            dropped_table_ids.push(tid);
+        }
+
+        let views_to_drop: Vec<(String, String)> = self
+            .get_views()
+            .iter()
+            .filter(|v| matches_db(&v.schema))
+            .map(|v| (v.schema.clone(), v.name.clone()))
+            .collect();
+        for (schema, vname) in views_to_drop {
+            let _ = self.drop_view(&schema, &vname);
+        }
+
+        let routines_to_drop: Vec<(String, String, bool)> = self
+            .get_routines()
+            .iter()
+            .filter(|r| matches_db(&r.schema))
+            .map(|r| {
+                (
+                    r.schema.clone(),
+                    r.name.clone(),
+                    matches!(r.kind, RoutineKind::Procedure { .. }),
+                )
+            })
+            .collect();
+        for (schema, rname, is_proc) in routines_to_drop {
+            let _ = self.drop_routine(&schema, &rname, is_proc);
+        }
+
+        let triggers_to_drop: Vec<(String, String)> = self
+            .get_triggers()
+            .iter()
+            .filter(|t| matches_db(&t.schema))
+            .map(|t| (t.schema.clone(), t.name.clone()))
+            .collect();
+        for (schema, trname) in triggers_to_drop {
+            let _ = self.drop_trigger(&schema, &trname);
+        }
+
+        let schemas_to_drop: Vec<String> = self
+            .get_schemas()
+            .iter()
+            .filter(|s| matches_db(&s.name))
+            .map(|s| s.name.clone())
+            .collect();
+        for sname in schemas_to_drop {
+            let _ = self.drop_schema(&sname);
+        }
+
+        Arc::make_mut(&mut self.user_databases).retain(|d| !d.name.eq_ignore_ascii_case(name));
+        Ok(dropped_table_ids)
     }
     fn set_column_mask(
         &mut self,
@@ -1448,6 +1760,24 @@ impl Catalog for CatalogImpl {
             &workspace.masked_columns,
             &base.masked_columns,
             |m| (m.table_id, normalize_identifier(&m.column_name)),
+        );
+        merge_arc_vec(
+            &mut self.column_master_keys,
+            &workspace.column_master_keys,
+            &base.column_master_keys,
+            |k| normalize_identifier(&k.name),
+        );
+        merge_arc_vec(
+            &mut self.column_encryption_keys,
+            &workspace.column_encryption_keys,
+            &base.column_encryption_keys,
+            |k| normalize_identifier(&k.name),
+        );
+        merge_arc_vec(
+            &mut self.user_databases,
+            &workspace.user_databases,
+            &base.user_databases,
+            |d| normalize_identifier(&d.name),
         );
         merge_arc_vec(
             &mut self.security_policies,

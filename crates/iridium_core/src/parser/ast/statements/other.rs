@@ -500,6 +500,7 @@ pub struct ColumnDef {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ForeignKeyRef {
+    pub name: Option<String>,
     pub ref_table: Vec<String>,
     pub ref_columns: Vec<String>,
     pub on_delete: Option<ReferentialAction>,
@@ -537,6 +538,9 @@ pub enum AlterTableAction {
     SetColumnMask {
         column: String,
         masking_function: Option<String>,
+    },
+    SwitchPartition {
+        target_table: Vec<String>,
     },
 }
 

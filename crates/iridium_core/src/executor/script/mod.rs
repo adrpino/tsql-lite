@@ -1,3 +1,4 @@
+pub(crate) mod db_scope;
 pub(crate) mod ddl;
 pub(crate) mod dml;
 pub(crate) mod procedural;
@@ -24,9 +25,12 @@ pub struct ScriptExecutor<'a> {
 impl<'a> ScriptExecutor<'a> {
     pub fn execute(
         &mut self,
-        stmt: Statement,
+        mut stmt: Statement,
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
+        if !self.catalog.get_user_databases().is_empty() {
+            db_scope::qualify_statement(&mut stmt, ctx, self.catalog);
+        }
         self.visit_statement(stmt, ctx)
     }
 

@@ -328,10 +328,11 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parser.next();
                 let _ = crate::parser::parse::expressions::parse_expr(parser)?;
             }
+            let mut target_table: Option<Vec<String>> = None;
             if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TO"))
             {
                 let _ = parser.next();
-                let _ = super::parse_multipart_name(parser)?;
+                target_table = Some(super::parse_multipart_name(parser)?);
                 if parser.at_keyword(Keyword::Partition) {
                     let _ = parser.next();
                     let _ = crate::parser::parse::expressions::parse_expr(parser)?;
@@ -352,9 +353,16 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     }
                 }
             }
-            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-                Vec::new(),
-            )))
+            if let Some(target_table) = target_table {
+                Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
+                    table,
+                    action: AlterTableAction::SwitchPartition { target_table },
+                })))
+            } else {
+                Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                    Vec::new(),
+                )))
+            }
         } else {
             parser.backtrack(Expected::Description("add, alter, drop, or set"))
         }
@@ -479,6 +487,9 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         } else {
             parser.backtrack(Expected::Description("SCHEME or FUNCTION"))
         }
+    } else if parser.at_keyword(Keyword::Column) {
+        let _ = parser.next();
+        super::column_encryption::parse_alter_column_encryption_key(parser)
     } else if parser.at_keyword(Keyword::Database) {
         let saved = parser.save();
         let _ = parser.next();

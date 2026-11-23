@@ -62,6 +62,38 @@ pub struct FilegroupDef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UserDatabaseDef {
+    pub id: i32,
+    pub name: String,
+    pub compatibility_level: u8,
+    pub recovery_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ColumnMasterKeyDef {
+    pub column_master_key_id: i32,
+    pub name: String,
+    pub key_store_provider_name: String,
+    pub key_path: String,
+    pub allow_enclave_computations: bool,
+    pub signature: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ColumnEncryptionKeyValueDef {
+    pub column_master_key_id: i32,
+    pub encrypted_value: Vec<u8>,
+    pub encryption_algorithm_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ColumnEncryptionKeyDef {
+    pub column_encryption_key_id: i32,
+    pub name: String,
+    pub values: Vec<ColumnEncryptionKeyValueDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MaskedColumnDef {
     pub table_id: u32,
     pub column_name: String,

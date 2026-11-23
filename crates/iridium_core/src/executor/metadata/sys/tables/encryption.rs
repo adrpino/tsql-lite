@@ -3,11 +3,20 @@ use super::super::super::VirtualTable;
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
 use crate::storage::StoredRow;
-use crate::types::DataType;
+use crate::types::{DataType, Value};
 
 pub(crate) struct SysColumnEncryptionKeys;
 pub(crate) struct SysColumnMasterKeys;
 pub(crate) struct SysColumnEncryptionKeyValues;
+
+fn default_key_timestamp() -> Value {
+    Value::DateTime(
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+    )
+}
 
 impl VirtualTable for SysColumnEncryptionKeys {
     fn definition(&self) -> crate::catalog::TableDef {
@@ -23,8 +32,22 @@ impl VirtualTable for SysColumnEncryptionKeys {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let ts = default_key_timestamp();
+        catalog
+            .get_column_encryption_keys()
+            .iter()
+            .map(|k| StoredRow {
+                values: vec![
+                    Value::VarChar(k.name.clone()),
+                    Value::Int(k.column_encryption_key_id),
+                    ts.clone(),
+                    ts.clone(),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -50,8 +73,29 @@ impl VirtualTable for SysColumnMasterKeys {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let ts = default_key_timestamp();
+        catalog
+            .get_column_master_keys()
+            .iter()
+            .map(|k| StoredRow {
+                values: vec![
+                    Value::VarChar(k.name.clone()),
+                    Value::Int(k.column_master_key_id),
+                    ts.clone(),
+                    ts.clone(),
+                    Value::VarChar(k.key_store_provider_name.clone()),
+                    Value::VarChar(k.key_path.clone()),
+                    Value::Bit(k.allow_enclave_computations),
+                    k.signature
+                        .clone()
+                        .map(Value::VarBinary)
+                        .unwrap_or(Value::Null),
+                    Value::Bit(false),
+                ],
+                deleted: false,
+            })
+            .collect()
     }
 }
 
@@ -76,7 +120,21 @@ impl VirtualTable for SysColumnEncryptionKeyValues {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut out = Vec::new();
+        for cek in catalog.get_column_encryption_keys() {
+            for v in &cek.values {
+                out.push(StoredRow {
+                    values: vec![
+                        Value::Int(cek.column_encryption_key_id),
+                        Value::Int(v.column_master_key_id),
+                        Value::VarBinary(v.encrypted_value.clone()),
+                        Value::VarChar(v.encryption_algorithm_name.clone()),
+                    ],
+                    deleted: false,
+                });
+            }
+        }
+        out
     }
 }

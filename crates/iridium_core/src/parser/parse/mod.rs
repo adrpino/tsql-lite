@@ -254,10 +254,21 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                 }
                 if parser.at_keyword(Keyword::Database) {
                     let _ = parser.next();
+                    let db_name = match parser.next() {
+                        Some(Token::Identifier(id)) => id.clone(),
+                        Some(Token::Keyword(k)) => k.as_sql().to_string(),
+                        _ => return parser.backtrack(Expected::Description("database name")),
+                    };
                     statements::alter::skip_ddl_tail(parser);
-                    return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-                        Vec::new(),
-                    )));
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                        Box::new(crate::ast::CatalogMetadataAction::CreateDatabase {
+                            name: db_name,
+                        }),
+                    ))));
+                }
+                if parser.at_keyword(Keyword::Column) {
+                    let _ = parser.next();
+                    return statements::column_encryption::parse_create_column_key(parser);
                 }
                 if parser.at_keyword(Keyword::Schema) {
                     let _ = parser.next();

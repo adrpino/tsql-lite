@@ -2,7 +2,7 @@ use super::super::super::virtual_table_def;
 use super::super::super::VirtualTable;
 use crate::catalog::Catalog;
 use crate::executor::context::ExecutionContext;
-use crate::executor::database_catalog::{builtin_databases, recovery_model_for_name};
+use crate::executor::database_catalog::all_databases;
 use crate::storage::StoredRow;
 use crate::types::{DataType, Value};
 
@@ -54,18 +54,19 @@ impl VirtualTable for SysDatabases {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
         );
-        builtin_databases()
+        all_databases(catalog)
+            .into_iter()
             .map(|db| StoredRow {
                 values: vec![
                     Value::Int(db.id),
-                    Value::VarChar(db.name.to_string()),
+                    Value::VarChar(db.name.clone()),
                     Value::Null,
                     Value::VarBinary(vec![0x01]),
                     created.clone(),
@@ -79,16 +80,12 @@ impl VirtualTable for SysDatabases {
                     Value::Bit(false),
                     Value::Bit(false),
                     Value::Bit(false),
-                    Value::TinyInt(match recovery_model_for_name(db.name).unwrap_or("FULL") {
+                    Value::TinyInt(match db.recovery_model.as_str() {
                         "SIMPLE" => 3,
                         "BULK_LOGGED" => 2,
                         _ => 1,
                     }),
-                    Value::VarChar(
-                        recovery_model_for_name(db.name)
-                            .unwrap_or("FULL")
-                            .to_string(),
-                    ),
+                    Value::VarChar(db.recovery_model.clone()),
                     Value::Bit(false),
                     Value::Bit(false),
                     Value::Bit(false),
@@ -158,17 +155,18 @@ impl VirtualTable for SysSysDatabases {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let created = Value::DateTime(
             chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
                 .unwrap(),
         );
-        builtin_databases()
+        all_databases(catalog)
+            .into_iter()
             .map(|db| StoredRow {
                 values: vec![
-                    Value::VarChar(db.name.to_string()),
+                    Value::VarChar(db.name),
                     Value::SmallInt(db.id as i16),
                     Value::VarBinary(vec![0x01]),
                     Value::SmallInt(0),

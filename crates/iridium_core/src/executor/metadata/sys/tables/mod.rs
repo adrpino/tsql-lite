@@ -48,14 +48,20 @@ impl VirtualTable for SysSchemas {
         )
     }
 
-    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let active_db = crate::executor::database_catalog::current_database_name(ctx);
         catalog
             .get_schemas()
             .iter()
+            .filter(|s| {
+                crate::executor::database_catalog::schema_belongs_to_db(&s.name, active_db, catalog)
+            })
             .map(|s| StoredRow {
                 values: vec![
                     Value::Int(s.id as i32),
-                    Value::VarChar(s.name.clone()),
+                    Value::VarChar(
+                        crate::executor::database_catalog::display_schema_name(&s.name).to_string(),
+                    ),
                     Value::Null,
                 ],
                 deleted: false,

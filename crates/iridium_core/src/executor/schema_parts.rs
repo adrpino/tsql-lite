@@ -237,7 +237,9 @@ pub(crate) fn create_table(
 
     for (col_name, fk_ref) in column_fks {
         table.foreign_keys.push(ForeignKeyDef {
-            name: format!("FK__{}__{}", table.name, col_name),
+            name: fk_ref
+                .name
+                .unwrap_or_else(|| format!("FK__{}__{}", table.name, col_name)),
             columns: vec![col_name],
             referenced_table: fk_ref.referenced_table,
             referenced_columns: fk_ref.referenced_columns,
@@ -803,6 +805,46 @@ pub(crate) fn alter_table(
                 }
                 executor.catalog.set_temporal_config(cfg);
             }
+        }
+        AlterTableAction::SwitchPartition { target_table } => {
+            let dst_schema = target_table.schema_or_dbo().to_string();
+            let dst_table = executor
+                .catalog
+                .find_table(&dst_schema, &target_table.name)
+                .ok_or_else(|| DbError::table_not_found(&dst_schema, &target_table.name))?
+                .clone();
+            let src_table = executor
+                .catalog
+                .find_table(&schema_name, &stmt.table.name)
+                .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?
+                .clone();
+            if src_table.columns.len() != dst_table.columns.len() {
+                return Err(DbError::Execution(format!(
+                    "ALTER TABLE SWITCH statement failed. Column count mismatch between '{}' and '{}'.",
+                    src_table.name, dst_table.name
+                )));
+            }
+            let dst_has_rows = executor
+                .storage
+                .get_rows(dst_table.id)?
+                .iter()
+                .any(|r| !r.deleted);
+            if dst_has_rows {
+                return Err(DbError::Execution(format!(
+                    "ALTER TABLE SWITCH statement failed. The target table '{}.{}' must be empty.",
+                    dst_schema, dst_table.name
+                )));
+            }
+            let moved_rows: Vec<crate::storage::StoredRow> = executor
+                .storage
+                .get_rows(src_table.id)?
+                .into_iter()
+                .filter(|r| !r.deleted)
+                .collect();
+            for row in moved_rows {
+                executor.storage.insert_row(dst_table.id, row)?;
+            }
+            executor.storage.clear_table(src_table.id)?;
         }
         AlterTableAction::DropConstraint(constraint_name) => {
             let table_mut = executor

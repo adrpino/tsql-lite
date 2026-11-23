@@ -977,6 +977,56 @@ impl<'a> ScriptExecutor<'a> {
                 self.catalog
                     .drop_security_policy(&schema, &name.name, if_exists)?;
             }
+            CatalogMetadataAction::CreateColumnMasterKey {
+                name,
+                key_store_provider_name,
+                key_path,
+                allow_enclave_computations,
+                signature,
+            } => {
+                self.catalog
+                    .create_column_master_key(crate::catalog::ColumnMasterKeyDef {
+                        column_master_key_id: 0,
+                        name,
+                        key_store_provider_name,
+                        key_path,
+                        allow_enclave_computations,
+                        signature,
+                    })?;
+            }
+            CatalogMetadataAction::DropColumnMasterKey { name } => {
+                self.catalog.drop_column_master_key(&name)?;
+            }
+            CatalogMetadataAction::CreateColumnEncryptionKey { name, values } => {
+                self.catalog.create_column_encryption_key(name, values)?;
+            }
+            CatalogMetadataAction::AlterColumnEncryptionKey {
+                name,
+                add,
+                cmk_name,
+                algorithm,
+                encrypted_value,
+            } => {
+                self.catalog.alter_column_encryption_key(
+                    &name,
+                    add,
+                    &cmk_name,
+                    algorithm,
+                    encrypted_value,
+                )?;
+            }
+            CatalogMetadataAction::DropColumnEncryptionKey { name } => {
+                self.catalog.drop_column_encryption_key(&name)?;
+            }
+            CatalogMetadataAction::CreateDatabase { name } => {
+                self.catalog.create_database(name)?;
+            }
+            CatalogMetadataAction::DropDatabase { name, if_exists } => {
+                let dropped_ids = self.catalog.drop_database(&name, if_exists)?;
+                for tid in dropped_ids {
+                    let _ = self.storage.remove_table(tid);
+                }
+            }
         }
         Ok(())
     }

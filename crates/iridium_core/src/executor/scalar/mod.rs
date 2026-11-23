@@ -6,6 +6,7 @@ pub(crate) mod math;
 pub(crate) mod metadata;
 pub(crate) mod string;
 pub(crate) mod system;
+pub(crate) mod tsql_subsystems;
 pub(crate) mod udf;
 pub(crate) mod vector;
 
@@ -71,6 +72,23 @@ pub(crate) fn eval_function(
                 return res;
             }
         }
+    }
+
+    // Check $PARTITION.<pf_name>(value) calls
+    if let Some(pf_name) = name
+        .strip_prefix("$PARTITION.")
+        .or_else(|| name.strip_prefix("$partition."))
+        .or_else(|| {
+            if upper_str.starts_with("$PARTITION.") {
+                Some(&name["$PARTITION.".len()..])
+            } else {
+                None
+            }
+        })
+    {
+        return tsql_subsystems::eval_partition_function(
+            pf_name, args, row, ctx, catalog, storage, clock,
+        );
     }
 
     // Check built-in functions first

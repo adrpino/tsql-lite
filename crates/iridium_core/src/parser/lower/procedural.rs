@@ -203,6 +203,16 @@ pub fn lower_procedural(
         ast::ProceduralStatement::Label(label) => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::Label(label),
         )),
+        ast::ProceduralStatement::WaitFor { is_time, expr } => {
+            Ok(executor_ast::Statement::Procedural(
+                executor_ast::statements::ProceduralStatement::WaitFor(Box::new(
+                    executor_ast::WaitForStmt {
+                        is_time,
+                        expr: lower_expr(*expr)?,
+                    },
+                )),
+            ))
+        }
         ast::ProceduralStatement::Return(expr) => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::Return(
                 expr.map(lower_expr).transpose()?,

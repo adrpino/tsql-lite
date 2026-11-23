@@ -47,6 +47,22 @@ impl<'a> ExecutionContext<'a> {
         );
     }
 
+    pub(crate) fn last_rowcount(&self) -> u64 {
+        self.session
+            .variables
+            .get("@@ROWCOUNT")
+            .and_then(|(_, v)| v.to_integer_i64())
+            .map(|n| n.max(0) as u64)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.session
+            .extras
+            .cancel_flag
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn from_session<C, S>(
         session: &'a mut crate::executor::session::SessionRuntime<C, S>,
         session_id: locks::SessionId,

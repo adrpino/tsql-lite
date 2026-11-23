@@ -4,6 +4,8 @@ pub mod login;
 pub mod packet;
 pub mod prelogin;
 pub mod rpc;
+pub mod smp;
 pub mod token_constants;
 pub mod tokens;
+pub mod tx_manager;
 pub mod type_mapping;

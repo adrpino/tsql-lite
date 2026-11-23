@@ -1,11 +1,16 @@
 use crate::tds::packet::PacketReader;
 use std::io;
 
+use super::temporal::{
+    decode_date_bytes, decode_datetime2_bytes, decode_datetime_bytes, decode_datetimeoffset_bytes,
+    decode_money_bytes, decode_time_bytes,
+};
 use super::types::DecodedValue;
 
 #[derive(Debug, Clone)]
 struct TvpColMeta {
     type_id: u8,
+    max_len: u16,
     precision: u8,
     scale: u8,
 }
@@ -220,6 +225,111 @@ pub(super) fn read_typed_value(r: &mut PacketReader, type_id: u8) -> io::Result<
                 format!("'{}'", format_guid_bytes(b)),
             ))
         }
+        // DATENTYPE (DATE: 0-byte TYPE_INFO, 1-byte len = 0|3, 3-byte days since 0001-01-01)
+        0x28 => {
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar("DATE".into(), "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_date_bytes(b) {
+                Some(s) => Ok(scalar("DATE".into(), format!("'{}'", s))),
+                None => Ok(scalar("DATE".into(), "NULL".into())),
+            }
+        }
+        // TIMENTYPE (TIME(scale): 1-byte scale, 1-byte len = 0|3|4|5)
+        0x29 => {
+            let scale = r.read_u8()?;
+            let ty = format!("TIME({})", scale);
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_time_bytes(b, scale) {
+                Some(s) => Ok(scalar(ty, format!("'{}'", s))),
+                None => Ok(scalar(ty, "NULL".into())),
+            }
+        }
+        // DATETIME2NTYPE (DATETIME2(scale): 1-byte scale, 1-byte len = 0|6|7|8)
+        0x2A => {
+            let scale = r.read_u8()?;
+            let ty = format!("DATETIME2({})", scale);
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_datetime2_bytes(b, scale) {
+                Some(s) => Ok(scalar(ty, format!("'{}'", s))),
+                None => Ok(scalar(ty, "NULL".into())),
+            }
+        }
+        // DATETIMEOFFSETNTYPE (DATETIMEOFFSET(scale): 1-byte scale, 1-byte len = 0|8|9|10)
+        0x2B => {
+            let scale = r.read_u8()?;
+            let ty = format!("DATETIMEOFFSET({})", scale);
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_datetimeoffset_bytes(b, scale) {
+                Some(s) => Ok(scalar(ty, format!("'{}'", s))),
+                None => Ok(scalar(ty, "NULL".into())),
+            }
+        }
+        // MONEYNTYPE (MONEY / SMALLMONEY: 1-byte max_len = 4|8, 1-byte actual_len = 0|4|8)
+        0x6E => {
+            let max_len = r.read_u8()?;
+            let ty = if max_len == 4 {
+                "SMALLMONEY".into()
+            } else {
+                "MONEY".into()
+            };
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_money_bytes(b) {
+                Some(scaled) => Ok(scalar(ty, format_decimal(scaled, 4))),
+                None => Ok(scalar(ty, "NULL".into())),
+            }
+        }
+        // DATETIMNTYPE (DATETIME / SMALLDATETIME: 1-byte max_len = 4|8, 1-byte actual_len = 0|4|8)
+        0x6F => {
+            let max_len = r.read_u8()?;
+            let ty = if max_len == 4 {
+                "SMALLDATETIME".into()
+            } else {
+                "DATETIME".into()
+            };
+            let actual_len = r.read_u8()? as usize;
+            if actual_len == 0 || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let b = r.read_bytes(actual_len)?;
+            match decode_datetime_bytes(b) {
+                Some(s) => Ok(scalar(ty, format!("'{}'", s))),
+                None => Ok(scalar(ty, "NULL".into())),
+            }
+        }
+        // XMLTYPE (1-byte schema_present [+ optional 3 B_VARCHARs], then PLP UTF-16LE payload)
+        0xF1 => {
+            skip_xml_schema_info(r)?;
+            match read_plp_bytes(r)? {
+                Some(bytes) => {
+                    let s = decode_utf16le(&bytes);
+                    let trimmed = s.strip_prefix('\u{FEFF}').unwrap_or(&s);
+                    Ok(scalar(
+                        "XML".into(),
+                        format!("N'{}'", trimmed.replace('\'', "''")),
+                    ))
+                }
+                None => Ok(scalar("XML".into(), "NULL".into())),
+            }
+        }
         // Fixed-length integer/bit/float types
         0x30 => {
             let v = r.read_u8()?;
@@ -366,23 +476,60 @@ fn read_tvp_value(r: &mut PacketReader) -> io::Result<DecodedValue> {
         }
     }
 
+    // Phase 1: consume optional TVP metadata tokens (TVP_ORDER_UNIQUE 0x10,
+    // TVP_COLUMN_DEFAULT 0x12) until the first TVP_END_TOKEN (0x00) — or if
+    // the wire stream jumps straight to TVP_ROW (0x01), start reading rows.
     let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut in_rows_phase = false;
     loop {
         if r.remaining() < 1 {
             break;
         }
         let token = r.read_u8()?;
-        if token == 0x00 {
-            break;
+        match token {
+            0x00 => {
+                if in_rows_phase {
+                    break; // Final TVP_END_TOKEN after rows
+                }
+                // First TVP_END_TOKEN terminates optional metadata; rows follow
+                // (or an immediate second 0x00 terminates an empty TVP).
+                in_rows_phase = true;
+            }
+            0x01 => {
+                // TVP_ROW
+                in_rows_phase = true;
+                let mut row = Vec::with_capacity(cols.len());
+                for col in &cols {
+                    row.push(read_tvp_cell_value(r, col)?);
+                }
+                rows.push(row);
+            }
+            0x10 => {
+                // TVP_ORDER_UNIQUE: count(u16) * (col_num(u16) + flags(u8))
+                if r.remaining() < 2 {
+                    break;
+                }
+                let cnt = r.read_u16_le()? as usize;
+                let skip = cnt * 3;
+                if r.remaining() < skip {
+                    break;
+                }
+                r.skip(skip)?;
+            }
+            0x12 => {
+                // TVP_COLUMN_DEFAULT: count(u16) * col_num(u16)
+                if r.remaining() < 2 {
+                    break;
+                }
+                let cnt = r.read_u16_le()? as usize;
+                let skip = cnt * 2;
+                if r.remaining() < skip {
+                    break;
+                }
+                r.skip(skip)?;
+            }
+            _ => break,
         }
-        if token != 0x01 {
-            break;
-        }
-        let mut row = Vec::with_capacity(cols.len());
-        for col in &cols {
-            row.push(read_tvp_cell_value(r, col)?);
-        }
-        rows.push(row);
     }
 
     Ok(DecodedValue {
@@ -392,30 +539,60 @@ fn read_tvp_value(r: &mut PacketReader) -> io::Result<DecodedValue> {
     })
 }
 
+fn skip_xml_schema_info(r: &mut PacketReader) -> io::Result<()> {
+    if r.remaining() < 1 {
+        return Ok(());
+    }
+    let schema_present = r.read_u8()?;
+    if schema_present != 0 {
+        let _ = read_b_varchar_utf16(r);
+        let _ = read_b_varchar_utf16(r);
+        if r.remaining() >= 2 {
+            let len = r.read_u16_le()? as usize;
+            if r.remaining() >= len * 2 {
+                r.skip(len * 2)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_tvp_col_meta(r: &mut PacketReader, type_id: u8) -> io::Result<TvpColMeta> {
     let mut meta = TvpColMeta {
         type_id,
+        max_len: 0,
         precision: 0,
         scale: 0,
     };
 
     match type_id {
-        0x24 | 0x26 | 0x68 | 0x6D => {
+        0x24 | 0x26 | 0x68 | 0x6D | 0x6E | 0x6F => {
             if r.remaining() >= 1 {
-                let _ = r.read_u8()?;
+                meta.max_len = r.read_u8()? as u16;
             }
         }
-        0xA7 | 0xE7 => {
+        0x28 => {} // DATE has no extra TYPE_INFO bytes
+        0x29 | 0x2A | 0x2B => {
+            if r.remaining() >= 1 {
+                meta.scale = r.read_u8()?;
+            }
+        }
+        0xA7 | 0xAF | 0xE7 | 0xEF => {
             if r.remaining() >= 2 {
-                let _ = r.read_u16_le()?;
+                meta.max_len = r.read_u16_le()?;
             }
             if r.remaining() >= 5 {
                 r.skip(5)?;
             }
         }
+        0xA5 | 0xAD => {
+            if r.remaining() >= 2 {
+                meta.max_len = r.read_u16_le()?;
+            }
+        }
         0x6A | 0x6C => {
             if r.remaining() >= 1 {
-                let _ = r.read_u8()?;
+                meta.max_len = r.read_u8()? as u16;
             }
             if r.remaining() >= 1 {
                 meta.precision = r.read_u8()?;
@@ -423,6 +600,9 @@ fn read_tvp_col_meta(r: &mut PacketReader, type_id: u8) -> io::Result<TvpColMeta
             if r.remaining() >= 1 {
                 meta.scale = r.read_u8()?;
             }
+        }
+        0xF1 => {
+            skip_xml_schema_info(r)?;
         }
         _ => {}
     }
@@ -465,7 +645,110 @@ fn read_tvp_cell_value(r: &mut PacketReader, col: &TvpColMeta) -> io::Result<Str
             let b = r.read_u8()?;
             Ok(if b == 0 { "0".into() } else { "1".into() })
         }
-        0xA7 => {
+        0x6D => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            let val = if len == 4 {
+                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
+            } else {
+                f64::from_le_bytes(bytes.try_into().unwrap_or([0u8; 8]))
+            };
+            Ok(format!("{}", val))
+        }
+        0x6E => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_money_bytes(bytes)
+                .map(|v| format_decimal(v, 4))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0x6F => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_datetime_bytes(bytes)
+                .map(|s| format!("'{}'", s))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0x28 => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_date_bytes(bytes)
+                .map(|s| format!("'{}'", s))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0x29 => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_time_bytes(bytes, col.scale)
+                .map(|s| format!("'{}'", s))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0x2A => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_datetime2_bytes(bytes, col.scale)
+                .map(|s| format!("'{}'", s))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0x2B => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len == 0 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(decode_datetimeoffset_bytes(bytes, col.scale)
+                .map(|s| format!("'{}'", s))
+                .unwrap_or_else(|| "NULL".into()))
+        }
+        0xA7 | 0xAF => {
+            if col.max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => {
+                        let s = String::from_utf8_lossy(&bytes).to_string();
+                        Ok(format!("'{}'", s.replace('\'', "''")))
+                    }
+                    None => Ok("NULL".into()),
+                };
+            }
             if r.remaining() < 2 {
                 return Ok("NULL".into());
             }
@@ -477,7 +760,16 @@ fn read_tvp_cell_value(r: &mut PacketReader, col: &TvpColMeta) -> io::Result<Str
             let s = String::from_utf8_lossy(bytes).to_string();
             Ok(format!("'{}'", s.replace('\'', "''")))
         }
-        0xE7 => {
+        0xE7 | 0xEF => {
+            if col.max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => {
+                        let s = decode_utf16le(&bytes);
+                        Ok(format!("N'{}'", s.replace('\'', "''")))
+                    }
+                    None => Ok("NULL".into()),
+                };
+            }
             if r.remaining() < 2 {
                 return Ok("NULL".into());
             }
@@ -489,6 +781,31 @@ fn read_tvp_cell_value(r: &mut PacketReader, col: &TvpColMeta) -> io::Result<Str
             let s = decode_utf16le(bytes);
             Ok(format!("N'{}'", s.replace('\'', "''")))
         }
+        0xA5 | 0xAD => {
+            if col.max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => Ok(format_hex_literal(&bytes)),
+                    None => Ok("NULL".into()),
+                };
+            }
+            if r.remaining() < 2 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u16_le()? as usize;
+            if len == 0xFFFF || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let bytes = r.read_bytes(len)?;
+            Ok(format_hex_literal(bytes))
+        }
+        0xF1 => match read_plp_bytes(r)? {
+            Some(bytes) => {
+                let s = decode_utf16le(&bytes);
+                let trimmed = s.strip_prefix('\u{FEFF}').unwrap_or(&s);
+                Ok(format!("N'{}'", trimmed.replace('\'', "''")))
+            }
+            None => Ok("NULL".into()),
+        },
         0x6A | 0x6C => {
             if r.remaining() < 1 {
                 return Ok("NULL".into());
@@ -507,6 +824,24 @@ fn read_tvp_cell_value(r: &mut PacketReader, col: &TvpColMeta) -> io::Result<Str
                 val = -val;
             }
             Ok(format_decimal(val, col.scale))
+        }
+        0x30 => Ok(r.read_u8()?.to_string()),
+        0x32 => Ok(if r.read_u8()? == 0 {
+            "0".into()
+        } else {
+            "1".into()
+        }),
+        0x34 => {
+            let b = r.read_bytes(2)?;
+            Ok(i16::from_le_bytes([b[0], b[1]]).to_string())
+        }
+        0x38 => {
+            let b = r.read_bytes(4)?;
+            Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]).to_string())
+        }
+        0x7F => {
+            let b = r.read_bytes(8)?;
+            Ok(i64::from_le_bytes(b.try_into().unwrap_or([0u8; 8])).to_string())
         }
         _ => Ok("NULL".into()),
     }

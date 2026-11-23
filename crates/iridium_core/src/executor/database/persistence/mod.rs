@@ -328,6 +328,13 @@ where
         self.session_manager()
             .set_session_journal(session_id, journal)
     }
+
+    fn session_cancel_flag(
+        &self,
+        session_id: SessionId,
+    ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.session_manager().session_cancel_flag(session_id)
+    }
 }
 
 impl<C, S> StatementExecutorTrait for DatabaseInner<C, S>
@@ -366,6 +373,15 @@ where
     ) -> Result<Vec<Option<QueryResult>>, DbError> {
         self.executor()
             .execute_session_batch_sql_multi(session_id, sql)
+    }
+
+    fn execute_session_batch_sql_multi_detailed(
+        &self,
+        session_id: SessionId,
+        sql: &str,
+    ) -> Result<Vec<crate::BatchResultItem>, DbError> {
+        self.executor()
+            .execute_session_batch_sql_multi_detailed(session_id, sql)
     }
 
     fn set_session_metadata(

@@ -69,6 +69,26 @@ where
         })
     }
 
+    fn execute_session_batch_sql_multi_detailed(
+        &self,
+        session_id: SessionId,
+        sql: &str,
+    ) -> Result<Vec<super::super::result::BatchResultItem>, DbError> {
+        let quoted_ident = execution_support::with_session(&self.state, session_id, |session| {
+            Ok(session.options.quoted_identifier)
+        })?;
+
+        let stmts = parse_batch_with_quoted_ident(sql, quoted_ident)?;
+        execution_support::with_session(&self.state, session_id, |session| {
+            execution_support::execute_batch_statements_multi_detailed(
+                &self.state,
+                session_id,
+                session,
+                stmts,
+            )
+        })
+    }
+
     fn set_session_metadata(
         &self,
         session_id: SessionId,

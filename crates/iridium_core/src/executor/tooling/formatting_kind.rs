@@ -62,6 +62,7 @@ pub fn statement_kind(stmt: &Statement) -> &'static str {
             crate::ast::ProceduralStatement::Continue => "CONTINUE",
             crate::ast::ProceduralStatement::Goto(_) => "GOTO",
             crate::ast::ProceduralStatement::Label(_) => "LABEL",
+            crate::ast::ProceduralStatement::WaitFor(_) => "WAITFOR",
             crate::ast::ProceduralStatement::SetOption(_) => "SET_OPTION",
         },
         Statement::Cursor(s) => match s {

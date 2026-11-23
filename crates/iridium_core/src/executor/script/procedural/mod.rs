@@ -48,6 +48,9 @@ impl<'a> ScriptExecutor<'a> {
             ProceduralStatement::Continue => self.execute_continue(ctx),
             ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label)),
             ProceduralStatement::Label(_) => Ok(StmtOutcome::Ok(None)),
+            ProceduralStatement::WaitFor(stmt) => {
+                self.execute_waitfor(*stmt, ctx).map(StmtOutcome::Ok)
+            }
             ProceduralStatement::Return(expr) => self.execute_return(expr, ctx),
             ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, *stmt, ctx),
             ProceduralStatement::ExecProcedure(stmt) => {
@@ -278,4 +281,81 @@ impl<'a> ScriptExecutor<'a> {
         }
         Ok(None)
     }
+
+    fn execute_waitfor(
+        &mut self,
+        stmt: crate::ast::WaitForStmt,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
+        let val = crate::executor::evaluator::eval_expr(
+            &stmt.expr,
+            &[],
+            ctx,
+            self.catalog,
+            self.storage,
+            self.clock,
+        )?;
+        if val.is_null() || stmt.is_time {
+            return Ok(None);
+        }
+        let duration_ms = parse_waitfor_delay_ms(&val.to_string_value());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut remaining = duration_ms;
+            while remaining > 0 {
+                if ctx.is_cancelled() {
+                    return Err(DbError::Execution("Operation cancelled by user.".into()));
+                }
+                let step = remaining.min(20);
+                std::thread::sleep(std::time::Duration::from_millis(step));
+                remaining = remaining.saturating_sub(step);
+            }
+            if ctx.is_cancelled() {
+                return Err(DbError::Execution("Operation cancelled by user.".into()));
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = duration_ms;
+        }
+        Ok(None)
+    }
+}
+
+fn parse_waitfor_delay_ms(raw: &str) -> u64 {
+    let trimmed = raw.trim();
+    // Accept 'HH:MM:SS[.fff]' or 'MM:SS' or 'SS'
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    let (h, m, sec_part) = match parts.len() {
+        3 => (
+            parts[0].trim().parse::<u64>().unwrap_or(0),
+            parts[1].trim().parse::<u64>().unwrap_or(0),
+            parts[2].trim(),
+        ),
+        2 => (
+            0,
+            parts[0].trim().parse::<u64>().unwrap_or(0),
+            parts[1].trim(),
+        ),
+        1 => (0, 0, parts[0].trim()),
+        _ => return 0,
+    };
+    let (s, ms) = if let Some((s_str, f_str)) = sec_part.split_once('.') {
+        let s = s_str.parse::<u64>().unwrap_or(0);
+        let digits: String = f_str
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .take(3)
+            .collect();
+        let ms = match digits.len() {
+            1 => digits.parse::<u64>().unwrap_or(0) * 100,
+            2 => digits.parse::<u64>().unwrap_or(0) * 10,
+            3 => digits.parse::<u64>().unwrap_or(0),
+            _ => 0,
+        };
+        (s, ms)
+    } else {
+        (sec_part.parse::<u64>().unwrap_or(0), 0)
+    };
+    ((h * 3600) + (m * 60) + s) * 1000 + ms
 }

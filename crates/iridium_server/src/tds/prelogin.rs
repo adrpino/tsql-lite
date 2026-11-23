@@ -123,6 +123,10 @@ pub fn parse_prelogin(data: &[u8]) -> io::Result<PreloginData> {
 }
 
 pub fn build_prelogin_response(encryption: u8) -> Vec<u8> {
+    build_prelogin_response_with_mars(encryption, false)
+}
+
+pub fn build_prelogin_response_with_mars(encryption: u8, mars_enabled: bool) -> Vec<u8> {
     // 5 tokens * 5 bytes + 1 terminator = 26
     let token_table_size: u16 = 26;
 
@@ -173,7 +177,7 @@ pub fn build_prelogin_response(encryption: u8) -> Vec<u8> {
     b.put_u8(encryption); // encryption level
     b.put_u8(0x00); // instance (empty)
     b.put_u32_be(0); // thread id
-    b.put_u8(0x00); // MARS off
+    b.put_u8(if mars_enabled { 0x01 } else { 0x00 }); // MARS
 
     b.into_vec()
 }

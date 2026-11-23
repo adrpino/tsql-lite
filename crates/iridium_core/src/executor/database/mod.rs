@@ -56,6 +56,21 @@ pub trait StatementExecutor {
         session_id: SessionId,
         sql: &str,
     ) -> Result<Vec<Option<QueryResult>>, DbError>;
+    fn execute_session_batch_sql_multi_detailed(
+        &self,
+        session_id: SessionId,
+        sql: &str,
+    ) -> Result<Vec<super::result::BatchResultItem>, DbError> {
+        let items = self.execute_session_batch_sql_multi(session_id, sql)?;
+        Ok(items
+            .into_iter()
+            .map(|result| super::result::BatchResultItem {
+                result,
+                rows_affected: None,
+                suppress_rowcount: false,
+            })
+            .collect())
+    }
     fn set_session_metadata(
         &self,
         session_id: SessionId,
@@ -288,6 +303,12 @@ macro_rules! delegate_db_traits {
             ) -> Result<(), DbError> {
                 self.0.set_session_journal(sid, j)
             }
+            fn session_cancel_flag(
+                &self,
+                sid: SessionId,
+            ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+                self.0.session_cancel_flag(sid)
+            }
         }
         impl StatementExecutor for $wrapper {
             fn execute_session(
@@ -317,6 +338,13 @@ macro_rules! delegate_db_traits {
                 sql: &str,
             ) -> Result<Vec<Option<QueryResult>>, DbError> {
                 self.0.execute_session_batch_sql_multi(sid, sql)
+            }
+            fn execute_session_batch_sql_multi_detailed(
+                &self,
+                sid: SessionId,
+                sql: &str,
+            ) -> Result<Vec<super::result::BatchResultItem>, DbError> {
+                self.0.execute_session_batch_sql_multi_detailed(sid, sql)
             }
             fn set_session_metadata(
                 &self,

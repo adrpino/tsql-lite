@@ -170,6 +170,10 @@ pub enum ProceduralStatement {
     Continue,
     Goto(String),
     Label(String),
+    WaitFor {
+        is_time: bool,
+        expr: Box<Expr>,
+    },
     Return(Option<Expr>),
     Print(Expr),
     Raiserror {

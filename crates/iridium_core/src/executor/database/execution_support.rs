@@ -5,7 +5,7 @@ use crate::storage::Storage;
 
 use super::super::context::ExecutionContext;
 use super::super::locks::SessionId;
-use super::super::result::QueryResult;
+use super::super::result::{BatchResultItem, QueryResult};
 use super::super::session::{SessionRuntime, SharedState};
 use super::super::table_util::is_transaction_statement;
 use super::super::transaction_exec;
@@ -145,7 +145,7 @@ pub(crate) fn execute_stmt_loop<C, S, F>(
 where
     C: EngineCatalog,
     S: EngineStorage,
-    F: FnMut(Option<QueryResult>),
+    F: FnMut(BatchResultItem),
 {
     const MAX_GOTO_JUMPS: usize = 100_000;
     let has_labels = stmts.iter().any(|s| {
@@ -167,6 +167,9 @@ where
     let mut idx = 0usize;
     let mut jumps = 0usize;
     while idx < total_len {
+        if ctx.is_cancelled() {
+            return Err(DbError::Execution("Operation cancelled by user.".into()));
+        }
         let stmt = if has_labels {
             stmts_ref[idx].clone()
         } else {
@@ -175,6 +178,15 @@ where
         ctx.frame.trancount = tx_manager.depth;
         ctx.frame.xact_state = tx_manager.xact_state;
         ctx.session.identity_insert = options.identity_insert.clone();
+        let is_dml = matches!(
+            stmt,
+            Statement::Dml(
+                crate::ast::DmlStatement::Insert(_)
+                    | crate::ast::DmlStatement::Update(_)
+                    | crate::ast::DmlStatement::Delete(_)
+                    | crate::ast::DmlStatement::Merge(_)
+            )
+        );
         if is_transaction_statement(&stmt) {
             match transaction_exec::execute_transaction_statement(
                 state,
@@ -187,7 +199,11 @@ where
                 stmt,
             ) {
                 Ok(r) => {
-                    on_result(r);
+                    on_result(BatchResultItem {
+                        result: r,
+                        rows_affected: None,
+                        suppress_rowcount: options.nocount,
+                    });
                     idx += 1;
                 }
                 Err(e) => {
@@ -220,7 +236,11 @@ where
             ) {
                 Ok(r) => match r {
                     StmtOutcome::Return(_) => {
-                        on_result(None);
+                        on_result(BatchResultItem {
+                            result: None,
+                            rows_affected: None,
+                            suppress_rowcount: options.nocount,
+                        });
                         break;
                     }
                     StmtOutcome::Goto(target) => {
@@ -253,7 +273,16 @@ where
                         }));
                     }
                     StmtOutcome::Ok(v) => {
-                        on_result(v);
+                        let rows_affected = if is_dml && !options.nocount {
+                            Some(ctx.last_rowcount())
+                        } else {
+                            None
+                        };
+                        on_result(BatchResultItem {
+                            result: v,
+                            rows_affected,
+                            suppress_rowcount: options.nocount,
+                        });
                         idx += 1;
                     }
                 },
@@ -405,8 +434,8 @@ where
                 options,
                 ctx,
                 stmts,
-                |r| {
-                    last_res = r;
+                |item| {
+                    last_res = item.result;
                 },
             )
         },
@@ -421,6 +450,24 @@ pub(crate) fn execute_batch_statements_multi<C, S>(
     session: &mut SessionRuntime<C, S>,
     stmts: Vec<Statement>,
 ) -> Result<Vec<Option<QueryResult>>, DbError>
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    Ok(
+        execute_batch_statements_multi_detailed(state, session_id, session, stmts)?
+            .into_iter()
+            .map(|item| item.result)
+            .collect(),
+    )
+}
+
+pub(crate) fn execute_batch_statements_multi_detailed<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+    session: &mut SessionRuntime<C, S>,
+    stmts: Vec<Statement>,
+) -> Result<Vec<BatchResultItem>, DbError>
 where
     C: EngineCatalog,
     S: EngineStorage,
@@ -441,8 +488,8 @@ where
                 options,
                 ctx,
                 stmts,
-                |r| {
-                    results.push(r);
+                |item| {
+                    results.push(item);
                 },
             )
         },
@@ -475,8 +522,8 @@ where
             options,
             &mut ctx,
             vec![stmt],
-            |r| {
-                res = r;
+            |item| {
+                res = item.result;
             },
         );
         let current_database = ctx.metadata.database.clone();

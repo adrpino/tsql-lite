@@ -18,4 +18,13 @@ impl TdsSession {
     ) -> Result<bool, iridium_core::error::DbError> {
         crate::session::sql_pipeline::execute_sql(self, sql, writer).await
     }
+
+    pub(crate) async fn execute_sql_with_outputs<W: AsyncWriteExt + Unpin>(
+        &mut self,
+        sql: &str,
+        outputs: &[crate::tds::rpc::OutputParamBinding],
+        writer: &mut W,
+    ) -> Result<bool, iridium_core::error::DbError> {
+        crate::session::sql_pipeline::execute_sql_with_outputs(self, sql, outputs, writer).await
+    }
 }

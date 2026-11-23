@@ -261,6 +261,12 @@ pub struct DropTriggerStmt {
     pub if_exists: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WaitForStmt {
+    pub is_time: bool,
+    pub expr: Expr,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TriggerEvent {
     Insert,

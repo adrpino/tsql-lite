@@ -928,15 +928,16 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WAITFOR") => {
             let _ = parser.next();
             // WAITFOR DELAY <expr> | WAITFOR TIME <expr>
-            match parser.next() {
-                Some(Token::Identifier(k)) if k.eq_ignore_ascii_case("DELAY") => {}
-                Some(Token::Keyword(Keyword::Time)) => {}
+            let is_time = match parser.next() {
+                Some(Token::Identifier(k)) if k.eq_ignore_ascii_case("DELAY") => false,
+                Some(Token::Keyword(Keyword::Time)) => true,
                 _ => return parser.backtrack(Expected::Description("DELAY or TIME")),
-            }
-            let _ = parse_expr(parser)?;
-            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-                Vec::new(),
-            )))
+            };
+            let expr = parse_expr(parser)?;
+            Ok(Statement::Procedural(ProceduralStatement::WaitFor {
+                is_time,
+                expr: Box::new(expr),
+            }))
         }
         _ => parser.backtrack(Expected::Description("statement keyword")),
     }

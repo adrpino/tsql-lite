@@ -1,13 +1,17 @@
 mod decode;
 mod parser;
 mod render;
+mod temporal;
 mod types;
 
 pub use parser::{
     parse_rpc, CatalogProc, CursorOp, CursorRpcRequest, RpcProc, RpcRequest, SqlRpcRequest,
 };
-pub use render::{build_param_preamble, build_param_preamble_with_decls, build_stored_proc_exec};
-pub use types::{RpcParam, RpcRequest as RpcRequestType};
+pub use render::{
+    append_output_sentinel, build_param_preamble, build_param_preamble_with_decls,
+    build_param_preamble_with_outputs, build_stored_proc_exec, build_stored_proc_exec_with_outputs,
+};
+pub use types::{OutputParamBinding, RpcParam, RpcRequest as RpcRequestType};
 
 pub use parser::{
     parse_param_decl, CatalogRpcRequest, ExecuteRpcRequest, PrepExecRpcRequest, PrepareRpcRequest,
@@ -26,12 +30,14 @@ mod tests {
                 type_name: "INT".to_string(),
                 value_sql: "42".to_string(),
                 tvp_rows: None,
+                is_output: false,
             },
             RpcParam {
                 name: "@tvp".to_string(),
                 type_name: "dbo.IntList READONLY".to_string(),
                 value_sql: "NULL".to_string(),
                 tvp_rows: Some(vec![vec!["1".to_string()], vec!["2".to_string()]]),
+                is_output: false,
             },
         ];
         let sql = build_param_preamble(&params);
@@ -55,12 +61,14 @@ mod tests {
                 type_name: "INT".to_string(),
                 value_sql: "10".to_string(),
                 tvp_rows: None,
+                is_output: false,
             },
             RpcParam {
                 name: "@b".to_string(),
                 type_name: "NVARCHAR(20)".to_string(),
                 value_sql: "N'hello'".to_string(),
                 tvp_rows: None,
+                is_output: false,
             },
         ];
         assert_eq!(
@@ -74,12 +82,14 @@ mod tests {
                 type_name: "NVARCHAR(20)".to_string(),
                 value_sql: "N'Platform'".to_string(),
                 tvp_rows: None,
+                is_output: false,
             },
             RpcParam {
                 name: "@optname".to_string(),
                 type_name: "NVARCHAR(20)".to_string(),
                 value_sql: "N'ProductVersion'".to_string(),
                 tvp_rows: None,
+                is_output: false,
             },
         ];
         assert_eq!(
@@ -92,6 +102,7 @@ mod tests {
             type_name: "dbo.IdList READONLY".to_string(),
             value_sql: "NULL".to_string(),
             tvp_rows: Some(vec![vec!["1".to_string()], vec!["2".to_string()]]),
+            is_output: false,
         }];
         let sql = build_stored_proc_exec("dbo.usp_LoadByIds", &tvp);
         assert!(sql.contains("DECLARE @__rpc_tvp_0 dbo.IdList;"));

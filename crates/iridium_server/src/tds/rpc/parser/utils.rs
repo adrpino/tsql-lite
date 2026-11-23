@@ -116,7 +116,24 @@ pub fn parse_param_decl(decl: &str) -> Vec<(String, String)> {
     if decl.trim().is_empty() {
         return vec![];
     }
-    decl.split(',')
+    let mut parts: Vec<&str> = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (idx, ch) in decl.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&decl[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&decl[start..]);
+
+    parts
+        .into_iter()
         .filter_map(|part| {
             let part = part.trim();
             let mut iter = part.splitn(2, char::is_whitespace);

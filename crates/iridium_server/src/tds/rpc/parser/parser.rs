@@ -112,6 +112,7 @@ impl<'a> RpcFrameParser<'a> {
                 type_name: decoded.type_name,
                 value_sql: decoded.value_sql,
                 tvp_rows: decoded.tvp_rows,
+                is_output: false,
             });
         }
 
@@ -182,7 +183,7 @@ impl<'a> RpcFrameParser<'a> {
             if self.reader.remaining() < 2 {
                 break;
             }
-            let _status = self.reader.read_u8()?;
+            let status = self.reader.read_u8()?;
             let type_id = self.reader.read_u8()?;
 
             match param_idx {
@@ -195,6 +196,7 @@ impl<'a> RpcFrameParser<'a> {
                         type_name: decoded.type_name,
                         value_sql: decoded.value_sql,
                         tvp_rows: decoded.tvp_rows,
+                        is_output: (status & 0x01) != 0,
                     });
                 }
             }
@@ -391,6 +393,7 @@ impl<'a> RpcFrameParser<'a> {
                             type_name: decoded.type_name,
                             value_sql: decoded.value_sql,
                             tvp_rows: decoded.tvp_rows,
+                            is_output: false,
                         });
                     }
                 },
@@ -549,7 +552,7 @@ impl<'a> RpcFrameParser<'a> {
             if self.reader.remaining() < 2 {
                 break;
             }
-            let _status = self.reader.read_u8()?;
+            let status = self.reader.read_u8()?;
             let type_id = self.reader.read_u8()?;
 
             let decoded = decode::read_typed_value(&mut self.reader, type_id)?;
@@ -564,6 +567,7 @@ impl<'a> RpcFrameParser<'a> {
                 type_name: final_type,
                 value_sql: decoded.value_sql,
                 tvp_rows: decoded.tvp_rows,
+                is_output: (status & 0x01) != 0,
             });
             idx += 1;
         }

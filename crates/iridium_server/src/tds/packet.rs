@@ -8,6 +8,7 @@ pub const RPC: u8 = 0x03;
 pub const TABULAR_RESULT: u8 = 0x04;
 pub const ATTENTION: u8 = 0x06;
 pub const BULK_LOAD: u8 = 0x07;
+pub const TRANSACTION_MANAGER: u8 = 0x0E;
 
 pub const STATUS_EOM: u8 = 0x01;
 pub const STATUS_RESET: u8 = 0x08;

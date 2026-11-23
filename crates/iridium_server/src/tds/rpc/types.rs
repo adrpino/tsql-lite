@@ -5,6 +5,14 @@ pub struct RpcParam {
     pub type_name: String,
     pub value_sql: String,
     pub tvp_rows: Option<Vec<Vec<String>>>,
+    pub is_output: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputParamBinding {
+    pub ordinal: u16,
+    pub param_name: String,
+    pub var_name: String,
 }
 
 /// Result of parsing an RPC packet.

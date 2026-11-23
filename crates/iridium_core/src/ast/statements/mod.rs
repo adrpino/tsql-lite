@@ -92,6 +92,7 @@ pub enum ProceduralStatement {
     Throw(Box<ThrowStmt>),
     TryCatch(Box<TryCatchStmt>),
     DbccCheckIdent(Box<DbccCheckIdentStmt>),
+    WaitFor(Box<WaitForStmt>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

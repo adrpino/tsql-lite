@@ -14,6 +14,18 @@ pub struct QueryResult {
     pub is_procedure: bool,
 }
 
+/// Per-statement execution outcome for multi-statement TDS batches, carrying
+/// both the optional result set and wire-level rowcount metadata (`SET NOCOUNT`).
+#[derive(Debug, Clone, Default)]
+pub struct BatchResultItem {
+    pub result: Option<QueryResult>,
+    /// Affected row count for DML statements (`INSERT`/`UPDATE`/`DELETE`/`MERGE`)
+    /// when `SET NOCOUNT` is `OFF`.
+    pub rows_affected: Option<u64>,
+    /// True when `SET NOCOUNT ON` was active for this statement (suppresses `DONE_COUNT`).
+    pub suppress_rowcount: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct JsonQueryResult {
     pub columns: Vec<String>,

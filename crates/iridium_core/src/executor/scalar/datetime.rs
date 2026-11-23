@@ -186,10 +186,29 @@ pub(crate) fn eval_datepart(
         "millisecond" | "ms" => 0i32,
         "microsecond" | "mcs" => 0i32,
         "nanosecond" | "ns" => 0i32,
+        "tzoffset" | "tz" => extract_tzoffset_minutes(&date_str),
         _ => return Err(DbError::Execution(format!("unknown datepart '{}'", part))),
     };
 
     Ok(Value::Int(result))
+}
+
+fn extract_tzoffset_minutes(raw: &str) -> i32 {
+    let trimmed = raw.trim();
+    if trimmed.ends_with('Z') || trimmed.ends_with('z') {
+        return 0;
+    }
+    if trimmed.len() >= 6 {
+        let tail = &trimmed[trimmed.len() - 6..];
+        let bytes = tail.as_bytes();
+        if (bytes[0] == b'+' || bytes[0] == b'-') && bytes[3] == b':' {
+            if let (Ok(h), Ok(m)) = (tail[1..3].parse::<i32>(), tail[4..6].parse::<i32>()) {
+                let total = h * 60 + m;
+                return if bytes[0] == b'-' { -total } else { total };
+            }
+        }
+    }
+    0
 }
 
 pub(crate) fn eval_datename(

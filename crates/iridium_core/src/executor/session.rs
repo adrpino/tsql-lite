@@ -26,6 +26,12 @@ pub trait SessionManager {
         session_id: SessionId,
         journal: Box<dyn Journal>,
     ) -> Result<(), DbError>;
+    fn session_cancel_flag(
+        &self,
+        _session_id: SessionId,
+    ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +194,7 @@ pub struct SessionExtras {
     pub(crate) next_xml_handle: i32,
     pub(crate) mutation_target_id: Option<u32>,
     pub(crate) app_locks: super::applock::SharedAppLocks,
+    pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SessionExtras {
@@ -198,6 +205,7 @@ impl SessionExtras {
             next_xml_handle: 1,
             mutation_target_id: None,
             app_locks: super::applock::SharedAppLocks::new(),
+            cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -206,6 +214,8 @@ impl SessionExtras {
         self.xml_documents.clear();
         self.next_xml_handle = 1;
         self.mutation_target_id = None;
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

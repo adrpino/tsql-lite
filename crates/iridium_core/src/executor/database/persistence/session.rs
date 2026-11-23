@@ -109,4 +109,13 @@ where
         session.journal = journal;
         Ok(())
     }
+
+    fn session_cancel_flag(
+        &self,
+        session_id: SessionId,
+    ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        let session_mutex = self.state.sessions.get(&session_id)?;
+        let session = session_mutex.lock();
+        Some(session.extras.cancel_flag.clone())
+    }
 }

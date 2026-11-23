@@ -144,6 +144,34 @@ pub fn write_returnstatus(b: &mut PacketBuilder, status: i32) {
     b.put_i32_le(status);
 }
 
+/// Write a TDS 7.2+ `RETURNVALUE` (`0xAC`) token for an RPC `OUTPUT` / `InputOutput` parameter.
+pub fn write_returnvalue(
+    b: &mut PacketBuilder,
+    param_ordinal: u16,
+    param_name: &str,
+    value: &Value,
+    ti: &TypeInfo,
+) {
+    b.put_u8(RETURNVALUE_TOKEN);
+    b.put_u16_le(param_ordinal);
+    b.put_b_vchar_utf16(param_name);
+    b.put_u8(0x01); // Status: 0x01 = output parameter of stored procedure
+    b.put_u32_le(0); // UserType
+    b.put_u16_le(ti.flags);
+    b.put_u8(ti.tds_type);
+    b.put_bytes(&ti.length_prefix);
+    if let Some(collation) = &ti.collation {
+        b.put_bytes(collation);
+    }
+    if let Some(precision) = ti.precision {
+        b.put_u8(precision);
+        b.put_u8(ti.scale.unwrap_or(0));
+    } else if let Some(scale) = ti.scale {
+        b.put_u8(scale);
+    }
+    b.put_bytes(&value_to_wire_bytes(value, ti));
+}
+
 /// Write an OUTPUT parameter token (0x80) for an integer value.
 /// Used by cursor RPC to return the cursor handle as an output parameter.
 pub fn write_output_int(b: &mut PacketBuilder, param_name: &str, value: i32) {
@@ -276,6 +304,32 @@ pub fn write_envchange_language(b: &mut PacketBuilder, new_lang: &str, old_lang:
 
     b.put_u8(old_lang.len() as u8);
     b.put_utf16le(old_lang);
+}
+
+/// Write an ENVCHANGE token for transaction lifecycle events:
+/// - `ENVCHANGE_BEGIN_TRANSACTION` (`0x08`): `new_desc = Some(desc)`, `old_desc = None`
+/// - `ENVCHANGE_COMMIT_TRANSACTION` (`0x09`): `new_desc = None`, `old_desc = Some(desc)`
+/// - `ENVCHANGE_ROLLBACK_TRANSACTION` (`0x0A`): `new_desc = None`, `old_desc = Some(desc)`
+pub fn write_envchange_transaction(
+    b: &mut PacketBuilder,
+    env_type: u8,
+    new_desc: Option<u64>,
+    old_desc: Option<u64>,
+) {
+    b.put_u8(ENVCHANGE_TOKEN);
+    let new_len: u8 = if new_desc.is_some() { 8 } else { 0 };
+    let old_len: u8 = if old_desc.is_some() { 8 } else { 0 };
+    let total_len = 1u16 + 1u16 + (new_len as u16) + 1u16 + (old_len as u16);
+    b.put_u16_le(total_len);
+    b.put_u8(env_type);
+    b.put_u8(new_len);
+    if let Some(d) = new_desc {
+        b.put_u64_le(d);
+    }
+    b.put_u8(old_len);
+    if let Some(d) = old_desc {
+        b.put_u64_le(d);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

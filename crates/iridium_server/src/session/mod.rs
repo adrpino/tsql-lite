@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use iridium_core::SessionId;
@@ -15,6 +15,7 @@ pub mod execution;
 pub mod handshake;
 pub mod response;
 mod sql_pipeline;
+mod tx_handler;
 
 use crate::tds::packet;
 
@@ -35,6 +36,11 @@ pub struct TdsSession {
     packet_size: u16,
     database: String,
     prepared_stmts: HashMap<u32, PreparedStatement>,
+    pub(crate) tx_descriptor: u64,
+    pub(crate) next_tx_descriptor: u64,
+    pub(crate) active_savepoints: Vec<String>,
+    pub(crate) cancel_flag: Arc<AtomicBool>,
+    pub(crate) mars_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +65,11 @@ impl TdsSession {
             packet_size: 4096,
             database,
             prepared_stmts: HashMap::new(),
+            tx_descriptor: 0,
+            next_tx_descriptor: 0,
+            active_savepoints: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            mars_enabled: false,
         }
     }
 }

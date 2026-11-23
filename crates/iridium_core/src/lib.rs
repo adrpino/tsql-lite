@@ -18,7 +18,7 @@ pub use executor::durability::{
 };
 pub use executor::engine::SessionId;
 pub use executor::random::{RandomProvider, SeededRandom, ThreadRng};
-pub use executor::result::QueryResult;
+pub use executor::result::{BatchResultItem, QueryResult};
 pub use executor::session::SessionManager;
 pub use executor::tooling::{
     ExecutionTrace, ExplainOperator, ExplainPlan, SessionOptions, SourceSpan, StatementSlice,

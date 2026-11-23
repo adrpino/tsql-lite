@@ -47,9 +47,16 @@ fn eval_having_expr(
                     } else {
                         group
                     };
-                if let Some(res) =
-                    dispatch_aggregate(name, args, effective_group, ctx, catalog, storage, clock)
-                {
+                if let Some(res) = dispatch_aggregate(
+                    name,
+                    args,
+                    within_group.as_deref().map(|v| v.as_slice()),
+                    effective_group,
+                    ctx,
+                    catalog,
+                    storage,
+                    clock,
+                ) {
                     return res;
                 }
             }

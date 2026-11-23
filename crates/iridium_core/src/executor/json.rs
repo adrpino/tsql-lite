@@ -178,6 +178,182 @@ pub fn json_path_exists(json_str: &str, path: &str) -> Result<Value, DbError> {
     Ok(Value::Bit(exists))
 }
 
+/// Evaluates SQL Server 2025 `JSON_CONTAINS(target, search_value [, path [, search_mode]])`.
+/// - `path` defaults to `"$"` and supports object keys, `[idx]`, and `[*]` wildcards.
+/// - `search_mode`: `0` (default) uses equality, `1` uses SQL `LIKE` pattern matching on strings.
+pub fn json_contains(
+    json_str: &str,
+    search_val: &Value,
+    path: Option<&str>,
+    search_mode: i64,
+) -> Result<Value, DbError> {
+    let root = parse_json(json_str)?;
+    let path_str = path.unwrap_or("$").trim();
+    let targets = collect_json_path_matches(&root, path_str)?;
+    if targets.is_empty() {
+        // SQL Server 2025: returns NULL if an explicit non-root path doesn't match any element,
+        // or 0 if wildcard matched empty array.
+        return if path_str.contains("[*]") {
+            Ok(Value::Int(0))
+        } else {
+            Ok(Value::Null)
+        };
+    }
+
+    let use_like = match search_mode {
+        0 => false,
+        1 => true,
+        other => {
+            return Err(DbError::Execution(format!(
+                "Invalid search_mode {} for JSON_CONTAINS (expected 0 or 1)",
+                other
+            )))
+        }
+    };
+
+    let matched = targets
+        .iter()
+        .any(|node| json_node_contains_value(node, search_val, use_like));
+    Ok(Value::Int(if matched { 1 } else { 0 }))
+}
+
+fn collect_json_path_matches<'a>(
+    root: &'a JsonValue,
+    path: &str,
+) -> Result<Vec<&'a JsonValue>, DbError> {
+    let p = path
+        .trim()
+        .strip_prefix("lax ")
+        .or_else(|| path.trim().strip_prefix("strict "))
+        .unwrap_or(path.trim())
+        .trim();
+    if p == "$" || p.is_empty() {
+        return Ok(vec![root]);
+    }
+    let rest = p
+        .strip_prefix('$')
+        .ok_or_else(|| DbError::Execution(format!("Invalid JSON path '{}'", path)))?;
+
+    let mut current: Vec<&'a JsonValue> = vec![root];
+    let chars: Vec<char> = rest.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '.' => {
+                i += 1;
+                if i < chars.len() && chars[i] == '"' {
+                    i += 1;
+                    let start = i;
+                    while i < chars.len() && chars[i] != '"' {
+                        i += 1;
+                    }
+                    let key: String = chars[start..i].iter().collect();
+                    if i < chars.len() && chars[i] == '"' {
+                        i += 1;
+                    }
+                    current = current
+                        .into_iter()
+                        .filter_map(|n| n.as_object()?.get(&key))
+                        .collect();
+                } else {
+                    let start = i;
+                    while i < chars.len() && chars[i] != '.' && chars[i] != '[' {
+                        i += 1;
+                    }
+                    let key: String = chars[start..i].iter().collect();
+                    if key == "*" {
+                        current = current
+                            .into_iter()
+                            .flat_map(|n| {
+                                n.as_object()
+                                    .map(|m| m.values().collect::<Vec<_>>())
+                                    .unwrap_or_default()
+                            })
+                            .collect();
+                    } else {
+                        current = current
+                            .into_iter()
+                            .filter_map(|n| n.as_object()?.get(&key))
+                            .collect();
+                    }
+                }
+            }
+            '[' => {
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i] != ']' {
+                    i += 1;
+                }
+                let inner: String = chars[start..i].iter().collect();
+                if i < chars.len() && chars[i] == ']' {
+                    i += 1;
+                }
+                let inner_trim = inner.trim();
+                if inner_trim == "*" {
+                    current = current
+                        .into_iter()
+                        .flat_map(|n| {
+                            n.as_array()
+                                .map(|a| a.iter().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                } else if let Ok(idx) = inner_trim.parse::<usize>() {
+                    current = current
+                        .into_iter()
+                        .filter_map(|n| n.as_array()?.get(idx))
+                        .collect();
+                } else {
+                    return Err(DbError::Execution(format!("Invalid JSON path '{}'", path)));
+                }
+            }
+            _ => {
+                return Err(DbError::Execution(format!("Invalid JSON path '{}'", path)));
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn json_scalar_matches(node: &JsonValue, search: &Value, use_like: bool) -> bool {
+    match node {
+        JsonValue::String(s) => {
+            let needle = search.to_string_value();
+            if use_like {
+                super::predicates::like_match_default(s, &needle)
+            } else {
+                s == &needle
+            }
+        }
+        JsonValue::Number(num) => {
+            if let Some(target_f) = search.to_f64() {
+                if let Some(nf) = num.as_f64() {
+                    return (nf - target_f).abs() < 1e-12;
+                }
+            }
+            false
+        }
+        JsonValue::Bool(b) => match search {
+            Value::Bit(sb) => sb == b,
+            _ => false,
+        },
+        JsonValue::Null => search.is_null(),
+        _ => false,
+    }
+}
+
+fn json_node_contains_value(node: &JsonValue, search: &Value, use_like: bool) -> bool {
+    match node {
+        JsonValue::Array(arr) => arr
+            .iter()
+            .any(|el| json_node_contains_value(el, search, use_like)),
+        JsonValue::Object(map) => map
+            .values()
+            .any(|v| json_node_contains_value(v, search, use_like)),
+        scalar => json_scalar_matches(scalar, search, use_like),
+    }
+}
+
 pub fn json_array_length(json_str: &str) -> Result<Value, DbError> {
     let json = parse_json(json_str)?;
     match json {

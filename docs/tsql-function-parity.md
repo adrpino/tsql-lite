@@ -33,9 +33,9 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `JSON_ARRAYAGG` | ✅ | Supports `ORDER BY` and `ABSENT ON NULL` / `NULL ON NULL` |
 | `GROUPING` | ✅ | Supported with `ROLLUP`, `CUBE`, and `GROUPING SETS` |
 | `GROUPING_ID` | ✅ | Supported with `ROLLUP`, `CUBE`, and `GROUPING SETS` |
-| `APPROX_COUNT_DISTINCT` | ❌ | Not yet implemented |
-| `APPROX_PERCENTILE_CONT` | ❌ | Not yet implemented |
-| `APPROX_PERCENTILE_DISC` | ❌ | Not yet implemented |
+| `APPROX_COUNT_DISTINCT` | ✅ | Returns `BIGINT` distinct non-null count |
+| `APPROX_PERCENTILE_CONT` | ✅ | SQL Server 2022 continuous percentile `WITHIN GROUP (ORDER BY ...)` |
+| `APPROX_PERCENTILE_DISC` | ✅ | SQL Server 2022 discrete percentile `WITHIN GROUP (ORDER BY ...)` |
 
 ## Window Functions
 
@@ -160,9 +160,9 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `SQUARE` | ✅ | |
 | `TAN` | ✅ | |
 | `VECTOR_DISTANCE` | ✅ | SQL Server 2025 |
-| `VECTOR_NORM` | ❌ | SQL Server 2025 |
-| `VECTOR_NORMALIZE` | ❌ | SQL Server 2025 |
-| `VECTORPROPERTY` | ❌ | SQL Server 2025 |
+| `VECTOR_NORM` | ✅ | SQL Server 2025 (`norm1`, `norm2`, `norminf`) |
+| `VECTOR_NORMALIZE` | ✅ | SQL Server 2025 (`norm1`, `norm2`, `norminf`) |
+| `VECTORPROPERTY` | ✅ | SQL Server 2025 (`Dimensions`, `BaseType`) |
 
 ## Logic, Conversion & JSON Functions
 
@@ -191,7 +191,7 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `JSON_PATH_EXISTS` | ✅ | SQL Server 2022 |
 | `JSON_QUERY` | ✅ | |
 | `JSON_VALUE` | ✅ | |
-| `JSON_CONTAINS` | ❌ | SQL Server 2025 |
+| `JSON_CONTAINS` | ✅ | SQL Server 2025 (`path` wildcards + equality / `LIKE` `search_mode`) |
 
 ## Metadata, System, Security, Crypto & Trigger Functions
 
@@ -277,16 +277,16 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `APPLOCK_MODE` | ✅ | Current lock mode held by owner (`NoLock`, `Shared`, `Exclusive`, etc.) |
 | `APPLOCK_TEST` | ✅ | Returns `1`/`0` for application lock grantability across lock owners |
 | `CERT_ID` | ❌ | Server crypto/certificate surface |
-| `CRYPT_GEN_RANDOM` | ❌ | Server crypto surface |
-| `ENCRYPTBYPASSPHRASE` | ❌ | Server crypto surface |
-| `DECRYPTBYPASSPHRASE` | ❌ | Server crypto surface |
+| `CRYPT_GEN_RANDOM` | ✅ | CSPRNG random `VARBINARY(1..8000)` with optional seed |
+| `ENCRYPTBYPASSPHRASE` | ✅ | Pure-Rust AES-256-GCM passphrase encryption with optional authenticator |
+| `DECRYPTBYPASSPHRASE` | ✅ | Pure-Rust AES-256-GCM passphrase decryption (returns `NULL` on mismatch) |
 | `EVENTDATA` | ✅ | Standard `<EVENT_INSTANCE>` XML payload inside DDL triggers (`NULL` outside) |
-| `FILE_ID` | ❌ | Physical OS file metadata |
-| `FILE_NAME` | ❌ | Physical OS file metadata |
-| `FILEGROUP_ID` | ❌ | |
-| `FILEGROUP_NAME` | ❌ | |
-| `FILEPROPERTY` | ❌ | |
-| `FILEGROUPPROPERTY` | ❌ | |
+| `FILE_ID` | ✅ | Logical database file ID (`1` = primary data, `2` = log) |
+| `FILE_NAME` | ✅ | Logical database file name by file ID |
+| `FILEGROUP_ID` | ✅ | Catalog-backed filegroup `data_space_id` (`PRIMARY` = `1`) |
+| `FILEGROUP_NAME` | ✅ | Catalog-backed filegroup name by `data_space_id` |
+| `FILEPROPERTY` | ✅ | `IsReadOnly`, `IsPrimaryFile`, `IsLogFile`, `SpaceUsed`, `IsDefaultFile` |
+| `FILEGROUPPROPERTY` | ✅ | `IsReadOnly`, `IsUserDefinedFG`, `IsDefault`, `IsAutogrowAllFiles` |
 
 ## Built-in Table-Valued Functions (TVFs)
 

@@ -1,6 +1,7 @@
 mod column;
 mod common;
 mod database;
+mod file_metadata;
 mod index;
 mod object;
 mod property;
@@ -9,6 +10,10 @@ mod r#type;
 pub(crate) use column::{eval_col_length, eval_col_name};
 pub(crate) use database::{
     eval_databasepropertyex, eval_db_id, eval_db_name, eval_original_db_name,
+};
+pub(crate) use file_metadata::{
+    eval_file_id, eval_file_name, eval_filegroup_id, eval_filegroup_name, eval_filegroupproperty,
+    eval_fileproperty,
 };
 pub(crate) use index::{eval_index_col, eval_indexkey_property, eval_indexproperty};
 pub(crate) use object::{

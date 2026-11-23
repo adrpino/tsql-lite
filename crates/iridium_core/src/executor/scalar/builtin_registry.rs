@@ -106,6 +106,12 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("COL_NAME" => tsql_metadata::eval_col_name),
     builtin!("COL_LENGTH" => tsql_metadata::eval_col_length),
     builtin!("DATABASEPROPERTYEX" => tsql_metadata::eval_databasepropertyex),
+    builtin!("FILEGROUP_ID" => tsql_metadata::eval_filegroup_id),
+    builtin!("FILEGROUP_NAME" => tsql_metadata::eval_filegroup_name),
+    builtin!("FILEGROUPPROPERTY" => tsql_metadata::eval_filegroupproperty),
+    builtin!("FILE_ID" => tsql_metadata::eval_file_id),
+    builtin!("FILE_NAME" => tsql_metadata::eval_file_name),
+    builtin!("FILEPROPERTY" => tsql_metadata::eval_fileproperty),
     builtin!("IDENT_CURRENT" => tsql_metadata::eval_ident_current),
     builtin!("IDENT_SEED" => tsql_metadata::eval_ident_seed),
     builtin!("IDENT_INCR" => tsql_metadata::eval_ident_incr),
@@ -311,6 +317,9 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("PARSENAME" => system::formatting::eval_parsename),
     builtin!("QUOTENAME" => system::formatting::eval_quotename),
     builtin!("HASHBYTES" => system::crypto::eval_hashbytes),
+    builtin!("CRYPT_GEN_RANDOM" => system::crypto::eval_crypt_gen_random),
+    builtin!("ENCRYPTBYPASSPHRASE" => system::crypto::eval_encryptbypassphrase),
+    builtin!("DECRYPTBYPASSPHRASE" => system::crypto::eval_decryptbypassphrase),
     builtin!("COMPRESS" => system::crypto::eval_compress),
     builtin!("DECOMPRESS" => system::crypto::eval_decompress),
     builtin!("BINARY_CHECKSUM" => system::crypto::eval_binary_checksum),
@@ -557,6 +566,9 @@ const MATH_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("SQUARE" => math::eval_square),
     builtin!("POWER" => math::eval_power),
     builtin!("VECTOR_DISTANCE" => vector::eval_vector_distance),
+    builtin!("VECTOR_NORM" => vector::eval_vector_norm),
+    builtin!("VECTOR_NORMALIZE" => vector::eval_vector_normalize),
+    builtin!("VECTORPROPERTY" => vector::eval_vector_property),
     builtin!("EXP" => math::eval_exp),
     builtin!("LOG" => math::eval_log),
     builtin!("LOG10" => math::eval_log10),
@@ -640,6 +652,37 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
             return Ok(Value::Null);
         }
         json::json_path_exists(&json_val.to_string_value(), &path_val.to_string_value())
+    }),
+    builtin!("JSON_CONTAINS" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() < 2 || args.len() > 4 {
+            return Err(DbError::Execution("JSON_CONTAINS expects 2 to 4 arguments".into()));
+        }
+        let json_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        let search_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        if json_val.is_null() || search_val.is_null() {
+            return Ok(Value::Null);
+        }
+        let path_opt = if let Some(p_arg) = args.get(2) {
+            let pv = crate::executor::evaluator::eval_expr(p_arg, row, ctx, catalog, storage, clock)?;
+            if pv.is_null() {
+                return Ok(Value::Null);
+            }
+            Some(pv.to_string_value())
+        } else {
+            None
+        };
+        let search_mode = if let Some(m_arg) = args.get(3) {
+            let mv = crate::executor::evaluator::eval_expr(m_arg, row, ctx, catalog, storage, clock)?;
+            if mv.is_null() {
+                return Ok(Value::Null);
+            }
+            mv.to_integer_i64().ok_or_else(|| {
+                DbError::Execution("JSON_CONTAINS search_mode must be an integer (0 or 1)".into())
+            })?
+        } else {
+            0
+        };
+        json::json_contains(&json_val.to_string_value(), &search_val, path_opt.as_deref(), search_mode)
     }),
     builtin!("ISJSON" => |args, row, ctx, catalog, storage, clock| {
         if args.is_empty() || args.len() > 2 {

@@ -114,3 +114,135 @@ fn negative_dot_product(left: &[f32], right: &[f32]) -> f64 {
         .map(|(a, b)| f64::from(*a) * f64::from(*b))
         .sum::<f64>()
 }
+
+fn compute_vector_norm(values: &[f32], norm_type: &str) -> Result<f64, DbError> {
+    match norm_type {
+        "norm1" => Ok(values.iter().map(|v| f64::from(*v).abs()).sum()),
+        "norm2" => Ok(values
+            .iter()
+            .map(|v| {
+                let d = f64::from(*v);
+                d * d
+            })
+            .sum::<f64>()
+            .sqrt()),
+        "norminf" => Ok(values
+            .iter()
+            .map(|v| f64::from(*v).abs())
+            .fold(0.0f64, f64::max)),
+        _ => Err(DbError::Execution(format!(
+            "Invalid norm type '{}'. Supported: norm1, norm2, norminf",
+            norm_type
+        ))),
+    }
+}
+
+pub(crate) fn eval_vector_norm(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution("VECTOR_NORM expects 2 arguments".into()));
+    }
+    let vec_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let norm_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if vec_val.is_null() || norm_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let bits = match vec_val {
+        Value::Vector(b) => b,
+        other => {
+            return Err(DbError::Execution(format!(
+                "Argument data type {:?} is invalid for argument 1 of vector_norm function",
+                other.data_type()
+            )))
+        }
+    };
+    let vals = vector_to_f32(&bits);
+    let norm_type = norm_val.to_string_value().trim().to_ascii_lowercase();
+    let res = compute_vector_norm(&vals, &norm_type)?;
+    Ok(Value::Float(res.to_bits()))
+}
+
+pub(crate) fn eval_vector_normalize(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution(
+            "VECTOR_NORMALIZE expects 2 arguments".into(),
+        ));
+    }
+    let vec_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let norm_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if vec_val.is_null() || norm_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let bits = match vec_val {
+        Value::Vector(b) => b,
+        other => {
+            return Err(DbError::Execution(format!(
+                "Argument data type {:?} is invalid for argument 1 of vector_normalize function",
+                other.data_type()
+            )))
+        }
+    };
+    let vals = vector_to_f32(&bits);
+    let norm_type = norm_val.to_string_value().trim().to_ascii_lowercase();
+    let norm = compute_vector_norm(&vals, &norm_type)?;
+    if norm == 0.0 {
+        return Ok(Value::Vector(bits));
+    }
+    let normalized: Vec<u32> = vals
+        .iter()
+        .map(|v| ((f64::from(*v) / norm) as f32).to_bits())
+        .collect();
+    Ok(Value::Vector(normalized))
+}
+
+pub(crate) fn eval_vector_property(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 2 {
+        return Err(DbError::Execution(
+            "VECTORPROPERTY expects 2 arguments".into(),
+        ));
+    }
+    let vec_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let prop_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if vec_val.is_null() || prop_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let bits = match vec_val {
+        Value::Vector(b) => b,
+        other => {
+            return Err(DbError::Execution(format!(
+                "Argument data type {:?} is invalid for argument 1 of vectorproperty function",
+                other.data_type()
+            )))
+        }
+    };
+    match prop_val
+        .to_string_value()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "dimensions" => Ok(Value::Int(bits.len() as i32)),
+        "basetype" => Ok(Value::NVarChar("float".to_string())),
+        _ => Ok(Value::Null),
+    }
+}

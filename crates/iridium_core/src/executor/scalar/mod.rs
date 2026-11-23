@@ -46,9 +46,16 @@ pub(crate) fn eval_function(
             } else {
                 group
             };
-            if let Some(res) =
-                dispatch_aggregate(name, args, &effective, ctx, catalog, storage, clock)
-            {
+            if let Some(res) = dispatch_aggregate(
+                name,
+                args,
+                within_group,
+                &effective,
+                ctx,
+                catalog,
+                storage,
+                clock,
+            ) {
                 return res;
             }
         }

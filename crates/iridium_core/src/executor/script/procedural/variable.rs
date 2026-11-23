@@ -40,14 +40,23 @@ impl<'a> ScriptExecutor<'a> {
             crate::executor::type_mapping::resolve_data_type_spec(&stmt.data_type, self.catalog)
         };
         let value = if let Some(ref default_expr) = stmt.default {
-            crate::executor::evaluator::eval_expr(
+            let raw = crate::executor::evaluator::eval_expr(
                 default_expr,
                 &[],
                 ctx,
                 self.catalog,
                 self.storage,
                 self.clock,
-            )?
+            )?;
+            if matches!(ty, crate::types::DataType::Vector { .. }) && !raw.is_null() {
+                crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                    raw,
+                    &ty,
+                    &ctx.options.dateformat,
+                )?
+            } else {
+                raw
+            }
         } else {
             crate::types::Value::Null
         };

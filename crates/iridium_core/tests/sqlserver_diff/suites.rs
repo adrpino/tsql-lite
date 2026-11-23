@@ -954,6 +954,42 @@ fn enterprise_result_sets_schemabinding_ddl_triggers_applock_collation() -> Diff
                         (SELECT COUNT(*) FROM (SELECT Word COLLATE Latin1_General_CI_AS AS W FROM dbo.AccentWords GROUP BY Word COLLATE Latin1_General_CI_AS) g2);",
                 ordered: true,
             },
+            DiffStep::Query {
+                label: "approx_aggregates_sql2022",
+                sql: "SELECT
+                        APPROX_COUNT_DISTINCT(v),
+                        APPROX_PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY v),
+                        APPROX_PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY v)
+                      FROM (VALUES (10), (20), (30), (40), (20), (NULL)) AS t(v);",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "filegroup_and_file_metadata",
+                sql: "SELECT
+                        FILEGROUP_ID('PRIMARY'),
+                        FILEGROUP_NAME(1),
+                        FILEGROUPPROPERTY('PRIMARY', 'IsDefault'),
+                        FILEGROUPPROPERTY('PRIMARY', 'IsUserDefinedFG'),
+                        FILEGROUPPROPERTY('PRIMARY', 'IsReadOnly'),
+                        FILE_ID(FILE_NAME(1)),
+                        FILEPROPERTY(FILE_NAME(1), 'IsPrimaryFile'),
+                        FILEPROPERTY(FILE_NAME(1), 'IsLogFile'),
+                        FILEPROPERTY(FILE_NAME(2), 'IsLogFile');",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "crypt_gen_random_and_passphrase_roundtrip",
+                sql: "DECLARE @r VARBINARY(16) = CRYPT_GEN_RANDOM(16);
+                      DECLARE @c1 VARBINARY(8000) = ENCRYPTBYPASSPHRASE('test_pass', 'hello_crypto');
+                      DECLARE @c2 VARBINARY(8000) = ENCRYPTBYPASSPHRASE('test_pass', 'bound_payload', 1, 'ctx1');
+                      SELECT
+                        DATALENGTH(@r),
+                        CAST(DECRYPTBYPASSPHRASE('test_pass', @c1) AS VARCHAR(50)),
+                        DECRYPTBYPASSPHRASE('wrong_pass', @c1),
+                        CAST(DECRYPTBYPASSPHRASE('test_pass', @c2, 1, 'ctx1') AS VARCHAR(50)),
+                        DECRYPTBYPASSPHRASE('test_pass', @c2, 1, 'ctx2');",
+                ordered: true,
+            },
         ],
     }
 }

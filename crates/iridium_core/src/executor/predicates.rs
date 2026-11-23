@@ -224,6 +224,15 @@ fn like_token_matches_char(tok: &LikeToken, ch: char) -> bool {
     }
 }
 
+pub(crate) fn like_match_default(s: &str, pattern: &str) -> bool {
+    like_match(
+        s,
+        pattern,
+        None,
+        super::collation::CollationFlags::default(),
+    )
+}
+
 fn like_match(
     s: &str,
     pattern: &str,

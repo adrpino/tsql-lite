@@ -40,6 +40,9 @@ pub enum AggregateFn {
     JsonObjectAggAbsent,
     JsonArrayAggAbsent,
     JsonArrayAggNull,
+    ApproxCountDistinct,
+    ApproxPercentileCont,
+    ApproxPercentileDisc,
 }
 
 impl AggregateFn {
@@ -71,6 +74,9 @@ impl AggregateFn {
             "__JSON_OBJECTAGG_ABSENT" => Some(AggregateFn::JsonObjectAggAbsent),
             "JSON_ARRAYAGG" | "__JSON_ARRAYAGG_ABSENT" => Some(AggregateFn::JsonArrayAggAbsent),
             "__JSON_ARRAYAGG_NULL" => Some(AggregateFn::JsonArrayAggNull),
+            "APPROX_COUNT_DISTINCT" => Some(AggregateFn::ApproxCountDistinct),
+            "APPROX_PERCENTILE_CONT" => Some(AggregateFn::ApproxPercentileCont),
+            "APPROX_PERCENTILE_DISC" => Some(AggregateFn::ApproxPercentileDisc),
             _ => None,
         }
     }
@@ -108,9 +114,11 @@ pub fn is_aggregate_function(name: &str) -> bool {
 
 /// Centralized aggregate dispatch. Returns None if the function is not a recognized aggregate.
 /// This enables OCP: add new aggregates here without modifying caller code.
+#[allow(clippy::too_many_arguments)]
 pub fn dispatch_aggregate(
     name: &str,
     args: &[Expr],
+    within_group: Option<&[crate::ast::OrderByExpr]>,
     group: &Group,
     ctx: &mut ExecutionContext,
     catalog: &dyn Catalog,
@@ -122,9 +130,11 @@ pub fn dispatch_aggregate(
         AggregateFn::Count | AggregateFn::CountBig => Some(Ok(eval_aggregate_count(
             args, group, ctx, catalog, storage, clock,
         ))),
-        AggregateFn::CountDistinct | AggregateFn::CountBigDistinct => Some(Ok(
-            eval_aggregate_count_distinct(args, group, ctx, catalog, storage, clock),
-        )),
+        AggregateFn::CountDistinct
+        | AggregateFn::CountBigDistinct
+        | AggregateFn::ApproxCountDistinct => Some(Ok(eval_aggregate_count_distinct(
+            args, group, ctx, catalog, storage, clock,
+        ))),
         AggregateFn::Sum => Some(eval_aggregate_sum_inner(
             args, false, group, ctx, catalog, storage, clock,
         )),
@@ -187,6 +197,26 @@ pub fn dispatch_aggregate(
         )),
         AggregateFn::JsonArrayAggNull => Some(eval_aggregate_json_arrayagg(
             args, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::ApproxPercentileCont => Some(eval_aggregate_approx_percentile(
+            args,
+            within_group,
+            true,
+            group,
+            ctx,
+            catalog,
+            storage,
+            clock,
+        )),
+        AggregateFn::ApproxPercentileDisc => Some(eval_aggregate_approx_percentile(
+            args,
+            within_group,
+            false,
+            group,
+            ctx,
+            catalog,
+            storage,
+            clock,
         )),
     }
 }
@@ -634,4 +664,70 @@ fn eval_aggregate_json_arrayagg(
         return Ok(Value::Null);
     }
     Ok(super::json::build_json_array(&items, null_on_null))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_aggregate_approx_percentile(
+    args: &[Expr],
+    within_group: Option<&[crate::ast::OrderByExpr]>,
+    continuous: bool,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    let fn_name = if continuous {
+        "APPROX_PERCENTILE_CONT"
+    } else {
+        "APPROX_PERCENTILE_DISC"
+    };
+    let p_expr = args
+        .first()
+        .ok_or_else(|| DbError::Execution(format!("{fn_name} requires a percentile argument")))?;
+    let order_by = within_group.filter(|ob| !ob.is_empty()).ok_or_else(|| {
+        DbError::Execution(format!("{fn_name} requires WITHIN GROUP (ORDER BY ...)"))
+    })?;
+
+    let p_val = eval_expr(p_expr, &[], ctx, catalog, storage, clock)?;
+    if p_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let p = p_val
+        .to_f64()
+        .ok_or_else(|| DbError::Execution(format!("{fn_name} percentile must be numeric")))?;
+    if !(0.0..=1.0).contains(&p) {
+        return Err(DbError::Execution(format!(
+            "{fn_name} percentile argument must be between 0.0 and 1.0"
+        )));
+    }
+
+    let values = collect_group_values(&order_by[0].expr, group, ctx, catalog, storage, clock);
+    if values.is_empty() {
+        return Ok(Value::Null);
+    }
+    let n = values.len();
+    if !continuous {
+        let idx = if p == 0.0 {
+            0
+        } else {
+            ((p * n as f64).ceil() as usize)
+                .saturating_sub(1)
+                .min(n - 1)
+        };
+        return Ok(values[idx].clone());
+    }
+
+    let pos = p * (n - 1) as f64;
+    let lo = (pos.floor() as usize).min(n - 1);
+    let hi = (pos.ceil() as usize).min(n - 1);
+    let frac = pos - lo as f64;
+    let v_lo = values[lo].to_f64().ok_or_else(|| {
+        DbError::Execution(format!("{fn_name} requires numeric ORDER BY expression"))
+    })?;
+    let v_hi = values[hi].to_f64().ok_or_else(|| {
+        DbError::Execution(format!("{fn_name} requires numeric ORDER BY expression"))
+    })?;
+    let interp = v_lo + (v_hi - v_lo) * frac;
+    Ok(Value::Float(interp.to_bits()))
 }

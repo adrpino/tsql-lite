@@ -1,3 +1,5 @@
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
@@ -207,4 +209,227 @@ pub(crate) fn eval_binary_checksum(
         }
     }
     Ok(Value::Int(h as i32))
+}
+
+const PASSPHRASE_ENVELOPE_MAGIC: &[u8; 4] = b"IRPB";
+const PASSPHRASE_NONCE_LEN: usize = 12;
+
+fn derive_passphrase_key(passphrase: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"iridium-passphrase-v1:");
+    for u in passphrase.encode_utf16() {
+        hasher.update(u.to_le_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn value_to_crypto_bytes(val: &Value) -> Vec<u8> {
+    match val {
+        Value::Binary(b) | Value::VarBinary(b) => b.clone(),
+        other => other.to_string_value().into_bytes(),
+    }
+}
+
+fn build_authenticator_aad(add_auth: bool, auth_bytes: Option<&[u8]>) -> Vec<u8> {
+    let mut aad = Vec::new();
+    if add_auth {
+        aad.push(1);
+        if let Some(b) = auth_bytes {
+            aad.extend_from_slice(b);
+        }
+    } else {
+        aad.push(0);
+    }
+    aad
+}
+
+pub(crate) fn eval_crypt_gen_random(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(DbError::Execution(
+            "CRYPT_GEN_RANDOM expects 1 or 2 arguments".into(),
+        ));
+    }
+    let len_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    if len_val.is_null() {
+        return Ok(Value::Null);
+    }
+    let Some(len_i64) = len_val.to_integer_i64() else {
+        return Err(DbError::Execution(
+            "CRYPT_GEN_RANDOM length must be an integer".into(),
+        ));
+    };
+    if !(1..=8000).contains(&len_i64) {
+        return Ok(Value::Null);
+    }
+    let seed_bytes = if let Some(seed_arg) = args.get(1) {
+        let sv = eval_expr(seed_arg, row, ctx, catalog, storage, clock)?;
+        if sv.is_null() {
+            Vec::new()
+        } else {
+            value_to_crypto_bytes(&sv)
+        }
+    } else {
+        Vec::new()
+    };
+
+    let target_len = len_i64 as usize;
+    let mut out = Vec::with_capacity(target_len);
+    let mut counter: u64 = 0;
+    while out.len() < target_len {
+        let entropy = uuid::Uuid::new_v4();
+        let mut hasher = Sha256::new();
+        hasher.update(entropy.as_bytes());
+        hasher.update(&seed_bytes);
+        hasher.update(counter.to_le_bytes());
+        let block = hasher.finalize();
+        let take = (target_len - out.len()).min(block.len());
+        out.extend_from_slice(&block[..take]);
+        counter += 1;
+    }
+    Ok(Value::VarBinary(out))
+}
+
+pub(crate) fn eval_encryptbypassphrase(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() < 2 || args.len() > 4 {
+        return Err(DbError::Execution(
+            "ENCRYPTBYPASSPHRASE expects 2 to 4 arguments".into(),
+        ));
+    }
+    let pass_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let plain_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if pass_val.is_null() || plain_val.is_null() {
+        return Ok(Value::Null);
+    }
+
+    let add_auth = if let Some(flag_arg) = args.get(2) {
+        let fv = eval_expr(flag_arg, row, ctx, catalog, storage, clock)?;
+        if fv.is_null() {
+            false
+        } else {
+            fv.to_integer_i64().unwrap_or(0) != 0
+        }
+    } else {
+        false
+    };
+    let auth_bytes = if let Some(auth_arg) = args.get(3) {
+        let av = eval_expr(auth_arg, row, ctx, catalog, storage, clock)?;
+        if av.is_null() {
+            None
+        } else {
+            Some(value_to_crypto_bytes(&av))
+        }
+    } else {
+        None
+    };
+
+    let key = derive_passphrase_key(&pass_val.to_string_value());
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| DbError::Execution(format!("ENCRYPTBYPASSPHRASE key error: {e}")))?;
+    let entropy = uuid::Uuid::new_v4();
+    let nonce_bytes: [u8; PASSPHRASE_NONCE_LEN] = entropy.as_bytes()[..PASSPHRASE_NONCE_LEN]
+        .try_into()
+        .expect("12-byte nonce");
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let plaintext = value_to_crypto_bytes(&plain_val);
+    let aad = build_authenticator_aad(add_auth, auth_bytes.as_deref());
+
+    let ciphertext = cipher
+        .encrypt(
+            nonce,
+            Payload {
+                msg: &plaintext,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| DbError::Execution("ENCRYPTBYPASSPHRASE encryption failed".into()))?;
+
+    let mut out = Vec::with_capacity(
+        PASSPHRASE_ENVELOPE_MAGIC.len() + PASSPHRASE_NONCE_LEN + ciphertext.len(),
+    );
+    out.extend_from_slice(PASSPHRASE_ENVELOPE_MAGIC);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    Ok(Value::VarBinary(out))
+}
+
+pub(crate) fn eval_decryptbypassphrase(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() < 2 || args.len() > 4 {
+        return Err(DbError::Execution(
+            "DECRYPTBYPASSPHRASE expects 2 to 4 arguments".into(),
+        ));
+    }
+    let pass_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let cipher_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if pass_val.is_null() || cipher_val.is_null() {
+        return Ok(Value::Null);
+    }
+
+    let add_auth = if let Some(flag_arg) = args.get(2) {
+        let fv = eval_expr(flag_arg, row, ctx, catalog, storage, clock)?;
+        if fv.is_null() {
+            false
+        } else {
+            fv.to_integer_i64().unwrap_or(0) != 0
+        }
+    } else {
+        false
+    };
+    let auth_bytes = if let Some(auth_arg) = args.get(3) {
+        let av = eval_expr(auth_arg, row, ctx, catalog, storage, clock)?;
+        if av.is_null() {
+            None
+        } else {
+            Some(value_to_crypto_bytes(&av))
+        }
+    } else {
+        None
+    };
+
+    let data = match cipher_val {
+        Value::Binary(b) | Value::VarBinary(b) => b,
+        _ => return Ok(Value::Null),
+    };
+    let header_len = PASSPHRASE_ENVELOPE_MAGIC.len() + PASSPHRASE_NONCE_LEN;
+    if data.len() < header_len || &data[..4] != PASSPHRASE_ENVELOPE_MAGIC {
+        return Ok(Value::Null);
+    }
+    let nonce = Nonce::from_slice(&data[4..header_len]);
+    let ciphertext = &data[header_len..];
+
+    let key = derive_passphrase_key(&pass_val.to_string_value());
+    let Ok(cipher) = Aes256Gcm::new_from_slice(&key) else {
+        return Ok(Value::Null);
+    };
+    let aad = build_authenticator_aad(add_auth, auth_bytes.as_deref());
+    match cipher.decrypt(
+        nonce,
+        Payload {
+            msg: ciphertext,
+            aad: &aad,
+        },
+    ) {
+        Ok(plain) => Ok(Value::VarBinary(plain)),
+        Err(_) => Ok(Value::Null),
+    }
 }

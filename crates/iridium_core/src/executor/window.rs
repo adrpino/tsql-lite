@@ -587,6 +587,7 @@ impl<'a> WindowExecutor<'a> {
                                         let res = dispatch_aggregate(
                                             name.as_str(),
                                             args,
+                                            None,
                                             &group,
                                             ctx,
                                             self.catalog,

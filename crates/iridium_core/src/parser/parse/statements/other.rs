@@ -181,9 +181,87 @@ pub fn parse_set(parser: &mut Parser) -> ParseResult<Statement> {
     }
 }
 
-fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
+fn parse_result_set_column_def(
+    parser: &mut Parser,
+) -> ParseResult<crate::parser::ast::statements::other::ResultSetColumnDef> {
+    let name = match parser.next() {
+        Some(Token::Identifier(id)) => id.clone(),
+        Some(Token::Keyword(k)) => k.as_ref().to_string(),
+        _ => return parser.backtrack(Expected::Description("result set column name")),
+    };
+    let data_type = crate::parser::parse::parse_data_type(parser)?;
+    // Optional COLLATE <collation_name>
+    if parser.at_keyword(Keyword::Collate) {
+        let _ = parser.next();
+        match parser.next() {
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {}
+            _ => return parser.backtrack(Expected::Description("collation name")),
+        }
+    }
+    let mut nullable = None;
+    if parser.at_keyword(Keyword::Not) {
+        let _ = parser.next();
+        parser.expect_keyword(Keyword::Null)?;
+        nullable = Some(false);
+    } else if parser.at_keyword(Keyword::Null) {
+        let _ = parser.next();
+        nullable = Some(true);
+    }
+    Ok(crate::parser::ast::statements::other::ResultSetColumnDef {
+        name,
+        data_type,
+        nullable,
+    })
+}
+
+fn parse_single_result_set_def(
+    parser: &mut Parser,
+) -> ParseResult<crate::parser::ast::statements::other::ResultSetDef> {
+    use crate::parser::ast::statements::other::ResultSetDef;
+    if matches!(parser.peek(), Some(Token::LParen)) {
+        let _ = parser.next();
+        let cols = crate::parser::parse::expressions::parse_comma_list(
+            parser,
+            parse_result_set_column_def,
+        )?;
+        parser.expect_rparen()?;
+        return Ok(ResultSetDef::Columns(cols));
+    }
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("OBJECT"))
+            || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("OBJECT"))
+        {
+            let _ = parser.next();
+            let obj = super::parse_multipart_name(parser)?;
+            return Ok(ResultSetDef::AsObject(obj));
+        }
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TYPE"))
+            || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("TYPE"))
+        {
+            let _ = parser.next();
+            let ty = super::parse_multipart_name(parser)?;
+            return Ok(ResultSetDef::AsType(ty));
+        }
+        if parser.at_keyword(Keyword::For) {
+            let _ = parser.next();
+            if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("XML"))
+                || matches!(parser.peek(), Some(Token::Keyword(k)) if k.as_sql().eq_ignore_ascii_case("XML"))
+            {
+                let _ = parser.next();
+                return Ok(ResultSetDef::AsForXml);
+            }
+        }
+    }
+    parser.backtrack(Expected::Description("result set definition"))
+}
+
+fn parse_exec_with_options(
+    parser: &mut Parser,
+) -> ParseResult<Option<crate::parser::ast::statements::other::ResultSetsClause>> {
+    use crate::parser::ast::statements::other::ResultSetsClause;
     if !parser.at_keyword(Keyword::With) {
-        return Ok(());
+        return Ok(None);
     }
     let is_recompile = matches!(
         parser.peek_at(1),
@@ -197,9 +275,10 @@ fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
         Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("RESULT")
     );
     if !is_recompile && !is_result_sets {
-        return Ok(());
+        return Ok(None);
     }
     let _ = parser.next(); // WITH
+    let mut result_sets = None;
     loop {
         if matches!(
             parser.peek(),
@@ -222,20 +301,28 @@ fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
             }
             if matches!(parser.peek(), Some(Token::LParen)) {
                 let _ = parser.next();
-                let mut depth = 1usize;
-                while depth > 0 {
-                    match parser.next() {
-                        Some(Token::LParen) => depth += 1,
-                        Some(Token::RParen) => depth -= 1,
-                        Some(_) => {}
-                        None => return parser.backtrack(Expected::Description(")")),
-                    }
-                }
+                let defs = crate::parser::parse::expressions::parse_comma_list(
+                    parser,
+                    parse_single_result_set_def,
+                )?;
+                parser.expect_rparen()?;
+                result_sets = Some(ResultSetsClause::Definitions(defs));
             } else if matches!(
                 parser.peek(),
-                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NONE") || id.eq_ignore_ascii_case("UNDEFINED")
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NONE")
             ) {
                 let _ = parser.next();
+                result_sets = Some(ResultSetsClause::None);
+            } else if matches!(
+                parser.peek(),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("UNDEFINED")
+            ) {
+                let _ = parser.next();
+                result_sets = Some(ResultSetsClause::Undefined);
+            } else {
+                return parser.backtrack(Expected::Description(
+                    "RESULT SETS definition, NONE, or UNDEFINED",
+                ));
             }
         } else {
             break;
@@ -246,10 +333,12 @@ fn skip_exec_with_options(parser: &mut Parser) -> ParseResult<()> {
             break;
         }
     }
-    Ok(())
+    Ok(result_sets)
 }
 
-pub(super) fn skip_exec_dynamic_tail(parser: &mut Parser) -> ParseResult<()> {
+pub(super) fn parse_exec_dynamic_tail(
+    parser: &mut Parser,
+) -> ParseResult<Option<crate::parser::ast::statements::other::ResultSetsClause>> {
     // Optional `AS LOGIN|USER = '...'` and/or linked-server `AT [server]`
     loop {
         if parser.at_keyword(Keyword::As)
@@ -273,8 +362,7 @@ pub(super) fn skip_exec_dynamic_tail(parser: &mut Parser) -> ParseResult<()> {
         }
         break;
     }
-    skip_exec_with_options(parser)?;
-    Ok(())
+    parse_exec_with_options(parser)
 }
 
 pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
@@ -325,9 +413,10 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                 let _ = parse_exec_arg(parser)?;
             }
             parser.expect_rparen()?;
-            skip_exec_dynamic_tail(parser)?;
+            let result_sets = parse_exec_dynamic_tail(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::ExecDynamic {
                 sql_expr,
+                result_sets,
             }))
         }
         Some(Token::Identifier(_)) | Some(Token::Keyword(_)) | Some(Token::Variable(_)) => {
@@ -366,11 +455,12 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     args.push(parse_exec_arg(parser)?);
                 }
-                skip_exec_with_options(parser)?;
+                let result_sets = parse_exec_with_options(parser)?;
                 return Ok(Statement::Procedural(ProceduralStatement::SpExecuteSql {
                     sql_expr,
                     params_def,
                     args,
+                    result_sets,
                 }));
             }
 
@@ -381,11 +471,12 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
             {
                 args = crate::parser::parse::expressions::parse_comma_list(parser, parse_exec_arg)?;
             }
-            skip_exec_with_options(parser)?;
+            let result_sets = parse_exec_with_options(parser)?;
             Ok(Statement::Procedural(ProceduralStatement::ExecProcedure {
                 return_variable,
                 name,
                 args,
+                result_sets,
             }))
         }
         _ => parser.backtrack(Expected::Description("procedure name or expression")),

@@ -274,13 +274,13 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `USER_SID` | ✅ | |
 | `XACT_STATE` | ✅ | Returns `1`, `0`, or `-1` (doomed under `XACT_ABORT ON`) |
 | `XML_SCHEMA_NAMESPACE` | ✅ | Shim (returns `NULL`) |
-| `APPLOCK_MODE` | ❌ | |
-| `APPLOCK_TEST` | ❌ | |
+| `APPLOCK_MODE` | ✅ | Current lock mode held by owner (`NoLock`, `Shared`, `Exclusive`, etc.) |
+| `APPLOCK_TEST` | ✅ | Returns `1`/`0` for application lock grantability across lock owners |
 | `CERT_ID` | ❌ | Server crypto/certificate surface |
 | `CRYPT_GEN_RANDOM` | ❌ | Server crypto surface |
 | `ENCRYPTBYPASSPHRASE` | ❌ | Server crypto surface |
 | `DECRYPTBYPASSPHRASE` | ❌ | Server crypto surface |
-| `EVENTDATA` | ❌ | DDL trigger XML payload |
+| `EVENTDATA` | ✅ | Standard `<EVENT_INSTANCE>` XML payload inside DDL triggers (`NULL` outside) |
 | `FILE_ID` | ❌ | Physical OS file metadata |
 | `FILE_NAME` | ❌ | Physical OS file metadata |
 | `FILEGROUP_ID` | ❌ | |

@@ -6,6 +6,7 @@ pub(crate) mod exec_dynamic;
 pub(crate) mod print;
 pub(crate) mod procedure;
 pub(crate) mod raiserror;
+pub(crate) mod result_sets;
 pub(crate) mod routine;
 pub(crate) mod shared;
 pub(crate) mod sp_executesql;
@@ -48,7 +49,7 @@ impl<'a> ScriptExecutor<'a> {
             ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label)),
             ProceduralStatement::Label(_) => Ok(StmtOutcome::Ok(None)),
             ProceduralStatement::Return(expr) => self.execute_return(expr, ctx),
-            ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, stmt, ctx),
+            ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, *stmt, ctx),
             ProceduralStatement::ExecProcedure(stmt) => {
                 self.execute_procedure(*stmt, ctx).map(StmtOutcome::Ok)
             }
@@ -66,19 +67,94 @@ impl<'a> ScriptExecutor<'a> {
                 .map(StmtOutcome::Ok),
             ProceduralStatement::DeclareCursor(stmt) => self.execute_declare_cursor(*stmt, ctx),
             ProceduralStatement::CreateProcedure(stmt) => {
-                self.execute_create_procedure(*stmt)?;
+                let sch = stmt.name.schema_or_dbo().to_string();
+                let ev = if stmt.or_alter
+                    && self.catalog.find_routine(&sch, &stmt.name.name).is_some()
+                {
+                    "ALTER_PROCEDURE"
+                } else {
+                    "CREATE_PROCEDURE"
+                };
+                let meta = Some(crate::executor::script::ddl::triggers::DdlEventMeta {
+                    event_type: ev,
+                    schema_name: Some(sch.clone()),
+                    object_name: stmt.name.name.clone(),
+                    object_type: "PROCEDURE",
+                    command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
+                });
+                self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
+                    this.execute_create_procedure(*stmt)
+                })?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateFunction(stmt) => {
-                self.execute_create_function(*stmt)?;
+                let sch = stmt.name.schema_or_dbo().to_string();
+                let ev = if stmt.or_alter
+                    && self.catalog.find_routine(&sch, &stmt.name.name).is_some()
+                {
+                    "ALTER_FUNCTION"
+                } else {
+                    "CREATE_FUNCTION"
+                };
+                let meta = Some(crate::executor::script::ddl::triggers::DdlEventMeta {
+                    event_type: ev,
+                    schema_name: Some(sch.clone()),
+                    object_name: stmt.name.name.clone(),
+                    object_type: "FUNCTION",
+                    command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
+                });
+                self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
+                    this.execute_create_function(*stmt)
+                })?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateView(stmt) => {
-                self.execute_create_view(*stmt, ctx)?;
+                let sch = stmt.name.schema_or_dbo().to_string();
+                let ev = if stmt.or_alter && self.catalog.find_view(&sch, &stmt.name.name).is_some()
+                {
+                    "ALTER_VIEW"
+                } else {
+                    "CREATE_VIEW"
+                };
+                let meta = Some(crate::executor::script::ddl::triggers::DdlEventMeta {
+                    event_type: ev,
+                    schema_name: Some(sch.clone()),
+                    object_name: stmt.name.name.clone(),
+                    object_type: "VIEW",
+                    command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
+                });
+                self.run_with_ddl_triggers(meta, ctx, |this, ctx| {
+                    this.execute_create_view(*stmt, ctx)
+                })?;
                 Ok(StmtOutcome::Ok(None))
             }
             ProceduralStatement::CreateTrigger(stmt) => {
-                self.execute_create_trigger(*stmt)?;
+                let sch = stmt.name.schema_or_dbo().to_string();
+                let is_db_trig = stmt.is_database_scope;
+                let ev = if stmt.or_alter {
+                    "ALTER_TRIGGER"
+                } else {
+                    "CREATE_TRIGGER"
+                };
+                let meta = if is_db_trig {
+                    None
+                } else {
+                    Some(crate::executor::script::ddl::triggers::DdlEventMeta {
+                        event_type: ev,
+                        schema_name: Some(sch.clone()),
+                        object_name: stmt.name.name.clone(),
+                        object_type: "TRIGGER",
+                        command_text: format!(
+                            "{} {}.{}",
+                            ev.replace('_', " "),
+                            sch,
+                            stmt.name.name
+                        ),
+                    })
+                };
+                self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
+                    this.execute_create_trigger(*stmt)
+                })?;
                 Ok(StmtOutcome::Ok(None))
             }
         }

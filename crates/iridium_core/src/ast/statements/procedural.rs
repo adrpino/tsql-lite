@@ -20,8 +20,32 @@ pub struct WhileStmt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultSetColumnSpec {
+    pub name: String,
+    pub data_type: DataTypeSpec,
+    pub nullable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResultSetDefinition {
+    Columns(Vec<ResultSetColumnSpec>),
+    AsObject(ObjectName),
+    AsType(ObjectName),
+    AsForXml,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExecResultSets {
+    Undefined,
+    None,
+    Definitions(Vec<ResultSetDefinition>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecStmt {
     pub sql_expr: Expr,
+    #[serde(default)]
+    pub result_sets: Option<ExecResultSets>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +60,8 @@ pub struct ExecProcedureStmt {
     pub return_variable: Option<String>,
     pub name: ObjectName,
     pub args: Vec<ExecArgument>,
+    #[serde(default)]
+    pub result_sets: Option<ExecResultSets>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +69,8 @@ pub struct SpExecuteSqlStmt {
     pub sql_expr: Expr,
     pub params_def: Option<Expr>,
     pub args: Vec<ExecArgument>,
+    #[serde(default)]
+    pub result_sets: Option<ExecResultSets>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +139,8 @@ pub struct CreateFunctionStmt {
     pub body: FunctionBody,
     #[serde(default)]
     pub or_alter: bool,
+    #[serde(default)]
+    pub is_schema_bound: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +246,10 @@ pub struct CreateTriggerStmt {
     pub body: Vec<crate::ast::Statement>,
     #[serde(default)]
     pub or_alter: bool,
+    #[serde(default)]
+    pub is_database_scope: bool,
+    #[serde(default)]
+    pub ddl_events: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

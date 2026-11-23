@@ -255,6 +255,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             ctes,
             query,
             or_alter,
+            is_schema_bound,
         } => {
             let mut lowered_query = lower_select(query)?;
             let lowered_ctes = ctes
@@ -299,6 +300,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         ctes: lowered_ctes,
                         query: lowered_query,
                         or_alter,
+                        is_schema_bound,
                     },
                 )),
             ))
@@ -330,6 +332,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             returns,
             body,
             or_alter,
+            is_schema_bound,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::CreateFunction(Box::new(
                 executor_ast::statements::procedural::CreateFunctionStmt {
@@ -340,6 +343,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .collect::<Result<Vec<_>, _>>()?,
                     returns: returns.map(lower_data_type).transpose()?,
                     or_alter,
+                    is_schema_bound,
                     body: match body {
                         ast::FunctionBody::ScalarReturn(e) => {
                             executor_ast::statements::procedural::FunctionBody::ScalarReturn(
@@ -417,6 +421,8 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
             is_instead_of,
             body,
             or_alter,
+            is_database_scope,
+            ddl_events,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::CreateTrigger(Box::new(
                 executor_ast::statements::procedural::CreateTriggerStmt {
@@ -436,6 +442,8 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .map(lower_statement)
                         .collect::<Result<Vec<_>, _>>()?,
                     or_alter,
+                    is_database_scope,
+                    ddl_events,
                 },
             )),
         )),

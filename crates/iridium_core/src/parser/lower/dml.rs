@@ -827,6 +827,7 @@ pub fn lower_insert(
                                     })
                                 })
                                 .collect::<Result<Vec<_>, DbError>>()?,
+                            result_sets: None,
                         },
                     )),
                 ),
@@ -834,11 +835,12 @@ pub fn lower_insert(
             ast::InsertSource::ExecDynamic(sql_expr) => {
                 executor_ast::statements::dml::InsertSource::Exec(Box::new(
                     executor_ast::Statement::Procedural(
-                        executor_ast::statements::ProceduralStatement::ExecDynamic(
+                        executor_ast::statements::ProceduralStatement::ExecDynamic(Box::new(
                             executor_ast::statements::procedural::ExecStmt {
                                 sql_expr: lower_expr(sql_expr)?,
+                                result_sets: None,
                             },
-                        ),
+                        )),
                     ),
                 ))
             }

@@ -209,6 +209,8 @@ pub struct CreateViewStmt {
     pub query: SelectStmt,
     #[serde(default)]
     pub or_alter: bool,
+    #[serde(default)]
+    pub is_schema_bound: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

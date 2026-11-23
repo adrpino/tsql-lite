@@ -465,11 +465,14 @@ impl SqlHashKey {
         }
     }
 
-    pub fn from_value_case_sensitive(v: &Value) -> Self {
+    pub(crate) fn from_value_with_collation(
+        v: &Value,
+        flags: crate::executor::collation::CollationFlags,
+    ) -> Self {
         match v {
-            Value::SqlVariant(inner) => Self::from_value_case_sensitive(inner),
+            Value::SqlVariant(inner) => Self::from_value_with_collation(inner, flags),
             Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
-                SqlHashKey::String(s.trim_end_matches(' ').to_string())
+                SqlHashKey::String(crate::executor::collation::fold_str(s, flags, true))
             }
             other => Self::from_value(other),
         }

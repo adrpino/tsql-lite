@@ -179,10 +179,11 @@ pub fn compare_projected_rows(
                 expr_label(&item.expr)
             ))
         })?;
-        let ord = if super::evaluator::expr_collation_case_sensitive(&item.expr).unwrap_or(false) {
-            super::evaluator::compare_values_case_sensitive(
+        let ord = if let Some(flags) = super::collation::expr_collation(&item.expr) {
+            super::collation::compare_values_with_collation(
                 a.get(idx).unwrap_or(&Value::Null),
                 b.get(idx).unwrap_or(&Value::Null),
+                flags,
             )
         } else {
             compare_values(

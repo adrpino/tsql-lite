@@ -124,6 +124,18 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);
         let name = super::parse_multipart_name(parser)?;
+        if parser.at_keyword(Keyword::On) {
+            let _ = parser.next();
+            if parser.at_keyword(Keyword::Database) {
+                let _ = parser.next();
+            } else if parser.at_keyword(Keyword::All) {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SERVER"))
+                {
+                    let _ = parser.next();
+                }
+            }
+        }
         Ok(Statement::Ddl(Box::new(DdlStatement::DropTrigger {
             name,
             if_exists,

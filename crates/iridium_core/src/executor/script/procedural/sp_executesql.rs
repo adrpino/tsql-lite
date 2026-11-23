@@ -1,4 +1,7 @@
 use super::super::ScriptExecutor;
+use super::result_sets::{
+    abort_result_set_capture, begin_result_set_capture, finish_result_set_capture,
+};
 use super::shared::{find_param_def, resolve_table_identifier, validate_table_matches_type};
 use crate::ast::{RoutineParamType, SpExecuteSqlStmt};
 use crate::error::{DbError, StmtOutcome};
@@ -8,6 +11,24 @@ use crate::executor::result::QueryResult;
 use crate::executor::value_ops::coerce_value_to_type_with_dateformat;
 
 pub(crate) fn execute_sp_executesql(
+    exec: &mut ScriptExecutor<'_>,
+    mut stmt: SpExecuteSqlStmt,
+    ctx: &mut ExecutionContext<'_>,
+) -> Result<Option<QueryResult>, DbError> {
+    let result_sets = stmt.result_sets.take();
+    let capture = begin_result_set_capture(result_sets.as_ref(), ctx);
+    match execute_sp_executesql_inner(exec, stmt, ctx) {
+        Ok(raw_opt) => {
+            finish_result_set_capture(capture, result_sets.as_ref(), raw_opt, ctx, exec.catalog)
+        }
+        Err(e) => {
+            abort_result_set_capture(capture, ctx);
+            Err(e)
+        }
+    }
+}
+
+fn execute_sp_executesql_inner(
     exec: &mut ScriptExecutor<'_>,
     stmt: SpExecuteSqlStmt,
     ctx: &mut ExecutionContext<'_>,

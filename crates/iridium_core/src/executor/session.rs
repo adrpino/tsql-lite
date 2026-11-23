@@ -187,6 +187,7 @@ pub struct SessionExtras {
     pub(crate) xml_documents: HashMap<i32, String>,
     pub(crate) next_xml_handle: i32,
     pub(crate) mutation_target_id: Option<u32>,
+    pub(crate) app_locks: super::applock::SharedAppLocks,
 }
 
 impl SessionExtras {
@@ -196,6 +197,7 @@ impl SessionExtras {
             xml_documents: HashMap::new(),
             next_xml_handle: 1,
             mutation_target_id: None,
+            app_locks: super::applock::SharedAppLocks::new(),
         }
     }
 
@@ -309,6 +311,7 @@ pub struct SharedState<C, S> {
     pub(crate) deadlock_priorities: dashmap::DashMap<SessionId, i32>,
     pub(crate) next_session_id: std::sync::atomic::AtomicU64,
     pub(crate) dirty_buffer: std::sync::Arc<parking_lot::Mutex<super::dirty_buffer::DirtyBuffer>>,
+    pub(crate) app_locks: super::applock::SharedAppLocks,
 }
 
 impl<C, S> SharedState<C, S>
@@ -334,6 +337,7 @@ where
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::dirty_buffer::DirtyBuffer::new(),
             )),
+            app_locks: super::applock::SharedAppLocks::new(),
         }
     }
 }

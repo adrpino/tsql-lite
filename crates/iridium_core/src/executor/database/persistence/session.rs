@@ -19,14 +19,15 @@ where
             .state
             .next_session_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.state
-            .sessions
-            .insert(id, Mutex::new(SessionRuntime::new()));
+        let mut runtime = SessionRuntime::new();
+        runtime.extras.app_locks = self.state.app_locks.clone();
+        self.state.sessions.insert(id, Mutex::new(runtime));
         self.state.deadlock_priorities.insert(id, 0);
         id
     }
 
     fn reset_session(&self, session_id: SessionId) -> Result<(), DbError> {
+        self.state.app_locks.release_all_for_session(session_id);
         let session_mutex = self
             .state
             .sessions
@@ -78,6 +79,7 @@ where
     }
 
     fn close_session(&self, session_id: SessionId) -> Result<(), DbError> {
+        self.state.app_locks.release_all_for_session(session_id);
         self.state
             .table_locks
             .lock()

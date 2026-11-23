@@ -49,6 +49,29 @@ fn hoist_procedure_declares(stmts: &[crate::ast::Statement], ctx: &mut Execution
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_procedure(
         &mut self,
+        mut stmt: ExecProcedureStmt,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
+        let result_sets = stmt.result_sets.take();
+        let capture = super::result_sets::begin_result_set_capture(result_sets.as_ref(), ctx);
+        let res = self.execute_procedure_inner(stmt, ctx);
+        match res {
+            Ok(raw_opt) => super::result_sets::finish_result_set_capture(
+                capture,
+                result_sets.as_ref(),
+                raw_opt,
+                ctx,
+                self.catalog,
+            ),
+            Err(e) => {
+                super::result_sets::abort_result_set_capture(capture, ctx);
+                Err(e)
+            }
+        }
+    }
+
+    fn execute_procedure_inner(
+        &mut self,
         stmt: ExecProcedureStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
@@ -122,6 +145,7 @@ impl<'a> ScriptExecutor<'a> {
                 sql_expr,
                 params_def,
                 args: remaining,
+                result_sets: None,
             };
             let res = super::sp_executesql::execute_sp_executesql(self, sp_stmt, ctx)?;
             self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
@@ -129,8 +153,10 @@ impl<'a> ScriptExecutor<'a> {
         }
 
         if is_system_procedure(&stmt.name.name) {
-            self.assign_exec_return_value(&stmt.return_variable, Value::Int(0), ctx)?;
-            return execute_system_procedure(self, &stmt, ctx);
+            let res = execute_system_procedure(self, &stmt, ctx)?;
+            let rc = res.as_ref().and_then(|r| r.return_status).unwrap_or(0);
+            self.assign_exec_return_value(&stmt.return_variable, Value::Int(rc), ctx)?;
+            return Ok(res);
         }
 
         let schema = stmt.name.schema_or_dbo().to_string();

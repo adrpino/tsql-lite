@@ -241,6 +241,8 @@ pub(crate) fn execute_sp_getapplock(
 ) -> Result<QueryResult, DbError> {
     let mut resource: Option<String> = None;
     let mut lock_mode: Option<String> = None;
+    let mut lock_owner: Option<String> = None;
+    let mut db_principal: Option<String> = None;
 
     for (idx, arg) in stmt.args.iter().enumerate() {
         let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
@@ -250,34 +252,54 @@ pub(crate) fn execute_sp_getapplock(
                 resource = Some(val.to_string_value());
             } else if norm.eq_ignore_ascii_case("lockmode") {
                 lock_mode = Some(val.to_string_value());
+            } else if norm.eq_ignore_ascii_case("lockowner") {
+                lock_owner = Some(val.to_string_value());
+            } else if norm.eq_ignore_ascii_case("dbprincipal") {
+                db_principal = Some(val.to_string_value());
             }
         } else if idx == 0 && resource.is_none() {
             resource = Some(val.to_string_value());
         } else if idx == 1 && lock_mode.is_none() {
             lock_mode = Some(val.to_string_value());
+        } else if idx == 2 && lock_owner.is_none() {
+            lock_owner = Some(val.to_string_value());
+        } else if idx == 4 && db_principal.is_none() {
+            db_principal = Some(val.to_string_value());
         }
     }
 
-    if resource.as_deref().is_none_or(|r| r.is_empty()) {
+    let Some(res_name) = resource.filter(|r| !r.is_empty()) else {
         return Err(DbError::Execution(
             "sp_getapplock: @Resource is required".into(),
         ));
+    };
+    let mode_str = lock_mode.as_deref().unwrap_or("Exclusive");
+    let Some(mode) = crate::executor::applock::AppLockMode::parse_request(mode_str) else {
+        return Err(DbError::Execution(format!(
+            "sp_getapplock: invalid @LockMode '{}'",
+            mode_str
+        )));
+    };
+    let owner = lock_owner.as_deref().unwrap_or("Transaction");
+    if !owner.eq_ignore_ascii_case("Transaction") && !owner.eq_ignore_ascii_case("Session") {
+        return Err(DbError::Execution(format!(
+            "sp_getapplock: invalid @LockOwner '{}'",
+            owner
+        )));
     }
-    if let Some(ref mode) = lock_mode {
-        let valid = matches!(
-            mode.to_ascii_lowercase().as_str(),
-            "shared" | "update" | "intentshared" | "intentexclusive" | "exclusive"
-        );
-        if !valid {
-            return Err(DbError::Execution(format!(
-                "sp_getapplock: invalid @LockMode '{}'",
-                mode
-            )));
-        }
-    }
+    let principal = db_principal.as_deref().unwrap_or("public");
+    let rc = if owner.eq_ignore_ascii_case("Transaction") && ctx.frame.trancount == 0 {
+        -999
+    } else {
+        let sid = ctx.session_id();
+        ctx.session
+            .extras
+            .app_locks
+            .acquire(sid, principal, &res_name, mode, owner)
+    };
 
     Ok(QueryResult {
-        return_status: Some(0),
+        return_status: Some(rc),
         is_procedure: true,
         ..Default::default()
     })
@@ -289,26 +311,42 @@ pub(crate) fn execute_sp_releaseapplock(
     exec: &mut ScriptExecutor<'_>,
 ) -> Result<QueryResult, DbError> {
     let mut resource: Option<String> = None;
+    let mut lock_owner: Option<String> = None;
+    let mut db_principal: Option<String> = None;
     for (idx, arg) in stmt.args.iter().enumerate() {
         let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
         if let Some(ref name) = arg.name {
-            if name
-                .trim_start_matches('@')
-                .eq_ignore_ascii_case("resource")
-            {
+            let norm = name.trim_start_matches('@');
+            if norm.eq_ignore_ascii_case("resource") {
                 resource = Some(val.to_string_value());
+            } else if norm.eq_ignore_ascii_case("lockowner") {
+                lock_owner = Some(val.to_string_value());
+            } else if norm.eq_ignore_ascii_case("dbprincipal") {
+                db_principal = Some(val.to_string_value());
             }
         } else if idx == 0 && resource.is_none() {
             resource = Some(val.to_string_value());
+        } else if idx == 1 && lock_owner.is_none() {
+            lock_owner = Some(val.to_string_value());
+        } else if idx == 2 && db_principal.is_none() {
+            db_principal = Some(val.to_string_value());
         }
     }
-    if resource.as_deref().is_none_or(|r| r.is_empty()) {
+    let Some(res_name) = resource.filter(|r| !r.is_empty()) else {
         return Err(DbError::Execution(
             "sp_releaseapplock: @Resource is required".into(),
         ));
-    }
+    };
+    let owner = lock_owner.as_deref().unwrap_or("Transaction");
+    let principal = db_principal.as_deref().unwrap_or("public");
+    let sid = ctx.session_id();
+    let rc = ctx
+        .session
+        .extras
+        .app_locks
+        .release(sid, principal, &res_name, owner);
     Ok(QueryResult {
-        return_status: Some(0),
+        return_status: Some(rc),
         is_procedure: true,
         ..Default::default()
     })

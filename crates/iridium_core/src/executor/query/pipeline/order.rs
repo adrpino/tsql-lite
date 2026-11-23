@@ -39,10 +39,8 @@ pub(crate) fn apply_source_ordering(
                 executor.clock,
             )
             .unwrap_or(Value::Null);
-            let ord = if crate::executor::evaluator::expr_collation_case_sensitive(&item.expr)
-                .unwrap_or(false)
-            {
-                crate::executor::evaluator::compare_values_case_sensitive(&va, &vb)
+            let ord = if let Some(flags) = crate::executor::collation::expr_collation(&item.expr) {
+                crate::executor::collation::compare_values_with_collation(&va, &vb, flags)
             } else {
                 value_ops::compare_values(&va, &vb)
             };
@@ -91,10 +89,8 @@ pub(crate) fn order_keys_equal(
     for (idx, item) in order_by.iter().enumerate() {
         let va = a.get(idx).unwrap_or(&Value::Null);
         let vb = b.get(idx).unwrap_or(&Value::Null);
-        let ord = if crate::executor::evaluator::expr_collation_case_sensitive(&item.expr)
-            .unwrap_or(false)
-        {
-            crate::executor::evaluator::compare_values_case_sensitive(va, vb)
+        let ord = if let Some(flags) = crate::executor::collation::expr_collation(&item.expr) {
+            crate::executor::collation::compare_values_with_collation(va, vb, flags)
         } else {
             value_ops::compare_values(va, vb)
         };

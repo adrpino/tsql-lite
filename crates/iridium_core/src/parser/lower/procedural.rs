@@ -259,19 +259,22 @@ pub fn lower_procedural(
                 },
             )),
         )),
-        ast::ProceduralStatement::ExecDynamic { sql_expr } => {
-            Ok(executor_ast::Statement::Procedural(
-                executor_ast::statements::ProceduralStatement::ExecDynamic(
-                    executor_ast::statements::procedural::ExecStmt {
-                        sql_expr: lower_expr(sql_expr)?,
-                    },
-                ),
-            ))
-        }
+        ast::ProceduralStatement::ExecDynamic {
+            sql_expr,
+            result_sets,
+        } => Ok(executor_ast::Statement::Procedural(
+            executor_ast::statements::ProceduralStatement::ExecDynamic(Box::new(
+                executor_ast::statements::procedural::ExecStmt {
+                    sql_expr: lower_expr(sql_expr)?,
+                    result_sets: result_sets.map(lower_result_sets).transpose()?,
+                },
+            )),
+        )),
         ast::ProceduralStatement::ExecProcedure {
             return_variable,
             name,
             args,
+            result_sets,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::ExecProcedure(Box::new(
                 executor_ast::statements::procedural::ExecProcedureStmt {
@@ -281,6 +284,7 @@ pub fn lower_procedural(
                         .into_iter()
                         .map(lower_exec_arg)
                         .collect::<Result<Vec<_>, _>>()?,
+                    result_sets: result_sets.map(lower_result_sets).transpose()?,
                 },
             )),
         )),
@@ -288,6 +292,7 @@ pub fn lower_procedural(
             sql_expr,
             params_def,
             args,
+            result_sets,
         } => Ok(executor_ast::Statement::Procedural(
             executor_ast::statements::ProceduralStatement::SpExecuteSql(Box::new(
                 executor_ast::statements::procedural::SpExecuteSqlStmt {
@@ -297,6 +302,7 @@ pub fn lower_procedural(
                         .into_iter()
                         .map(lower_exec_arg)
                         .collect::<Result<Vec<_>, _>>()?,
+                    result_sets: result_sets.map(lower_result_sets).transpose()?,
                 },
             )),
         )),
@@ -489,6 +495,47 @@ pub fn lower_exec_arg(
         expr: lower_expr(a.expr)?,
         is_output: a.is_output,
     })
+}
+
+pub fn lower_result_sets(
+    rs: ast::statements::other::ResultSetsClause,
+) -> Result<executor_ast::statements::procedural::ExecResultSets, DbError> {
+    use ast::statements::other::{ResultSetDef, ResultSetsClause};
+    use executor_ast::statements::procedural::{
+        ExecResultSets, ResultSetColumnSpec, ResultSetDefinition,
+    };
+    match rs {
+        ResultSetsClause::Undefined => Ok(ExecResultSets::Undefined),
+        ResultSetsClause::None => Ok(ExecResultSets::None),
+        ResultSetsClause::Definitions(defs) => {
+            let mut out = Vec::with_capacity(defs.len());
+            for def in defs {
+                match def {
+                    ResultSetDef::Columns(cols) => {
+                        let lowered_cols = cols
+                            .into_iter()
+                            .map(|c| {
+                                Ok(ResultSetColumnSpec {
+                                    name: c.name,
+                                    data_type: lower_data_type(c.data_type)?,
+                                    nullable: c.nullable,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, DbError>>()?;
+                        out.push(ResultSetDefinition::Columns(lowered_cols));
+                    }
+                    ResultSetDef::AsObject(name) => {
+                        out.push(ResultSetDefinition::AsObject(lower_object_name(name)));
+                    }
+                    ResultSetDef::AsType(name) => {
+                        out.push(ResultSetDefinition::AsType(lower_object_name(name)));
+                    }
+                    ResultSetDef::AsForXml => out.push(ResultSetDefinition::AsForXml),
+                }
+            }
+            Ok(ExecResultSets::Definitions(out))
+        }
+    }
 }
 
 pub fn lower_fetch_direction(

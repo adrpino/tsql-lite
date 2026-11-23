@@ -349,6 +349,16 @@ pub(crate) fn drop_table(
     stmt: DropTableStmt,
 ) -> Result<(), DbError> {
     let schema_name = stmt.name.schema_or_dbo().to_string();
+    if let Some(dep) = crate::executor::metadata::sys::dependencies::find_schemabound_dependent(
+        executor.catalog,
+        &schema_name,
+        &stmt.name.name,
+    ) {
+        return Err(DbError::Execution(format!(
+            "Cannot DROP TABLE '{}.{}' because it is being referenced by object '{}'.",
+            schema_name, stmt.name.name, dep
+        )));
+    }
     let table_id = executor.catalog.drop_table(&schema_name, &stmt.name.name)?;
     executor.storage.remove_table(table_id)?;
     Ok(())
@@ -406,6 +416,7 @@ pub(crate) fn create_view(
         schema_id,
         query: std::sync::Arc::new(view_stmt),
         definition_sql: String::new(),
+        is_schema_bound: stmt.is_schema_bound,
     };
     if stmt.or_alter {
         executor.catalog.replace_view(view)
@@ -435,6 +446,16 @@ pub(crate) fn drop_view(
     stmt: crate::ast::DropViewStmt,
 ) -> Result<(), DbError> {
     let schema = stmt.name.schema_or_dbo();
+    if let Some(dep) = crate::executor::metadata::sys::dependencies::find_schemabound_dependent(
+        executor.catalog,
+        schema,
+        &stmt.name.name,
+    ) {
+        return Err(DbError::Execution(format!(
+            "Cannot DROP VIEW '{}.{}' because it is being referenced by object '{}'.",
+            schema, stmt.name.name, dep
+        )));
+    }
     executor.catalog.drop_view(schema, &stmt.name.name)
 }
 
@@ -544,6 +565,31 @@ pub(crate) fn alter_table(
     stmt: AlterTableStmt,
 ) -> Result<(), DbError> {
     let schema_name = stmt.table.schema_or_dbo().to_string();
+    if let AlterTableAction::ToggleTrigger {
+        trigger_name,
+        enable,
+    } = stmt.action
+    {
+        let (t_sch, t_name) = match &trigger_name {
+            Some(obj) => (obj.schema.as_deref(), Some(obj.name.as_str())),
+            None => (None, None),
+        };
+        if !stmt.table.name.eq_ignore_ascii_case("__DATABASE__")
+            && executor
+                .catalog
+                .find_table(&schema_name, &stmt.table.name)
+                .is_none()
+        {
+            return Err(DbError::table_not_found(&schema_name, &stmt.table.name));
+        }
+        return executor.catalog.set_trigger_enabled(
+            t_sch,
+            t_name,
+            &schema_name,
+            &stmt.table.name,
+            enable,
+        );
+    }
     let table_id = executor
         .catalog
         .find_table(&schema_name, &stmt.table.name)
@@ -562,6 +608,19 @@ pub(crate) fn alter_table(
             schema_physical::add_null_column_to_table(executor, table_id)?;
         }
         AlterTableAction::DropColumn(col_name) => {
+            if let Some(dep) =
+                crate::executor::metadata::sys::dependencies::find_schemabound_column_dependent(
+                    executor.catalog,
+                    &schema_name,
+                    &stmt.table.name,
+                    &col_name,
+                )
+            {
+                return Err(DbError::Execution(format!(
+                    "The object '{}' is dependent on column '{}'. ALTER TABLE DROP COLUMN {} failed because one or more objects access this column.",
+                    dep, col_name, col_name
+                )));
+            }
             let table_mut = executor
                 .catalog
                 .find_table_mut(&schema_name, &stmt.table.name)
@@ -580,6 +639,19 @@ pub(crate) fn alter_table(
             data_type,
             nullable,
         } => {
+            if let Some(dep) =
+                crate::executor::metadata::sys::dependencies::find_schemabound_column_dependent(
+                    executor.catalog,
+                    &schema_name,
+                    &stmt.table.name,
+                    &name,
+                )
+            {
+                return Err(DbError::Execution(format!(
+                    "The object '{}' is dependent on column '{}'. ALTER TABLE ALTER COLUMN {} failed because one or more objects access this column.",
+                    dep, name, name
+                )));
+            }
             let resolved_dt = resolve_data_type_spec(&data_type, executor.catalog);
             let table_mut = executor
                 .catalog

@@ -161,6 +161,56 @@ fn eval_expr_inner(
                 );
                 return Ok(Value::NVarChar(modified));
             }
+            if name == "__XML_VALUE" && args.len() == 3 {
+                let xml_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                if xml_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                let xpath_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                let sql_ty_val = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+                if xpath_val.is_null() || sql_ty_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                let Some(extracted) =
+                    eval_xml_value(&xml_val.to_string_value(), &xpath_val.to_string_value())
+                else {
+                    return Ok(Value::Null);
+                };
+                let target_ty = parse_xml_value_target_type(&sql_ty_val.to_string_value());
+                return crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                    Value::NVarChar(extracted),
+                    &target_ty,
+                    &ctx.options.dateformat,
+                );
+            }
+            if name == "__XML_EXIST" && args.len() == 2 {
+                let xml_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                if xml_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                let xpath_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                if xpath_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                return Ok(Value::Bit(eval_xml_exist(
+                    &xml_val.to_string_value(),
+                    &xpath_val.to_string_value(),
+                )));
+            }
+            if name == "__XML_QUERY" && args.len() == 2 {
+                let xml_val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+                if xml_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                let xpath_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+                if xpath_val.is_null() {
+                    return Ok(Value::Null);
+                }
+                return Ok(Value::NVarChar(eval_xml_query(
+                    &xml_val.to_string_value(),
+                    &xpath_val.to_string_value(),
+                )));
+            }
             if let Some((receiver, method)) = name.rsplit_once('.') {
                 if args.len() == 2 && method.eq_ignore_ascii_case("value") {
                     let recv_expr = if receiver.contains('.') {
@@ -247,40 +297,45 @@ fn eval_expr_inner(
         Expr::Binary { left, op, right } => {
             let lv = eval_expr(left, row, ctx, catalog, storage, clock)?;
             let rv = eval_expr(right, row, ctx, catalog, storage, clock)?;
-            if let Some(cs) =
-                expr_collation_case_sensitive(left).or_else(|| expr_collation_case_sensitive(right))
+            if let Some(flags) = crate::executor::collation::expr_collation(left)
+                .or_else(|| crate::executor::collation::expr_collation(right))
             {
-                if cs
-                    && matches!(
-                        op,
-                        crate::ast::BinaryOp::Eq
-                            | crate::ast::BinaryOp::NotEq
-                            | crate::ast::BinaryOp::Gt
-                            | crate::ast::BinaryOp::Lt
-                            | crate::ast::BinaryOp::Gte
-                            | crate::ast::BinaryOp::Lte
-                    )
-                {
-                    if let (Some(ls), Some(rs)) = (value_as_str(&lv), value_as_str(&rv)) {
-                        let ord = ls.trim_end_matches(' ').cmp(rs.trim_end_matches(' '));
-                        let b = match op {
-                            crate::ast::BinaryOp::Eq => ord == std::cmp::Ordering::Equal,
-                            crate::ast::BinaryOp::NotEq => ord != std::cmp::Ordering::Equal,
-                            crate::ast::BinaryOp::Gt => ord == std::cmp::Ordering::Greater,
-                            crate::ast::BinaryOp::Lt => ord == std::cmp::Ordering::Less,
-                            crate::ast::BinaryOp::Gte => {
-                                matches!(
-                                    ord,
-                                    std::cmp::Ordering::Greater | std::cmp::Ordering::Equal
-                                )
-                            }
-                            crate::ast::BinaryOp::Lte => {
-                                matches!(ord, std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-                            }
-                            _ => unreachable!(),
-                        };
-                        return Ok(Value::Bit(b));
+                if matches!(
+                    op,
+                    crate::ast::BinaryOp::Eq
+                        | crate::ast::BinaryOp::NotEq
+                        | crate::ast::BinaryOp::Gt
+                        | crate::ast::BinaryOp::Lt
+                        | crate::ast::BinaryOp::Gte
+                        | crate::ast::BinaryOp::Lte
+                ) {
+                    if lv.is_null() || rv.is_null() {
+                        return Ok(if ctx.metadata.ansi_nulls {
+                            Value::Null
+                        } else {
+                            Value::Bit(match op {
+                                crate::ast::BinaryOp::Eq => lv.is_null() && rv.is_null(),
+                                crate::ast::BinaryOp::NotEq => !(lv.is_null() && rv.is_null()),
+                                _ => false,
+                            })
+                        });
                     }
+                    let ord =
+                        crate::executor::collation::compare_values_with_collation(&lv, &rv, flags);
+                    let b = match op {
+                        crate::ast::BinaryOp::Eq => ord == std::cmp::Ordering::Equal,
+                        crate::ast::BinaryOp::NotEq => ord != std::cmp::Ordering::Equal,
+                        crate::ast::BinaryOp::Gt => ord == std::cmp::Ordering::Greater,
+                        crate::ast::BinaryOp::Lt => ord == std::cmp::Ordering::Less,
+                        crate::ast::BinaryOp::Gte => {
+                            matches!(ord, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                        }
+                        crate::ast::BinaryOp::Lte => {
+                            matches!(ord, std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                        }
+                        _ => unreachable!(),
+                    };
+                    return Ok(Value::Bit(b));
                 }
             }
             eval_binary(
@@ -316,37 +371,6 @@ pub(crate) fn eval_predicate(
         other => crate::executor::value_ops::truthy(other),
     };
     Ok(result)
-}
-
-pub(crate) fn expr_collation_case_sensitive(expr: &Expr) -> Option<bool> {
-    if let Expr::FunctionCall { name, args, .. } = expr {
-        if name == "__COLLATE" {
-            if let Some(Expr::String(col)) = args.get(1) {
-                let upper = col.to_ascii_uppercase();
-                return Some(
-                    upper.contains("_CS_")
-                        || upper.ends_with("_CS")
-                        || upper.contains("_BIN")
-                        || upper.ends_with("_BIN2"),
-                );
-            }
-        }
-    }
-    None
-}
-
-pub(crate) fn compare_values_case_sensitive(a: &Value, b: &Value) -> std::cmp::Ordering {
-    if let (Some(ls), Some(rs)) = (value_as_str(a), value_as_str(b)) {
-        return ls.trim_end_matches(' ').cmp(rs.trim_end_matches(' '));
-    }
-    crate::executor::value_ops::compare_values(a, b)
-}
-
-fn value_as_str(v: &Value) -> Option<&str> {
-    match v {
-        Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => Some(s),
-        _ => None,
-    }
 }
 
 #[derive(Clone, Copy)]

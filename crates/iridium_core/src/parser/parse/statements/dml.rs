@@ -163,7 +163,7 @@ pub fn parse_insert(parser: &mut Parser) -> ParseResult<InsertStmt> {
                     let _ = super::other::parse_exec_arg(parser)?;
                 }
                 parser.expect_rparen()?;
-                super::other::skip_exec_dynamic_tail(parser)?;
+                let _ = super::other::parse_exec_dynamic_tail(parser)?;
                 InsertSource::ExecDynamic(sql_expr)
             } else {
                 let mut return_variable = None;

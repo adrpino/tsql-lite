@@ -130,7 +130,7 @@ impl<'a> ScriptExecutor<'a> {
         ids
     }
 
-    fn snapshot_transactional_tables(
+    pub(crate) fn snapshot_transactional_tables(
         &self,
         ctx: &ExecutionContext<'_>,
     ) -> Result<crate::storage::StorageSnapshot, DbError> {
@@ -149,7 +149,7 @@ impl<'a> ScriptExecutor<'a> {
         Ok(crate::storage::StorageSnapshot::Tables(snapshot))
     }
 
-    fn restore_transactional_tables(
+    pub(crate) fn restore_transactional_tables(
         &mut self,
         snapshot: &crate::storage::StorageSnapshot,
         ctx: &ExecutionContext<'_>,
@@ -228,12 +228,18 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                     ctx.frame.script_tx.savepoints.clear();
                     if ctx.frame.trancount == 0 {
                         ctx.frame.xact_state = 0;
+                        let sid = ctx.session_id();
+                        ctx.session.extras.app_locks.release_transaction_locks(sid);
                     }
                 }
                 Ok(StmtOutcome::Ok(None))
             }
             TransactionStatement::Rollback(savepoint) => {
                 if ctx.frame.trancount == 0 {
+                    if ctx.frame.ddl_event_xml.is_some() && savepoint.is_none() {
+                        ctx.frame.script_tx.rolled_back = true;
+                        return Ok(StmtOutcome::Ok(None));
+                    }
                     return Err(DbError::Execution(
                         "ROLLBACK without active transaction".into(),
                     ));
@@ -269,6 +275,8 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                 }
                 if ctx.frame.trancount == 0 {
                     ctx.frame.xact_state = 0;
+                    let sid = ctx.session_id();
+                    ctx.session.extras.app_locks.release_transaction_locks(sid);
                 }
                 Ok(StmtOutcome::Ok(None))
             }

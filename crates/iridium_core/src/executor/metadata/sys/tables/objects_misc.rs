@@ -128,6 +128,21 @@ impl VirtualTable for SysTriggerEvents {
                     deleted: false,
                 });
             }
+            for ddl_ev in &t.ddl_events {
+                rows.push(StoredRow {
+                    values: vec![
+                        Value::Int(t.object_id),
+                        Value::TinyInt(21),
+                        Value::NVarChar(ddl_ev.clone()),
+                        Value::Bit(false),
+                        Value::Bit(false),
+                        Value::Null,
+                        Value::Null,
+                        Value::Bit(true),
+                    ],
+                    deleted: false,
+                });
+            }
         }
 
         rows
@@ -478,15 +493,23 @@ impl VirtualTable for SysTriggers {
             .get_triggers()
             .iter()
             .map(|t| {
-                let parent_id = catalog
-                    .object_id(&t.table_schema, &t.table_name)
-                    .unwrap_or(0);
+                let (parent_class, parent_class_desc, parent_id) = if t.is_database_scope {
+                    (0u8, "DATABASE", 0i32)
+                } else {
+                    (
+                        1u8,
+                        "OBJECT_OR_COLUMN",
+                        catalog
+                            .object_id(&t.table_schema, &t.table_name)
+                            .unwrap_or(0),
+                    )
+                };
                 StoredRow {
                     values: vec![
                         Value::NVarChar(t.name.clone()),
                         Value::Int(t.object_id),
-                        Value::TinyInt(1), // OBJECT_OR_COLUMN
-                        Value::NVarChar("OBJECT_OR_COLUMN".to_string()),
+                        Value::TinyInt(parent_class),
+                        Value::NVarChar(parent_class_desc.to_string()),
                         Value::Int(parent_id),
                         Value::Char("TR".to_string()),
                         Value::NVarChar("SQL_TRIGGER".to_string()),
@@ -538,7 +561,7 @@ impl VirtualTable for SysSqlModules {
                     Value::VarChar(def),
                     Value::Bit(true),
                     Value::Bit(true),
-                    Value::Bit(false),
+                    Value::Bit(r.is_schema_bound),
                     Value::Bit(false),
                     Value::Bit(false),
                     Value::Bit(false),
@@ -561,7 +584,7 @@ impl VirtualTable for SysSqlModules {
                     Value::VarChar(def),
                     Value::Bit(true),
                     Value::Bit(true),
-                    Value::Bit(false),
+                    Value::Bit(v.is_schema_bound),
                     Value::Bit(false),
                     Value::Bit(false),
                     Value::Bit(false),

@@ -523,6 +523,7 @@ where
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),
             )),
+            app_locks: super::super::applock::SharedAppLocks::new(),
         }
     }
 
@@ -551,6 +552,7 @@ where
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),
             )),
+            app_locks: super::super::applock::SharedAppLocks::new(),
         }
     }
 

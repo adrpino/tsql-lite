@@ -72,18 +72,17 @@ pub(crate) fn eval_in_list(
     if val.is_null() {
         return Ok(Value::Null);
     }
-    let lhs_cs = super::evaluator::expr_collation_case_sensitive(in_expr);
+    let lhs_col = super::collation::expr_collation(in_expr);
     let mut found = false;
     for item in list {
         let item_val = eval_expr(item, row, ctx, catalog, storage, clock)?;
         if item_val.is_null() {
             return Ok(Value::Null);
         }
-        let is_cs = lhs_cs
-            .or_else(|| super::evaluator::expr_collation_case_sensitive(item))
-            .unwrap_or(false);
-        let matched = if is_cs {
-            super::evaluator::compare_values_case_sensitive(&val, &item_val) == Ordering::Equal
+        let col_flags = lhs_col.or_else(|| super::collation::expr_collation(item));
+        let matched = if let Some(flags) = col_flags {
+            super::collation::compare_values_with_collation(&val, &item_val, flags)
+                == Ordering::Equal
         } else {
             compare_bool(
                 val.clone(),
@@ -119,18 +118,37 @@ pub(crate) fn eval_between(
     let low_val = eval_expr(low, row, ctx, catalog, storage, clock)?;
     let high_val = eval_expr(high, row, ctx, catalog, storage, clock)?;
 
-    let ge_low = compare_bool(
-        val.clone(),
-        low_val,
-        |o| matches!(o, Ordering::Greater | Ordering::Equal),
-        ctx.metadata.ansi_nulls,
-    ) == Value::Bit(true);
-    let le_high = compare_bool(
-        val,
-        high_val,
-        |o| matches!(o, Ordering::Less | Ordering::Equal),
-        ctx.metadata.ansi_nulls,
-    ) == Value::Bit(true);
+    let col_flags = super::collation::expr_collation(between_expr)
+        .or_else(|| super::collation::expr_collation(low))
+        .or_else(|| super::collation::expr_collation(high));
+    let (ge_low, le_high) = if let Some(flags) = col_flags {
+        if low_val.is_null() || high_val.is_null() {
+            return Ok(Value::Null);
+        }
+        let ge = matches!(
+            super::collation::compare_values_with_collation(&val, &low_val, flags),
+            Ordering::Greater | Ordering::Equal
+        );
+        let le = matches!(
+            super::collation::compare_values_with_collation(&val, &high_val, flags),
+            Ordering::Less | Ordering::Equal
+        );
+        (ge, le)
+    } else {
+        let ge = compare_bool(
+            val.clone(),
+            low_val,
+            |o| matches!(o, Ordering::Greater | Ordering::Equal),
+            ctx.metadata.ansi_nulls,
+        ) == Value::Bit(true);
+        let le = compare_bool(
+            val,
+            high_val,
+            |o| matches!(o, Ordering::Less | Ordering::Equal),
+            ctx.metadata.ansi_nulls,
+        ) == Value::Bit(true);
+        (ge, le)
+    };
 
     let result = ge_low && le_high;
     Ok(Value::Bit(if negated { !result } else { result }))
@@ -167,10 +185,10 @@ pub(crate) fn eval_like(
         }
         None => None,
     };
-    let case_sensitive = super::evaluator::expr_collation_case_sensitive(like_expr)
-        .or_else(|| super::evaluator::expr_collation_case_sensitive(pattern))
-        .unwrap_or(false);
-    let matched = like_match(&s, &p, esc.as_deref(), case_sensitive);
+    let col_flags = super::collation::expr_collation(like_expr)
+        .or_else(|| super::collation::expr_collation(pattern))
+        .unwrap_or_default();
+    let matched = like_match(&s, &p, esc.as_deref(), col_flags);
     Ok(Value::Bit(if negated { !matched } else { matched }))
 }
 
@@ -206,26 +224,19 @@ fn like_token_matches_char(tok: &LikeToken, ch: char) -> bool {
     }
 }
 
-fn like_match(s: &str, pattern: &str, escape: Option<&str>, case_sensitive: bool) -> bool {
-    let s: Vec<char> = if case_sensitive {
-        s.chars().collect()
-    } else {
-        s.to_ascii_uppercase().chars().collect()
-    };
-    let p_raw: Vec<char> = if case_sensitive {
-        pattern.chars().collect()
-    } else {
-        pattern.to_ascii_uppercase().chars().collect()
-    };
-    let esc_char = escape.and_then(|e| {
-        e.chars().next().map(|c| {
-            if case_sensitive {
-                c
-            } else {
-                c.to_ascii_uppercase()
-            }
-        })
-    });
+fn like_match(
+    s: &str,
+    pattern: &str,
+    escape: Option<&str>,
+    flags: super::collation::CollationFlags,
+) -> bool {
+    let s: Vec<char> = super::collation::fold_str(s, flags, false)
+        .chars()
+        .collect();
+    let p_raw: Vec<char> = super::collation::fold_str(pattern, flags, false)
+        .chars()
+        .collect();
+    let esc_char = escape.and_then(|e| super::collation::fold_str(e, flags, false).chars().next());
 
     let mut tokens: Vec<LikeToken> = Vec::with_capacity(p_raw.len());
     let mut i = 0;

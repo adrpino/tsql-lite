@@ -78,7 +78,7 @@ pub enum ProceduralStatement {
     Goto(String),
     Label(String),
     Return(Option<Expr>),
-    ExecDynamic(ExecStmt),
+    ExecDynamic(Box<ExecStmt>),
     ExecProcedure(Box<ExecProcedureStmt>),
     SpExecuteSql(Box<SpExecuteSqlStmt>),
     Print(Expr),

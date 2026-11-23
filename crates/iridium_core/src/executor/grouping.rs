@@ -198,8 +198,8 @@ impl<'a> GroupExecutor<'a> {
                 .iter()
                 .zip(key.iter())
                 .map(|(expr, v)| {
-                    if super::evaluator::expr_collation_case_sensitive(expr).unwrap_or(false) {
-                        super::value_ops::SqlHashKey::from_value_case_sensitive(v)
+                    if let Some(flags) = super::collation::expr_collation(expr) {
+                        super::value_ops::SqlHashKey::from_value_with_collation(v, flags)
                     } else {
                         super::value_ops::SqlHashKey::from_value(v)
                     }

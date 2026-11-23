@@ -96,6 +96,7 @@ pub struct FrameState {
     pub(crate) result_set_sink:
         Option<std::sync::Arc<parking_lot::Mutex<Vec<super::result::QueryResult>>>>,
     pub(crate) last_proc_result: Option<super::result::QueryResult>,
+    pub(crate) ddl_event_xml: Option<String>,
 }
 
 #[derive(Debug, Clone)]

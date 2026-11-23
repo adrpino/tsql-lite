@@ -371,6 +371,77 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
             .count();
         Ok(Value::Int(count as i32))
     }),
+    builtin!("EVENTDATA" => |args, _row, ctx, _catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("EVENTDATA expects no arguments".into()));
+        }
+        Ok(ctx
+            .frame
+            .ddl_event_xml
+            .as_ref()
+            .map(|xml| Value::VarChar(xml.clone()))
+            .unwrap_or(Value::Null))
+    }),
+    builtin!("APPLOCK_MODE" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() != 3 {
+            return Err(DbError::Execution(
+                "APPLOCK_MODE expects 3 arguments (database_principal, resource_name, lock_owner)".into(),
+            ));
+        }
+        let p = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        let r = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        let o = crate::executor::evaluator::eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+        if p.is_null() || r.is_null() || o.is_null() {
+            return Ok(Value::Null);
+        }
+        let owner = o.to_string_value();
+        if !owner.eq_ignore_ascii_case("Transaction") && !owner.eq_ignore_ascii_case("Session") {
+            return Ok(Value::Null);
+        }
+        let sid = ctx.session_id();
+        let mode = ctx.session.extras.app_locks.effective_mode(
+            sid,
+            &p.to_string_value(),
+            &r.to_string_value(),
+            &owner,
+        );
+        Ok(Value::NVarChar(mode.to_string()))
+    }),
+    builtin!("APPLOCK_TEST" => |args, row, ctx, catalog, storage, clock| {
+        if args.len() != 4 {
+            return Err(DbError::Execution(
+                "APPLOCK_TEST expects 4 arguments (database_principal, resource_name, lock_mode, lock_owner)".into(),
+            ));
+        }
+        let p = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+        let r = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        let m = crate::executor::evaluator::eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
+        let o = crate::executor::evaluator::eval_expr(&args[3], row, ctx, catalog, storage, clock)?;
+        if p.is_null() || r.is_null() || m.is_null() || o.is_null() {
+            return Ok(Value::Null);
+        }
+        let owner = o.to_string_value();
+        if !owner.eq_ignore_ascii_case("Transaction") && !owner.eq_ignore_ascii_case("Session") {
+            return Ok(Value::Null);
+        }
+        if owner.eq_ignore_ascii_case("Transaction") && ctx.frame.trancount == 0 {
+            return Err(DbError::Execution(
+                "The statement or function must be executed in the context of a user transaction."
+                    .into(),
+            ));
+        }
+        let Some(mode) = crate::executor::applock::AppLockMode::parse_request(&m.to_string_value()) else {
+            return Ok(Value::Null);
+        };
+        let sid = ctx.session_id();
+        let grantable = ctx.session.extras.app_locks.can_grant(
+            sid,
+            &p.to_string_value(),
+            &r.to_string_value(),
+            mode,
+        );
+        Ok(Value::SmallInt(if grantable { 1 } else { 0 }))
+    }),
     builtin!("__IS_DISTINCT_FROM" => |args, row, ctx, catalog, storage, clock| {
         if args.len() != 2 {
             return Err(DbError::Execution("IS DISTINCT FROM expects 2 operands".into()));

@@ -135,6 +135,7 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         })?;
         parser.expect_rparen()?;
     }
+    let mut is_schema_bound = false;
     if parser.at_keyword(Keyword::With) {
         let _ = parser.next();
         let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.next() {
@@ -143,6 +144,9 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
                     || id.eq_ignore_ascii_case("ENCRYPTION")
                     || id.eq_ignore_ascii_case("VIEW_METADATA") =>
             {
+                if id.eq_ignore_ascii_case("SCHEMABINDING") {
+                    is_schema_bound = true;
+                }
                 Ok(())
             }
             Some(Token::Keyword(k))
@@ -150,6 +154,9 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
                     || k.as_ref().eq_ignore_ascii_case("ENCRYPTION")
                     || k.as_ref().eq_ignore_ascii_case("VIEW_METADATA") =>
             {
+                if k.as_ref().eq_ignore_ascii_case("SCHEMABINDING") {
+                    is_schema_bound = true;
+                }
                 Ok(())
             }
             _ => p.backtrack(Expected::Description("view attribute")),
@@ -176,6 +183,7 @@ pub fn parse_create_view(parser: &mut Parser) -> ParseResult<CreateStmt> {
         ctes,
         query,
         or_alter: false,
+        is_schema_bound,
     })
 }
 
@@ -281,11 +289,12 @@ pub fn parse_create_procedure(parser: &mut Parser) -> ParseResult<CreateStmt> {
     })
 }
 
-fn parse_function_with_options(parser: &mut Parser) -> ParseResult<()> {
+fn parse_function_with_options(parser: &mut Parser) -> ParseResult<bool> {
     if !parser.at_keyword(Keyword::With) {
-        return Ok(());
+        return Ok(false);
     }
     let _ = parser.next();
+    let mut is_schema_bound = false;
     let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.peek() {
         Some(Token::Keyword(Keyword::Execute)) | Some(Token::Keyword(Keyword::Exec)) => {
             let _ = p.next();
@@ -319,6 +328,9 @@ fn parse_function_with_options(parser: &mut Parser) -> ParseResult<()> {
                 || id.eq_ignore_ascii_case("ENCRYPTION")
                 || id.eq_ignore_ascii_case("INLINE") =>
         {
+            if id.eq_ignore_ascii_case("SCHEMABINDING") {
+                is_schema_bound = true;
+            }
             let _ = p.next();
             if matches!(p.peek(), Some(Token::Operator(op)) if op == "=") {
                 let _ = p.next();
@@ -330,12 +342,15 @@ fn parse_function_with_options(parser: &mut Parser) -> ParseResult<()> {
             if k.as_ref().eq_ignore_ascii_case("SCHEMABINDING")
                 || k.as_ref().eq_ignore_ascii_case("ENCRYPTION") =>
         {
+            if k.as_ref().eq_ignore_ascii_case("SCHEMABINDING") {
+                is_schema_bound = true;
+            }
             let _ = p.next();
             Ok(())
         }
         _ => p.backtrack(Expected::Description("function option")),
     })?;
-    Ok(())
+    Ok(is_schema_bound)
 }
 
 pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
@@ -374,7 +389,7 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
         returns = Some(crate::parser::parse::expressions::parse_data_type(parser)?);
     }
 
-    parse_function_with_options(parser)?;
+    let is_schema_bound = parse_function_with_options(parser)?;
     // In T-SQL, `AS` is optional before `BEGIN` in scalar and multi-statement TVFs.
     if parser.at_keyword(Keyword::As) {
         let _ = parser.next();
@@ -443,13 +458,52 @@ pub fn parse_create_function(parser: &mut Parser) -> ParseResult<CreateStmt> {
         returns,
         body,
         or_alter: false,
+        is_schema_bound,
     })
 }
 
 pub fn parse_create_trigger(parser: &mut Parser) -> ParseResult<CreateStmt> {
     let name = super::parse_multipart_name(parser)?;
     parser.expect_keyword(Keyword::On)?;
-    let table = super::parse_multipart_name(parser)?;
+
+    let mut is_database_scope = false;
+    let table = if parser.at_keyword(Keyword::Database) {
+        let _ = parser.next();
+        is_database_scope = true;
+        vec!["__DATABASE__".to_string()]
+    } else if parser.at_keyword(Keyword::All)
+        && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SERVER"))
+    {
+        let _ = parser.next();
+        let _ = parser.next();
+        is_database_scope = true;
+        vec!["__DATABASE__".to_string()]
+    } else {
+        super::parse_multipart_name(parser)?
+    };
+
+    // Optional WITH ENCRYPTION / WITH EXECUTE AS ...
+    if parser.at_keyword(Keyword::With) {
+        let _ = parser.next();
+        let _ = crate::parser::parse::parse_comma_list(parser, |p| match p.peek() {
+            Some(Token::Keyword(Keyword::Execute)) | Some(Token::Keyword(Keyword::Exec)) => {
+                let _ = p.next();
+                p.expect_keyword(Keyword::As)?;
+                match p.next() {
+                    Some(Token::String(_))
+                    | Some(Token::NString(_))
+                    | Some(Token::Identifier(_))
+                    | Some(Token::Keyword(_)) => Ok(()),
+                    _ => p.backtrack(Expected::Description("EXECUTE AS principal")),
+                }
+            }
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_)) => {
+                let _ = p.next();
+                Ok(())
+            }
+            _ => p.backtrack(Expected::Description("trigger option")),
+        })?;
+    }
 
     let mut is_instead_of = false;
     if parser.at_keyword(Keyword::Instead) {
@@ -461,15 +515,27 @@ pub fn parse_create_trigger(parser: &mut Parser) -> ParseResult<CreateStmt> {
         let _ = parser.next();
     }
 
-    let events = crate::parser::parse::expressions::parse_comma_list(parser, |p| match p.next() {
-        Some(Token::Keyword(k)) => match *k {
-            Keyword::Insert => Ok(crate::parser::ast::TriggerEvent::Insert),
-            Keyword::Update => Ok(crate::parser::ast::TriggerEvent::Update),
-            Keyword::Delete => Ok(crate::parser::ast::TriggerEvent::Delete),
-            _ => p.backtrack(Expected::Description("INSERT, UPDATE, or DELETE")),
-        },
-        _ => p.backtrack(Expected::Description("INSERT, UPDATE, or DELETE")),
-    })?;
+    let (events, ddl_events) = if is_database_scope {
+        let ddl =
+            crate::parser::parse::expressions::parse_comma_list(parser, |p| match p.next() {
+                Some(Token::Identifier(id)) => Ok(id.to_ascii_uppercase()),
+                Some(Token::Keyword(k)) => Ok(k.as_sql().to_ascii_uppercase()),
+                _ => p.backtrack(Expected::Description("DDL trigger event name")),
+            })?;
+        (Vec::new(), ddl)
+    } else {
+        let dml =
+            crate::parser::parse::expressions::parse_comma_list(parser, |p| match p.next() {
+                Some(Token::Keyword(k)) => match *k {
+                    Keyword::Insert => Ok(crate::parser::ast::TriggerEvent::Insert),
+                    Keyword::Update => Ok(crate::parser::ast::TriggerEvent::Update),
+                    Keyword::Delete => Ok(crate::parser::ast::TriggerEvent::Delete),
+                    _ => p.backtrack(Expected::Description("INSERT, UPDATE, or DELETE")),
+                },
+                _ => p.backtrack(Expected::Description("INSERT, UPDATE, or DELETE")),
+            })?;
+        (dml, Vec::new())
+    };
 
     parser.expect_keyword(Keyword::As)?;
     let body = if parser.at_keyword(Keyword::Begin) {
@@ -488,5 +554,7 @@ pub fn parse_create_trigger(parser: &mut Parser) -> ParseResult<CreateStmt> {
         is_instead_of,
         body,
         or_alter: false,
+        is_database_scope,
+        ddl_events,
     })
 }

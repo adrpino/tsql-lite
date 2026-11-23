@@ -8,7 +8,7 @@ mod info_schema_routines;
 mod info_schema_tables;
 mod info_schema_types;
 mod info_schema_views;
-mod sys;
+pub(crate) mod sys;
 pub(crate) mod system_vars;
 
 use crate::catalog::{Catalog, ColumnDef, TableDef};

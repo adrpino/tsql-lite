@@ -6,6 +6,7 @@ use crate::executor::mutation::MutationExecutor;
 use crate::executor::result::QueryResult;
 
 mod temp_table;
+pub(crate) mod triggers;
 
 fn ignore_missing_if_exists(res: Result<(), DbError>, if_exists: bool) -> Result<(), DbError> {
     if !if_exists {
@@ -27,7 +28,218 @@ fn ignore_missing_if_exists(res: Result<(), DbError>, if_exists: bool) -> Result
 }
 
 impl<'a> ScriptExecutor<'a> {
+    fn ddl_event_meta_for(&self, ddl: &crate::ast::DdlStatement) -> Option<triggers::DdlEventMeta> {
+        use crate::ast::{AlterTableAction, DdlStatement};
+        use triggers::DdlEventMeta;
+        let is_temp = |n: &str| {
+            n.starts_with('#')
+                || n.starts_with('@')
+                || n.starts_with("__temp_")
+                || n.starts_with("__tv_")
+        };
+        match ddl {
+            DdlStatement::CreateTable(s) if !is_temp(&s.name.name) => Some(DdlEventMeta {
+                event_type: "CREATE_TABLE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "TABLE",
+                command_text: format!("CREATE TABLE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::DropTable(s) if !is_temp(&s.name.name) => {
+                let sch = s.name.schema_or_dbo();
+                if s.if_exists && self.catalog.find_table(sch, &s.name.name).is_none() {
+                    return None;
+                }
+                Some(DdlEventMeta {
+                    event_type: "DROP_TABLE",
+                    schema_name: Some(sch.to_string()),
+                    object_name: s.name.name.clone(),
+                    object_type: "TABLE",
+                    command_text: format!("DROP TABLE {}.{}", sch, s.name.name),
+                })
+            }
+            DdlStatement::AlterTable(s)
+                if !is_temp(&s.table.name)
+                    && !matches!(s.action, AlterTableAction::ToggleTrigger { .. }) =>
+            {
+                Some(DdlEventMeta {
+                    event_type: "ALTER_TABLE",
+                    schema_name: Some(s.table.schema_or_dbo().to_string()),
+                    object_name: s.table.name.clone(),
+                    object_type: "TABLE",
+                    command_text: format!(
+                        "ALTER TABLE {}.{}",
+                        s.table.schema_or_dbo(),
+                        s.table.name
+                    ),
+                })
+            }
+            DdlStatement::DropView(s) => {
+                let sch = s.name.schema_or_dbo();
+                if s.if_exists && self.catalog.find_view(sch, &s.name.name).is_none() {
+                    return None;
+                }
+                Some(DdlEventMeta {
+                    event_type: "DROP_VIEW",
+                    schema_name: Some(sch.to_string()),
+                    object_name: s.name.name.clone(),
+                    object_type: "VIEW",
+                    command_text: format!("DROP VIEW {}.{}", sch, s.name.name),
+                })
+            }
+            DdlStatement::CreateIndex(s) if !is_temp(&s.table.name) => Some(DdlEventMeta {
+                event_type: "CREATE_INDEX",
+                schema_name: Some(s.table.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "INDEX",
+                command_text: format!(
+                    "CREATE INDEX {} ON {}.{}",
+                    s.name.name,
+                    s.table.schema_or_dbo(),
+                    s.table.name
+                ),
+            }),
+            DdlStatement::DropIndex(s) if !is_temp(&s.table.name) => Some(DdlEventMeta {
+                event_type: "DROP_INDEX",
+                schema_name: Some(s.table.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "INDEX",
+                command_text: format!(
+                    "DROP INDEX {} ON {}.{}",
+                    s.name.name,
+                    s.table.schema_or_dbo(),
+                    s.table.name
+                ),
+            }),
+            DdlStatement::CreateSchema(s) => Some(DdlEventMeta {
+                event_type: "CREATE_SCHEMA",
+                schema_name: None,
+                object_name: s.name.clone(),
+                object_type: "SCHEMA",
+                command_text: format!("CREATE SCHEMA {}", s.name),
+            }),
+            DdlStatement::DropSchema(s) => Some(DdlEventMeta {
+                event_type: "DROP_SCHEMA",
+                schema_name: None,
+                object_name: s.name.clone(),
+                object_type: "SCHEMA",
+                command_text: format!("DROP SCHEMA {}", s.name),
+            }),
+            DdlStatement::AlterSchemaTransfer(s) => Some(DdlEventMeta {
+                event_type: "ALTER_SCHEMA",
+                schema_name: None,
+                object_name: s.target_schema.clone(),
+                object_type: "SCHEMA",
+                command_text: format!(
+                    "ALTER SCHEMA {} TRANSFER {}.{}",
+                    s.target_schema,
+                    s.source.schema_or_dbo(),
+                    s.source.name
+                ),
+            }),
+            DdlStatement::DropProcedure(s) => {
+                let sch = s.name.schema_or_dbo();
+                if s.if_exists && self.catalog.find_routine(sch, &s.name.name).is_none() {
+                    return None;
+                }
+                Some(DdlEventMeta {
+                    event_type: "DROP_PROCEDURE",
+                    schema_name: Some(sch.to_string()),
+                    object_name: s.name.name.clone(),
+                    object_type: "PROCEDURE",
+                    command_text: format!("DROP PROCEDURE {}.{}", sch, s.name.name),
+                })
+            }
+            DdlStatement::DropFunction(s) => {
+                let sch = s.name.schema_or_dbo();
+                if s.if_exists && self.catalog.find_routine(sch, &s.name.name).is_none() {
+                    return None;
+                }
+                Some(DdlEventMeta {
+                    event_type: "DROP_FUNCTION",
+                    schema_name: Some(sch.to_string()),
+                    object_name: s.name.name.clone(),
+                    object_type: "FUNCTION",
+                    command_text: format!("DROP FUNCTION {}.{}", sch, s.name.name),
+                })
+            }
+            DdlStatement::DropTrigger(s) => Some(DdlEventMeta {
+                event_type: "DROP_TRIGGER",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "TRIGGER",
+                command_text: format!("DROP TRIGGER {}", s.name.name),
+            }),
+            DdlStatement::CreateType(s) => Some(DdlEventMeta {
+                event_type: "CREATE_TYPE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "TYPE",
+                command_text: format!("CREATE TYPE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::CreateScalarType(s) => Some(DdlEventMeta {
+                event_type: "CREATE_TYPE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "TYPE",
+                command_text: format!("CREATE TYPE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::DropType(s) => Some(DdlEventMeta {
+                event_type: "DROP_TYPE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "TYPE",
+                command_text: format!("DROP TYPE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::CreateSequence(s) => Some(DdlEventMeta {
+                event_type: "CREATE_SEQUENCE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "SEQUENCE",
+                command_text: format!("CREATE SEQUENCE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::AlterSequence(s) => Some(DdlEventMeta {
+                event_type: "ALTER_SEQUENCE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "SEQUENCE",
+                command_text: format!("ALTER SEQUENCE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::DropSequence(s) => Some(DdlEventMeta {
+                event_type: "DROP_SEQUENCE",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "SEQUENCE",
+                command_text: format!("DROP SEQUENCE {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::CreateSynonym(s) => Some(DdlEventMeta {
+                event_type: "CREATE_SYNONYM",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "SYNONYM",
+                command_text: format!("CREATE SYNONYM {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            DdlStatement::DropSynonym(s) => Some(DdlEventMeta {
+                event_type: "DROP_SYNONYM",
+                schema_name: Some(s.name.schema_or_dbo().to_string()),
+                object_name: s.name.name.clone(),
+                object_type: "SYNONYM",
+                command_text: format!("DROP SYNONYM {}.{}", s.name.schema_or_dbo(), s.name.name),
+            }),
+            _ => None,
+        }
+    }
+
     pub(crate) fn execute_ddl(
+        &mut self,
+        ddl: crate::ast::DdlStatement,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> Result<Option<QueryResult>, DbError> {
+        let meta = self.ddl_event_meta_for(&ddl);
+        self.run_with_ddl_triggers(meta, ctx, |this, ctx| this.execute_ddl_inner(ddl, ctx))
+    }
+
+    fn execute_ddl_inner(
         &mut self,
         ddl: crate::ast::DdlStatement,
         ctx: &mut ExecutionContext<'_>,
@@ -104,6 +316,18 @@ impl<'a> ScriptExecutor<'a> {
             }
             DdlStatement::DropFunction(stmt) => {
                 let schema = stmt.name.schema_or_dbo().to_string();
+                if let Some(dep) =
+                    crate::executor::metadata::sys::dependencies::find_schemabound_dependent(
+                        self.catalog,
+                        &schema,
+                        &stmt.name.name,
+                    )
+                {
+                    return Err(DbError::Execution(format!(
+                        "Cannot DROP FUNCTION '{}.{}' because it is being referenced by object '{}'.",
+                        schema, stmt.name.name, dep
+                    )));
+                }
                 ignore_missing_if_exists(
                     self.catalog.drop_routine(&schema, &stmt.name.name, true),
                     stmt.if_exists,
@@ -210,6 +434,14 @@ impl<'a> ScriptExecutor<'a> {
         mut stmt: AlterTableStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
+        if matches!(
+            stmt.action,
+            crate::ast::AlterTableAction::ToggleTrigger { .. }
+        ) && stmt.table.name.eq_ignore_ascii_case("__DATABASE__")
+        {
+            self.schema(ctx).alter_table(stmt)?;
+            return Ok(None);
+        }
         if let Some(_mapped) = temp_table::resolve_table_name_for_mutation(&mut stmt.table, ctx) {
             // resolved
         }

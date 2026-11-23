@@ -185,6 +185,8 @@ pub struct RoutineDef {
     pub kind: RoutineKind,
     #[serde(default)]
     pub definition_sql: String,
+    #[serde(default)]
+    pub is_schema_bound: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +221,8 @@ pub struct ViewDef {
     pub query: std::sync::Arc<Statement>, // Should be Statement::Select
     #[serde(default)]
     pub definition_sql: String,
+    #[serde(default)]
+    pub is_schema_bound: bool,
 }
 
 fn default_true() -> bool {
@@ -237,6 +241,10 @@ pub struct TriggerDef {
     pub is_instead_of: bool,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub is_database_scope: bool,
+    #[serde(default)]
+    pub ddl_events: Vec<String>,
     #[serde(with = "serde_arc")]
     pub body: std::sync::Arc<Vec<Statement>>,
     #[serde(default)]
@@ -592,6 +600,8 @@ pub trait Catalog:
     fn set_table_large_value_out_of_row(&mut self, _table_id: u32, _enabled: bool) {}
 
     fn clone_boxed(&self) -> Box<dyn Catalog>;
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    fn restore_from_boxed(&mut self, _snapshot: Box<dyn Catalog>) {}
     fn rebuild_maps(&mut self) {}
     /// Merges changes made in `workspace` relative to `base` into `self` during
     /// a concurrent transaction commit.
@@ -1131,6 +1141,16 @@ impl Catalog for CatalogImpl {
 
     fn clone_boxed(&self) -> Box<dyn Catalog> {
         Box::new(self.clone())
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+
+    fn restore_from_boxed(&mut self, snapshot: Box<dyn Catalog>) {
+        if let Ok(other) = snapshot.into_any().downcast::<CatalogImpl>() {
+            *self = *other;
+        }
     }
 
     fn rebuild_maps(&mut self) {

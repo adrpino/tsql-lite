@@ -726,11 +726,43 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
         if parser.at_keyword(Keyword::Over) {
             return parse_window_over(parser, function_name, args, ignore_nulls);
         }
-        Ok(Expr::FunctionCall {
+        let mut call_expr = Expr::FunctionCall {
             name: function_name,
             args,
             within_group,
-        })
+        };
+        // Support chained XML methods on function results, e.g. `EVENTDATA().value('...', 'NVARCHAR(100)')`.
+        while matches!(parser.peek(), Some(Token::Dot))
+            && matches!(parser.peek_at(2), Some(Token::LParen))
+        {
+            let method_name = match parser.peek_at(1) {
+                Some(Token::Identifier(id)) => Some(id.to_ascii_uppercase()),
+                Some(Token::Keyword(k)) => Some(k.as_sql().to_ascii_uppercase()),
+                _ => None,
+            };
+            let Some(internal_fn) = method_name.as_deref().and_then(|m| match m {
+                "VALUE" => Some("__XML_VALUE"),
+                "EXIST" => Some("__XML_EXIST"),
+                "QUERY" => Some("__XML_QUERY"),
+                _ => None,
+            }) else {
+                break;
+            };
+            let _ = parser.next(); // .
+            let _ = parser.next(); // method
+            let _ = parser.next(); // (
+            let mut m_args = vec![call_expr];
+            if !matches!(parser.peek(), Some(Token::RParen)) {
+                m_args.extend(parse_comma_list(parser, parse_expr)?);
+            }
+            parser.expect_rparen()?;
+            call_expr = Expr::FunctionCall {
+                name: internal_fn.to_string(),
+                args: m_args,
+                within_group: None,
+            };
+        }
+        Ok(call_expr)
     } else if parts.len() == 1 {
         let upper = parts[0].to_uppercase();
         if matches!(

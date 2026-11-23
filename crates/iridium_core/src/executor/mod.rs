@@ -1,5 +1,7 @@
 pub(crate) mod aggregates;
+pub(crate) mod applock;
 pub mod clock;
+pub(crate) mod collation;
 pub mod conflict;
 pub mod context;
 pub(crate) mod context_factory;

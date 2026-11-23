@@ -376,6 +376,7 @@ pub(crate) fn build_expression_dependency_rows(
     let mut emit_for = |refing_id: i32,
                         refing_schema: &str,
                         refing_name: &str,
+                        is_schema_bound: bool,
                         raw_refs: Vec<(Option<String>, String)>| {
         let mut seen: HashSet<(String, String)> = HashSet::new();
         for (opt_schema, ent_name) in raw_refs {
@@ -407,11 +408,11 @@ pub(crate) fn build_expression_dependency_rows(
                     Value::VarChar(ent_name.clone()),
                     Value::VarChar(eff_schema.to_string()),
                     Value::Null,
-                    Value::Bit(false),
+                    Value::Bit(is_schema_bound),
                     Value::VarChar(eff_schema.to_string()),
                     Value::VarChar(ent_name),
                     Value::Null,
-                    Value::Bit(false),
+                    Value::Bit(is_schema_bound),
                 ],
                 deleted: false,
             });
@@ -421,7 +422,13 @@ pub(crate) fn build_expression_dependency_rows(
     for view in catalog.get_views().iter() {
         let mut refs = Vec::new();
         collect_stmt(&view.query, &empty_ctes, &mut refs);
-        emit_for(view.object_id, &view.schema, &view.name, refs);
+        emit_for(
+            view.object_id,
+            &view.schema,
+            &view.name,
+            view.is_schema_bound,
+            refs,
+        );
     }
 
     for routine in catalog.get_routines().iter() {
@@ -451,7 +458,13 @@ pub(crate) fn build_expression_dependency_rows(
                 }
             },
         }
-        emit_for(routine.object_id, &routine.schema, &routine.name, refs);
+        emit_for(
+            routine.object_id,
+            &routine.schema,
+            &routine.name,
+            routine.is_schema_bound,
+            refs,
+        );
     }
 
     for trig in catalog.get_triggers().iter() {
@@ -460,8 +473,324 @@ pub(crate) fn build_expression_dependency_rows(
         for s in trig.body.iter() {
             collect_stmt(s, &empty_ctes, &mut refs);
         }
-        emit_for(trig.object_id, &trig.schema, &trig.name, refs);
+        emit_for(trig.object_id, &trig.schema, &trig.name, false, refs);
     }
 
     rows
+}
+
+fn refs_contain(
+    refs: &[(Option<String>, String)],
+    owner_schema: &str,
+    owner_name: &str,
+    target_schema: &str,
+    target_name: &str,
+) -> bool {
+    refs.iter().any(|(opt_schema, ent_name)| {
+        let eff_schema = opt_schema.as_deref().unwrap_or("dbo");
+        !(eff_schema.eq_ignore_ascii_case(owner_schema)
+            && ent_name.eq_ignore_ascii_case(owner_name))
+            && eff_schema.eq_ignore_ascii_case(target_schema)
+            && ent_name.eq_ignore_ascii_case(target_name)
+    })
+}
+
+fn collect_routine_refs(routine: &crate::catalog::RoutineDef) -> Vec<(Option<String>, String)> {
+    let empty_ctes = HashSet::new();
+    let mut refs = Vec::new();
+    match &routine.kind {
+        RoutineKind::Procedure { body } => {
+            for s in body.iter() {
+                collect_stmt(s, &empty_ctes, &mut refs);
+            }
+        }
+        RoutineKind::Function { body, .. } => match body.as_ref() {
+            FunctionBody::ScalarReturn(e) => collect_expr(e, &empty_ctes, &mut refs),
+            FunctionBody::Scalar(stmts) | FunctionBody::MultiStatementTable { body: stmts, .. } => {
+                for s in stmts {
+                    collect_stmt(s, &empty_ctes, &mut refs);
+                }
+            }
+            FunctionBody::InlineTable(q) => collect_select(q, &empty_ctes, &mut refs),
+            FunctionBody::InlineTableWithCte(cte) => {
+                let mut local_ctes = empty_ctes.clone();
+                for def in &cte.ctes {
+                    collect_stmt(&def.query, &local_ctes, &mut refs);
+                    local_ctes.insert(def.name.to_ascii_lowercase());
+                }
+                collect_stmt(&cte.body, &local_ctes, &mut refs);
+            }
+        },
+    }
+    refs
+}
+
+fn expr_references_column(expr: &Expr, col_name: &str) -> bool {
+    match expr {
+        Expr::Wildcard | Expr::QualifiedWildcard(_) => true,
+        Expr::Identifier(id) => id.trim_matches(['[', ']']).eq_ignore_ascii_case(col_name),
+        Expr::QualifiedIdentifier(parts) => parts
+            .last()
+            .is_some_and(|p| p.trim_matches(['[', ']']).eq_ignore_ascii_case(col_name)),
+        Expr::Binary { left, right, .. } => {
+            expr_references_column(left, col_name) || expr_references_column(right, col_name)
+        }
+        Expr::Unary { expr, .. }
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::Cast { expr, .. }
+        | Expr::TryCast { expr, .. }
+        | Expr::Convert { expr, .. }
+        | Expr::TryConvert { expr, .. } => expr_references_column(expr, col_name),
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            expr_references_column(expr, col_name)
+                || expr_references_column(low, col_name)
+                || expr_references_column(high, col_name)
+        }
+        Expr::InList { expr, list, .. } => {
+            expr_references_column(expr, col_name)
+                || list.iter().any(|e| expr_references_column(e, col_name))
+        }
+        Expr::InSubquery { expr, subquery, .. } => {
+            expr_references_column(expr, col_name) || select_references_column(subquery, col_name)
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            expr_references_column(expr, col_name)
+                || expr_references_column(pattern, col_name)
+                || escape
+                    .as_deref()
+                    .is_some_and(|e| expr_references_column(e, col_name))
+        }
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            operand
+                .as_deref()
+                .is_some_and(|e| expr_references_column(e, col_name))
+                || when_clauses.iter().any(|wc| {
+                    expr_references_column(&wc.condition, col_name)
+                        || expr_references_column(&wc.result, col_name)
+                })
+                || else_result
+                    .as_deref()
+                    .is_some_and(|e| expr_references_column(e, col_name))
+        }
+        Expr::FunctionCall { args, .. } => args.iter().any(|a| expr_references_column(a, col_name)),
+        Expr::WindowFunction(wf) => {
+            wf.args.iter().any(|a| expr_references_column(a, col_name))
+                || wf
+                    .partition_by
+                    .iter()
+                    .any(|e| expr_references_column(e, col_name))
+                || wf
+                    .order_by
+                    .iter()
+                    .any(|o| expr_references_column(&o.expr, col_name))
+        }
+        Expr::Subquery(q) | Expr::Exists { subquery: q, .. } => {
+            select_references_column(q, col_name)
+        }
+        _ => false,
+    }
+}
+
+fn from_node_references_column(node: &FromNode, col_name: &str) -> bool {
+    match node {
+        FromNode::Table(tr) => match &tr.factor {
+            TableFactor::Named(_) => false,
+            TableFactor::Derived(q) => select_references_column(q, col_name),
+            TableFactor::Values { rows, .. } => rows
+                .iter()
+                .any(|r| r.iter().any(|e| expr_references_column(e, col_name))),
+        },
+        FromNode::Aliased { source, .. } => from_node_references_column(source, col_name),
+        FromNode::Join {
+            left, right, on, ..
+        } => {
+            from_node_references_column(left, col_name)
+                || from_node_references_column(right, col_name)
+                || on
+                    .as_ref()
+                    .is_some_and(|e| expr_references_column(e, col_name))
+        }
+    }
+}
+
+fn select_references_column(sel: &SelectStmt, col_name: &str) -> bool {
+    sel.projection
+        .iter()
+        .any(|p| expr_references_column(&p.expr, col_name))
+        || sel
+            .from_clause
+            .as_ref()
+            .is_some_and(|f| from_node_references_column(f, col_name))
+        || sel
+            .selection
+            .as_ref()
+            .is_some_and(|e| expr_references_column(e, col_name))
+        || sel
+            .group_by
+            .iter()
+            .any(|e| expr_references_column(e, col_name))
+        || sel
+            .having
+            .as_ref()
+            .is_some_and(|e| expr_references_column(e, col_name))
+        || sel
+            .order_by
+            .iter()
+            .any(|o| expr_references_column(&o.expr, col_name))
+        || sel
+            .applies
+            .iter()
+            .any(|a| select_references_column(&a.subquery, col_name))
+        || sel
+            .set_op
+            .as_ref()
+            .is_some_and(|s| select_references_column(&s.right, col_name))
+}
+
+fn stmt_references_column(stmt: &Statement, col_name: &str) -> bool {
+    match stmt {
+        Statement::Dml(DmlStatement::Select(s)) => select_references_column(s, col_name),
+        Statement::Dml(DmlStatement::SelectAssign(sa)) => {
+            sa.targets
+                .iter()
+                .any(|t| expr_references_column(&t.expr, col_name))
+                || sa
+                    .selection
+                    .as_ref()
+                    .is_some_and(|e| expr_references_column(e, col_name))
+        }
+        Statement::WithCte(cte) => {
+            cte.ctes
+                .iter()
+                .any(|c| stmt_references_column(&c.query, col_name))
+                || stmt_references_column(&cte.body, col_name)
+        }
+        Statement::Procedural(ProceduralStatement::Return(Some(e))) => {
+            expr_references_column(e, col_name)
+        }
+        Statement::Procedural(ProceduralStatement::Set(s)) => {
+            expr_references_column(&s.expr, col_name)
+        }
+        Statement::Procedural(ProceduralStatement::If(s)) => {
+            expr_references_column(&s.condition, col_name)
+                || s.then_body
+                    .iter()
+                    .any(|st| stmt_references_column(st, col_name))
+                || s.else_body
+                    .as_ref()
+                    .is_some_and(|b| b.iter().any(|st| stmt_references_column(st, col_name)))
+        }
+        Statement::Procedural(ProceduralStatement::BeginEnd(b)) => {
+            b.iter().any(|st| stmt_references_column(st, col_name))
+        }
+        _ => false,
+    }
+}
+
+/// Returns the first `WITH SCHEMABINDING` view or function that references `(target_schema, target_name)`.
+pub(crate) fn find_schemabound_dependent(
+    catalog: &dyn Catalog,
+    target_schema: &str,
+    target_name: &str,
+) -> Option<String> {
+    let empty_ctes = HashSet::new();
+    for view in catalog.get_views().iter() {
+        if !view.is_schema_bound {
+            continue;
+        }
+        let mut refs = Vec::new();
+        collect_stmt(&view.query, &empty_ctes, &mut refs);
+        if refs_contain(&refs, &view.schema, &view.name, target_schema, target_name) {
+            return Some(format!("{}.{}", view.schema, view.name));
+        }
+    }
+    for routine in catalog.get_routines().iter() {
+        if !routine.is_schema_bound {
+            continue;
+        }
+        let refs = collect_routine_refs(routine);
+        if refs_contain(
+            &refs,
+            &routine.schema,
+            &routine.name,
+            target_schema,
+            target_name,
+        ) {
+            return Some(format!("{}.{}", routine.schema, routine.name));
+        }
+    }
+    None
+}
+
+/// Returns the first `WITH SCHEMABINDING` view or function referencing `(target_schema, target_name)`
+/// that also accesses `col_name`.
+pub(crate) fn find_schemabound_column_dependent(
+    catalog: &dyn Catalog,
+    target_schema: &str,
+    target_name: &str,
+    col_name: &str,
+) -> Option<String> {
+    let empty_ctes = HashSet::new();
+    for view in catalog.get_views().iter() {
+        if !view.is_schema_bound {
+            continue;
+        }
+        let mut refs = Vec::new();
+        collect_stmt(&view.query, &empty_ctes, &mut refs);
+        if refs_contain(&refs, &view.schema, &view.name, target_schema, target_name)
+            && stmt_references_column(&view.query, col_name)
+        {
+            return Some(format!("{}.{}", view.schema, view.name));
+        }
+    }
+    for routine in catalog.get_routines().iter() {
+        if !routine.is_schema_bound {
+            continue;
+        }
+        let refs = collect_routine_refs(routine);
+        if !refs_contain(
+            &refs,
+            &routine.schema,
+            &routine.name,
+            target_schema,
+            target_name,
+        ) {
+            continue;
+        }
+        let accesses_col = match &routine.kind {
+            RoutineKind::Procedure { body } => {
+                body.iter().any(|s| stmt_references_column(s, col_name))
+            }
+            RoutineKind::Function { body, .. } => match body.as_ref() {
+                FunctionBody::ScalarReturn(e) => expr_references_column(e, col_name),
+                FunctionBody::Scalar(stmts)
+                | FunctionBody::MultiStatementTable { body: stmts, .. } => {
+                    stmts.iter().any(|s| stmt_references_column(s, col_name))
+                }
+                FunctionBody::InlineTable(q) => select_references_column(q, col_name),
+                FunctionBody::InlineTableWithCte(cte) => {
+                    cte.ctes
+                        .iter()
+                        .any(|c| stmt_references_column(&c.query, col_name))
+                        || stmt_references_column(&cte.body, col_name)
+                }
+            },
+        };
+        if accesses_col {
+            return Some(format!("{}.{}", routine.schema, routine.name));
+        }
+    }
+    None
 }

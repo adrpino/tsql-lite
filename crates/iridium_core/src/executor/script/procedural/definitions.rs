@@ -39,6 +39,7 @@ impl<'a> ScriptExecutor<'a> {
                 body: std::sync::Arc::new(stmt.body),
             },
             definition_sql: String::new(),
+            is_schema_bound: false,
         };
         if stmt.or_alter {
             self.catalog.replace_routine(routine)?;
@@ -64,6 +65,7 @@ impl<'a> ScriptExecutor<'a> {
                 body: Box::new(stmt.body),
             },
             definition_sql: String::new(),
+            is_schema_bound: stmt.is_schema_bound,
         };
         if stmt.or_alter {
             self.catalog.replace_routine(routine)?;
@@ -95,6 +97,8 @@ impl<'a> ScriptExecutor<'a> {
             events: stmt.events,
             is_instead_of: stmt.is_instead_of,
             enabled: true,
+            is_database_scope: stmt.is_database_scope,
+            ddl_events: stmt.ddl_events,
             body: std::sync::Arc::new(stmt.body),
             definition_sql: String::new(),
         };

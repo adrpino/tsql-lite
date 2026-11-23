@@ -165,7 +165,7 @@ pub(crate) fn execute_system_procedure(
     };
 
     let mut res = result;
-    res.return_status = Some(0);
+    res.return_status.get_or_insert(0);
     res.is_procedure = true;
     Ok(Some(res))
 }

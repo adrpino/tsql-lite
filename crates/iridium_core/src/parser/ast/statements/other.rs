@@ -193,17 +193,42 @@ pub enum ProceduralStatement {
     },
     ExecDynamic {
         sql_expr: Expr,
+        result_sets: Option<ResultSetsClause>,
     },
     ExecProcedure {
         return_variable: Option<String>,
         name: Vec<String>,
         args: Vec<ExecArg>,
+        result_sets: Option<ResultSetsClause>,
     },
     SpExecuteSql {
         sql_expr: Expr,
         params_def: Option<Expr>,
         args: Vec<ExecArg>,
+        result_sets: Option<ResultSetsClause>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResultSetColumnDef {
+    pub name: String,
+    pub data_type: crate::parser::ast::DataType,
+    pub nullable: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ResultSetDef {
+    Columns(Vec<ResultSetColumnDef>),
+    AsObject(Vec<String>),
+    AsType(Vec<String>),
+    AsForXml,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ResultSetsClause {
+    Undefined,
+    None,
+    Definitions(Vec<ResultSetDef>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -392,6 +417,7 @@ pub enum CreateStmt {
         ctes: Vec<CteDef>,
         query: SelectStmt,
         or_alter: bool,
+        is_schema_bound: bool,
     },
     Procedure {
         name: Vec<String>,
@@ -405,6 +431,7 @@ pub enum CreateStmt {
         returns: Option<DataType>,
         body: FunctionBody,
         or_alter: bool,
+        is_schema_bound: bool,
     },
     Trigger {
         name: Vec<String>,
@@ -413,6 +440,8 @@ pub enum CreateStmt {
         is_instead_of: bool,
         body: Vec<Statement>,
         or_alter: bool,
+        is_database_scope: bool,
+        ddl_events: Vec<String>,
     },
 }
 

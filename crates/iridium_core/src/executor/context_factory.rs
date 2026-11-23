@@ -64,6 +64,7 @@ pub(crate) fn from_session<'a, C, S>(
             script_tx: super::context::ScriptTransactionState::default(),
             result_set_sink: session.diagnostics.result_set_sink.clone(),
             last_proc_result: None,
+            ddl_event_xml: None,
         },
         row: RowContext {
             outer_stack: vec![],
@@ -155,6 +156,7 @@ pub(crate) fn legacy_new<'a>(
             script_tx: super::context::ScriptTransactionState::default(),
             result_set_sink: None,
             last_proc_result: None,
+            ddl_event_xml: None,
         },
         row: RowContext {
             outer_stack: vec![],

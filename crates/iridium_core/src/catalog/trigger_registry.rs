@@ -19,7 +19,8 @@ impl TriggerRegistry for CatalogImpl {
             .view()
             .iter()
             .filter(|t| {
-                t.table_schema.eq_ignore_ascii_case(schema)
+                !t.is_database_scope
+                    && t.table_schema.eq_ignore_ascii_case(schema)
                     && t.table_name.eq_ignore_ascii_case(name)
             })
             .map(|t| t.as_ref())

@@ -16,6 +16,7 @@ pub fn all_suites() -> Vec<DiffSuite> {
         security_and_permissions(),
         xml_and_openxml(),
         catalog_and_metadata_parity(),
+        enterprise_result_sets_schemabinding_ddl_triggers_applock_collation(),
     ]
 }
 
@@ -836,6 +837,121 @@ fn catalog_and_metadata_parity() -> DiffSuite {
                 sql: "SELECT DISTINCT referenced_schema_name = COALESCE(referenced_schema_name, 'dbo'), referenced_entity_name
                       FROM sys.sql_expression_dependencies
                       WHERE referencing_id = OBJECT_ID('dbo.vOrdersMeta');",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn enterprise_result_sets_schemabinding_ddl_triggers_applock_collation() -> DiffSuite {
+    DiffSuite {
+        name: "enterprise_result_sets_schemabinding_ddl_triggers_applock_collation",
+        category: "Result Sets, Schemabinding, DDL Triggers, AppLock & Collation",
+        min_sql_version: 15,
+        setup_batches: &[
+            "CREATE TABLE dbo.BoundBase (Id INT PRIMARY KEY, Amount INT NOT NULL, ExtraNote NVARCHAR(50) NULL);
+             CREATE TABLE dbo.DdlLog (EvType NVARCHAR(100), SchName NVARCHAR(128), ObjName NVARCHAR(128), ObjType NVARCHAR(100));
+             CREATE TABLE dbo.AccentWords (Id INT PRIMARY KEY, Word NVARCHAR(40) NOT NULL);
+             INSERT INTO dbo.AccentWords VALUES (1, N'cafe'), (2, N'café'), (3, N'CAFÉ'), (4, N'résumé'), (5, N'resume');",
+            "CREATE VIEW dbo.vBoundBase WITH SCHEMABINDING AS
+             SELECT Id, Amount FROM dbo.BoundBase;",
+            "CREATE PROCEDURE dbo.usp_ReshapeSample AS
+             BEGIN
+                 SELECT 42 AS raw_a, N'abcdef' AS raw_b;
+             END;",
+            "CREATE PROCEDURE dbo.usp_EmptySample AS
+             BEGIN
+                 DECLARE @x INT = 1;
+             END;",
+            "CREATE TRIGGER tr_LogTableDdl ON DATABASE
+             FOR DDL_TABLE_EVENTS
+             AS
+             BEGIN
+                 SET NOCOUNT ON;
+                 INSERT INTO dbo.DdlLog (EvType, SchName, ObjName, ObjType)
+                 VALUES (
+                     EVENTDATA().value('(/EVENT_INSTANCE/EventType)[1]', 'NVARCHAR(100)'),
+                     EVENTDATA().value('(/EVENT_INSTANCE/SchemaName)[1]', 'NVARCHAR(128)'),
+                     EVENTDATA().value('(/EVENT_INSTANCE/ObjectName)[1]', 'NVARCHAR(128)'),
+                     EVENTDATA().value('(/EVENT_INSTANCE/ObjectType)[1]', 'NVARCHAR(100)')
+                 );
+             END;",
+        ],
+        steps: &[
+            DiffStep::Query {
+                label: "exec_with_result_sets_reshape",
+                sql: "EXEC dbo.usp_ReshapeSample WITH RESULT SETS ((ItemId BIGINT NOT NULL, Tag NVARCHAR(3)));",
+                ordered: true,
+            },
+            DiffStep::ExecOk {
+                label: "exec_with_result_sets_none_ok",
+                sql: "EXEC dbo.usp_EmptySample WITH RESULT SETS NONE;",
+            },
+            DiffStep::ExpectErr {
+                label: "exec_with_result_sets_none_rejects_rows",
+                sql: "EXEC dbo.usp_ReshapeSample WITH RESULT SETS NONE;",
+            },
+            DiffStep::ExpectErr {
+                label: "exec_with_result_sets_column_count_mismatch",
+                sql: "EXEC dbo.usp_ReshapeSample WITH RESULT SETS ((OnlyOne INT));",
+            },
+            DiffStep::ExpectErr {
+                label: "schemabinding_blocks_drop_table",
+                sql: "DROP TABLE dbo.BoundBase;",
+            },
+            DiffStep::ExpectErr {
+                label: "schemabinding_blocks_drop_referenced_column",
+                sql: "ALTER TABLE dbo.BoundBase DROP COLUMN Amount;",
+            },
+            DiffStep::ExecOk {
+                label: "schemabinding_allows_drop_unreferenced_column",
+                sql: "ALTER TABLE dbo.BoundBase DROP COLUMN ExtraNote;",
+            },
+            DiffStep::Query {
+                label: "sys_sql_modules_is_schema_bound",
+                sql: "SELECT is_schema_bound FROM sys.sql_modules WHERE object_id = OBJECT_ID('dbo.vBoundBase');",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "ddl_trigger_eventdata_log",
+                sql: "CREATE TABLE dbo.DdlProbe (K INT);
+                      ALTER TABLE dbo.DdlProbe ADD V INT;
+                      DROP TABLE dbo.DdlProbe;
+                      SELECT EvType, SchName, ObjName, ObjType FROM dbo.DdlLog ORDER BY EvType, ObjName;",
+                ordered: true,
+            },
+            DiffStep::ExpectErr {
+                label: "applock_test_transaction_outside_tx_errors",
+                sql: "SELECT APPLOCK_TEST('public', 'diff_lock', 'Shared', 'Transaction');",
+            },
+            DiffStep::Query {
+                label: "applock_mode_and_test_lifecycle",
+                sql: "DECLARE @rc1 INT, @rc2 INT;
+                      DECLARE @m0 NVARCHAR(32) = APPLOCK_MODE('public', 'diff_lock', 'Session');
+                      EXEC @rc1 = sp_getapplock @Resource = 'diff_lock', @LockMode = 'Shared', @LockOwner = 'Session';
+                      DECLARE @m1 NVARCHAR(32) = APPLOCK_MODE('public', 'diff_lock', 'Session');
+                      DECLARE @t_same SMALLINT = APPLOCK_TEST('public', 'diff_lock', 'Exclusive', 'Session');
+                      DECLARE @t_other_s SMALLINT, @t_other_x SMALLINT;
+                      BEGIN TRANSACTION;
+                          SET @t_other_s = APPLOCK_TEST('public', 'diff_lock', 'Shared', 'Transaction');
+                          SET @t_other_x = APPLOCK_TEST('public', 'diff_lock', 'Exclusive', 'Transaction');
+                      COMMIT TRANSACTION;
+                      EXEC @rc2 = sp_releaseapplock @Resource = 'diff_lock', @LockOwner = 'Session';
+                      DECLARE @m2 NVARCHAR(32) = APPLOCK_MODE('public', 'diff_lock', 'Session');
+                      SELECT @rc1, @rc2, @m0, @m1, @t_same, @t_other_s, @t_other_x, @m2;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "collate_accent_sensitivity_ai_vs_as",
+                sql: "SELECT
+                        CASE WHEN N'cafe' COLLATE Latin1_General_CI_AI = N'café' THEN 1 ELSE 0 END,
+                        CASE WHEN N'cafe' COLLATE Latin1_General_CI_AS = N'café' THEN 1 ELSE 0 END,
+                        CASE WHEN N'Cafe' COLLATE Latin1_General_CS_AI = N'Café' THEN 1 ELSE 0 END,
+                        CASE WHEN N'cafe' COLLATE Latin1_General_CS_AI = N'Café' THEN 1 ELSE 0 END,
+                        (SELECT COUNT(*) FROM dbo.AccentWords WHERE Word COLLATE Latin1_General_CI_AI LIKE N'resume'),
+                        (SELECT COUNT(*) FROM dbo.AccentWords WHERE Word COLLATE Latin1_General_CI_AS LIKE N'resume'),
+                        (SELECT COUNT(*) FROM (SELECT Word COLLATE Latin1_General_CI_AI AS W FROM dbo.AccentWords GROUP BY Word COLLATE Latin1_General_CI_AI) g1),
+                        (SELECT COUNT(*) FROM (SELECT Word COLLATE Latin1_General_CI_AS AS W FROM dbo.AccentWords GROUP BY Word COLLATE Latin1_General_CI_AS) g2);",
                 ordered: true,
             },
         ],

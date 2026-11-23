@@ -159,6 +159,10 @@ where
             tx_manager.active = None;
             tx_manager.commit_ts = storage_guard.commit_ts;
             tx_manager.xact_state = 0;
+            ctx.session
+                .extras
+                .app_locks
+                .release_transaction_locks(session_id);
             journal.record(JournalEvent::Commit);
             Ok(None)
         }
@@ -197,6 +201,10 @@ where
                 ctx.restore_snapshot(extra, session_options);
 
                 if full_rollback {
+                    ctx.session
+                        .extras
+                        .app_locks
+                        .release_transaction_locks(session_id);
                     state.wal_rollback(tx_id);
                     {
                         let durability = state.durability.lock();

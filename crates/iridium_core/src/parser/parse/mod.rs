@@ -808,7 +808,18 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                 Some(multipart_name(parser)?)
             };
             parser.expect_keyword(Keyword::On)?;
-            let table = multipart_name(parser)?;
+            let table = if parser.at_keyword(Keyword::Database) {
+                let _ = parser.next();
+                vec!["__DATABASE__".to_string()]
+            } else if parser.at_keyword(Keyword::All)
+                && matches!(parser.peek_at(1), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SERVER"))
+            {
+                let _ = parser.next();
+                let _ = parser.next();
+                vec!["__DATABASE__".to_string()]
+            } else {
+                multipart_name(parser)?
+            };
             Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                 table,
                 action: AlterTableAction::ToggleTrigger {

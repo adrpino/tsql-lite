@@ -173,7 +173,7 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
         }
         Value::Date(_) => TypeInfo {
             tds_type: DATENTYPE,
-            length_prefix: vec![0x03],
+            length_prefix: vec![],
             collation: None,
             scale: None,
             precision: None,
@@ -181,7 +181,7 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
         },
         Value::Time(_) => TypeInfo {
             tds_type: TIMENTYPE,
-            length_prefix: vec![0x05],
+            length_prefix: vec![],
             collation: None,
             scale: Some(7),
             precision: None,
@@ -197,7 +197,7 @@ pub fn value_to_type_info(value: &Value) -> TypeInfo {
         },
         Value::DateTime2(_) => TypeInfo {
             tds_type: DATETIME2NTYPE,
-            length_prefix: vec![0x08],
+            length_prefix: vec![],
             collation: None,
             scale: Some(7),
             precision: None,
@@ -298,7 +298,7 @@ pub fn value_to_wire_bytes(value: &Value, ti: &TypeInfo) -> Vec<u8> {
                 let limb = ((abs_val >> shift) & 0xFFFFFFFF) as u32;
                 buf.extend_from_slice(&limb.to_le_bytes());
             }
-            log::info!("Decimal raw={}, bytes={:02X?}", raw, buf);
+            log::debug!("Decimal raw={}, bytes={:02X?}", raw, buf);
             buf
         }
         MONEYNTYPE => {
@@ -671,7 +671,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::Date => TypeInfo {
             tds_type: DATENTYPE,
-            length_prefix: vec![0x03],
+            length_prefix: vec![],
             collation: None,
             scale: None,
             precision: None,
@@ -679,7 +679,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         },
         iridium_core::types::DataType::Time => TypeInfo {
             tds_type: TIMENTYPE,
-            length_prefix: vec![0x05],
+            length_prefix: vec![],
             collation: None,
             scale: Some(7),
             precision: None,
@@ -697,7 +697,7 @@ pub fn runtime_type_to_tds(ty: &iridium_core::types::DataType) -> TypeInfo {
         }
         iridium_core::types::DataType::DateTime2 => TypeInfo {
             tds_type: DATETIME2NTYPE,
-            length_prefix: vec![0x08],
+            length_prefix: vec![],
             collation: None,
             scale: Some(7),
             precision: None,
@@ -776,12 +776,12 @@ pub fn read_type_info(reader: &mut PacketReader) -> io::Result<TypeInfo> {
     let mut collation = None;
 
     match tds_type {
-        0x26 | 0x68 | 0x6D | 0x6E | 0x6F | 0x24 | 0x28 => {
+        0x26 | 0x68 | 0x6D | 0x6E | 0x6F | 0x24 => {
             length_prefix.push(reader.read_u8()?);
         }
+        0x28 => {} // DATENTYPE has no extra TYPE_INFO bytes
         0x29..=0x2B => {
             let s = reader.read_u8()?;
-            length_prefix.push(s);
             scale = Some(s);
         }
         0x6A | 0x6C => {
@@ -800,7 +800,7 @@ pub fn read_type_info(reader: &mut PacketReader) -> io::Result<TypeInfo> {
         _ => {
             // Fix-length types
             match tds_type {
-                0x30 | 0x32 | 0x34 | 0x38 | 0x3B | 0x3C | 0x3D | 0x7A | 0x7E => {}
+                0x30 | 0x32 | 0x34 | 0x38 | 0x3B | 0x3C | 0x3D | 0x3E | 0x7A | 0x7F => {}
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -849,6 +849,18 @@ pub fn read_value(reader: &mut PacketReader, ti: &TypeInfo) -> io::Result<Value>
             }
         }
         NVARCHARTYPE | NCHARTYPE => {
+            if ti.is_plp() {
+                return match read_bulk_plp(reader)? {
+                    Some(bytes) => {
+                        let u16s: Vec<u16> = bytes
+                            .chunks_exact(2)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect();
+                        Ok(Value::NVarChar(String::from_utf16_lossy(&u16s)))
+                    }
+                    None => Ok(Value::Null),
+                };
+            }
             let len = reader.read_u16_le()?;
             if len == 0xFFFF {
                 Ok(Value::Null)
@@ -857,6 +869,12 @@ pub fn read_value(reader: &mut PacketReader, ti: &TypeInfo) -> io::Result<Value>
             }
         }
         BIGVARCHARTYPE | BIGCHARTYPE => {
+            if ti.is_plp() {
+                return match read_bulk_plp(reader)? {
+                    Some(bytes) => Ok(Value::VarChar(String::from_utf8_lossy(&bytes).into_owned())),
+                    None => Ok(Value::Null),
+                };
+            }
             let len = reader.read_u16_le()?;
             if len == 0xFFFF {
                 Ok(Value::Null)
@@ -865,14 +883,173 @@ pub fn read_value(reader: &mut PacketReader, ti: &TypeInfo) -> io::Result<Value>
                 Ok(Value::VarChar(String::from_utf8_lossy(bytes).into_owned()))
             }
         }
+        BIGVARBINARYTYPE | BIGBINARYTYPE => {
+            if ti.is_plp() {
+                return match read_bulk_plp(reader)? {
+                    Some(bytes) => Ok(Value::VarBinary(bytes)),
+                    None => Ok(Value::Null),
+                };
+            }
+            let len = reader.read_u16_le()?;
+            if len == 0xFFFF {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::VarBinary(reader.read_bytes(len as usize)?.to_vec()))
+            }
+        }
+        DECIMALNTYPE | NUMERICNTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            // In BULK_LOAD (0x07), SqlClient writes `col.length` (e.g. 5/9/13/17) as the
+            // length prefix byte followed by the full 17-byte SqlDecimal payload (1 sign + 4*u32).
+            let wire_len = if reader.remaining() >= 17 && len < 17 {
+                17
+            } else {
+                len
+            };
+            let bytes = reader.read_bytes(wire_len)?;
+            let sign = bytes[0];
+            let mut val: i128 = 0;
+            for i in (1..bytes.len()).rev() {
+                val = (val << 8) | bytes[i] as i128;
+            }
+            if sign == 0 {
+                val = -val;
+            }
+            Ok(Value::Decimal(val, ti.scale.unwrap_or(0)))
+        }
+        FLTNTYPE => {
+            let len = reader.read_u8()? as usize;
+            match len {
+                0 => Ok(Value::Null),
+                4 => {
+                    let b = reader.read_bytes(4)?;
+                    let f = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
+                    Ok(Value::Float(f.to_bits()))
+                }
+                8 => {
+                    let b = reader.read_bytes(8)?;
+                    let f = f64::from_le_bytes(b.try_into().unwrap_or([0u8; 8]));
+                    Ok(Value::Float(f.to_bits()))
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+        MONEYNTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            match super::rpc::temporal::decode_money_bytes(b) {
+                Some(v) => Ok(Value::Money(v)),
+                None => Ok(Value::Null),
+            }
+        }
+        DATENTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            Ok(super::rpc::temporal::decode_date_bytes(b)
+                .map(Value::VarChar)
+                .unwrap_or(Value::Null))
+        }
+        TIMENTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            Ok(
+                super::rpc::temporal::decode_time_bytes(b, ti.scale.unwrap_or(7))
+                    .map(Value::VarChar)
+                    .unwrap_or(Value::Null),
+            )
+        }
+        DATETIME2NTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            Ok(
+                super::rpc::temporal::decode_datetime2_bytes(b, ti.scale.unwrap_or(7))
+                    .map(Value::VarChar)
+                    .unwrap_or(Value::Null),
+            )
+        }
+        0x2B => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            Ok(
+                super::rpc::temporal::decode_datetimeoffset_bytes(b, ti.scale.unwrap_or(7))
+                    .map(Value::DateTimeOffset)
+                    .unwrap_or(Value::Null),
+            )
+        }
+        DATETIMNTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len == 0 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            Ok(super::rpc::temporal::decode_datetime_bytes(b)
+                .map(Value::VarChar)
+                .unwrap_or(Value::Null))
+        }
+        GUIDTYPE => {
+            let len = reader.read_u8()? as usize;
+            if len < 16 {
+                return Ok(Value::Null);
+            }
+            let b = reader.read_bytes(len)?;
+            let s = format!(
+                "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            );
+            Ok(Value::VarChar(s))
+        }
         0x30 => Ok(Value::TinyInt(reader.read_u8()?)),
         0x32 => Ok(Value::Bit(reader.read_u8()? != 0)),
         0x34 => Ok(Value::SmallInt(reader.read_u16_le()? as i16)),
         0x38 => Ok(Value::Int(reader.read_u32_le()? as i32)),
-        0x7E => Ok(Value::BigInt(reader.read_u64_le()? as i64)),
+        0x3B => {
+            let b = reader.read_bytes(4)?;
+            let f = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
+            Ok(Value::Float(f.to_bits()))
+        }
+        0x3E => {
+            let b = reader.read_bytes(8)?;
+            let f = f64::from_le_bytes(b.try_into().unwrap_or([0u8; 8]));
+            Ok(Value::Float(f.to_bits()))
+        }
+        0x7F => Ok(Value::BigInt(reader.read_u64_le()? as i64)),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Unsupported TDS type for bulk read: 0x{:02X}", ti.tds_type),
         )),
     }
+}
+
+fn read_bulk_plp(reader: &mut PacketReader) -> io::Result<Option<Vec<u8>>> {
+    let total = reader.read_u64_le()?;
+    if total == u64::MAX {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    loop {
+        let chunk_len = reader.read_u32_le()? as usize;
+        if chunk_len == 0 {
+            break;
+        }
+        out.extend_from_slice(reader.read_bytes(chunk_len)?);
+    }
+    Ok(Some(out))
 }

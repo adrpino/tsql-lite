@@ -24,7 +24,7 @@ internal static class Scenarios
 
     public static List<(string Name, Func<string, string> Run)> All()
     {
-        return new List<(string Name, Func<string, string> Run)>
+        List<(string Name, Func<string, string> Run)> list = new List<(string Name, Func<string, string> Run)>
         {
             ("01_tx_begin_commit_rollback_save", RunTransactionManager),
             ("02_rpc_output_inout_return_sqlclient", RunRpcOutputSqlClient),
@@ -37,6 +37,8 @@ internal static class Scenarios
             ("09_command_cancel_attention", RunCommandCancelAttention),
             ("10_multidb_use_and_three_part_query", RunMultiDbThreePartQuery),
         };
+        list.AddRange(Tier1Scenarios.All());
+        return list;
     }
 
     private static SqlConnection OpenConnection(string connectionString, bool enableMars = false)

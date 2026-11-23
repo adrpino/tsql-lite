@@ -20,7 +20,7 @@ pub(super) fn days_since_0001_to_ymd(days_0001: i64) -> (i32, u32, u32) {
 /// Days between `0001-01-01` and `1900-01-01`.
 const DAYS_0001_TO_1900: i64 = 693_595;
 
-pub(super) fn decode_date_bytes(bytes: &[u8]) -> Option<String> {
+pub(crate) fn decode_date_bytes(bytes: &[u8]) -> Option<String> {
     if bytes.len() < 3 {
         return None;
     }
@@ -59,7 +59,7 @@ pub(super) fn format_time_ticks(ticks: u64, scale: u8) -> String {
     }
 }
 
-pub(super) fn decode_time_bytes(bytes: &[u8], scale: u8) -> Option<String> {
+pub(crate) fn decode_time_bytes(bytes: &[u8], scale: u8) -> Option<String> {
     if bytes.is_empty() {
         return None;
     }
@@ -67,7 +67,7 @@ pub(super) fn decode_time_bytes(bytes: &[u8], scale: u8) -> Option<String> {
     Some(format_time_ticks(ticks, scale))
 }
 
-pub(super) fn decode_datetime2_bytes(bytes: &[u8], scale: u8) -> Option<String> {
+pub(crate) fn decode_datetime2_bytes(bytes: &[u8], scale: u8) -> Option<String> {
     if bytes.len() < 4 {
         return None;
     }
@@ -77,7 +77,7 @@ pub(super) fn decode_datetime2_bytes(bytes: &[u8], scale: u8) -> Option<String> 
     Some(format!("{} {}", date_str, time_str))
 }
 
-pub(super) fn decode_datetimeoffset_bytes(bytes: &[u8], scale: u8) -> Option<String> {
+pub(crate) fn decode_datetimeoffset_bytes(bytes: &[u8], scale: u8) -> Option<String> {
     if bytes.len() < 6 {
         return None;
     }
@@ -110,7 +110,7 @@ pub(super) fn decode_datetimeoffset_bytes(bytes: &[u8], scale: u8) -> Option<Str
     ))
 }
 
-pub(super) fn decode_datetime_bytes(bytes: &[u8]) -> Option<String> {
+pub(crate) fn decode_datetime_bytes(bytes: &[u8]) -> Option<String> {
     match bytes.len() {
         4 => {
             // SMALLDATETIME: u16 days since 1900-01-01, u16 minutes since midnight
@@ -146,7 +146,7 @@ pub(super) fn decode_datetime_bytes(bytes: &[u8]) -> Option<String> {
     }
 }
 
-pub(super) fn decode_money_bytes(bytes: &[u8]) -> Option<i128> {
+pub(crate) fn decode_money_bytes(bytes: &[u8]) -> Option<i128> {
     match bytes.len() {
         4 => Some(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i128),
         8 => {

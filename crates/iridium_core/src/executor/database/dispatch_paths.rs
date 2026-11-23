@@ -461,16 +461,38 @@ where
     if !catalog.get_user_databases().is_empty() {
         super::super::script::db_scope::qualify_select_in_ctx(&mut select_owned, ctx, catalog);
     }
-    let query_plan = super::super::query::plan::RelationalQuery::from(select_owned);
-    let fake_rows = vec![];
 
-    let result = match super::super::query::pipeline::execute_rows_to_result(
-        &qe,
-        &query_plan,
-        fake_rows,
-        None,
-        ctx,
-    ) {
+    // Fast path for `SET FMTONLY ON; SELECT * FROM [schema].[table]` (used by SqlBulkCopy
+    // and ODBC metadata discovery): return exact catalog column names, types, and nullabilities
+    // with 0 rows without scanning table data.
+    if select_owned.projection.len() == 1
+        && matches!(select_owned.projection[0].expr, crate::ast::Expr::Wildcard)
+    {
+        if let Some(crate::ast::FromNode::Table(tref)) = &select_owned.from_clause {
+            if let Some(obj) = tref.name_as_object() {
+                let schema = obj.schema_or_dbo();
+                let resolved = ctx
+                    .resolve_table_name(obj.name.as_str())
+                    .unwrap_or_else(|| obj.name.clone());
+                if let Some(table) = catalog.find_table(schema, &resolved) {
+                    let columns = table.columns.iter().map(|c| c.name.clone()).collect();
+                    let column_types = table.columns.iter().map(|c| c.data_type.clone()).collect();
+                    let column_nullabilities = table.columns.iter().map(|c| c.nullable).collect();
+                    return Ok(StmtOutcome::Ok(Some(QueryResult {
+                        columns,
+                        column_types,
+                        column_nullabilities,
+                        rows: vec![],
+                        return_status: None,
+                        is_procedure: false,
+                    })));
+                }
+            }
+        }
+    }
+
+    let query_plan = super::super::query::plan::RelationalQuery::from(select_owned);
+    let result = match qe.execute_select(query_plan, ctx) {
         Ok(mut r) => {
             r.rows = vec![];
             r

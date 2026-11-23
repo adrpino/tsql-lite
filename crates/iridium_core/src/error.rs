@@ -218,6 +218,7 @@ impl DbError {
                     8672
                 } else if lower.contains("cannot insert the value null")
                     || lower.contains("cannot be null")
+                    || lower.contains("does not allow null")
                 {
                     515
                 } else if lower.contains("arithmetic overflow") {

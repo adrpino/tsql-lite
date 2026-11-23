@@ -122,6 +122,12 @@ internal static class Program
         {
             sw.Stop();
             string message = ex.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (ex.InnerException != null)
+            {
+                string inner = ex.InnerException.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                message = string.Format(CultureInfo.InvariantCulture, "{0} | Inner({1}): {2}", message, ex.InnerException.GetType().Name, inner);
+            }
+
             return new ScenarioOutcome
             {
                 Name = name,

@@ -53,19 +53,33 @@ pub fn parse_bulk_load_data(
         if token == crate::tds::tokens::DONE_TOKEN {
             break;
         }
-        if token != crate::tds::tokens::ROW_TOKEN {
+        if token == crate::tds::tokens::ROW_TOKEN {
+            let mut row = Vec::with_capacity(count);
+            for ti in &column_types {
+                let val = type_mapping::read_value(&mut reader, ti)?;
+                row.push(val);
+            }
+            rows.push(row);
+        } else if token == 0xD2 {
+            // NBCROW: null-bitmap compressed row
+            let bitmap_len = count.div_ceil(8);
+            let bitmap = reader.read_bytes(bitmap_len)?.to_vec();
+            let mut row = Vec::with_capacity(count);
+            for (idx, ti) in column_types.iter().enumerate() {
+                let is_null = (bitmap[idx / 8] & (1u8 << (idx % 8))) != 0;
+                if is_null {
+                    row.push(Value::Null);
+                } else {
+                    row.push(type_mapping::read_value(&mut reader, ti)?);
+                }
+            }
+            rows.push(row);
+        } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Expected ROW (0xD1), got 0x{:02X}", token),
+                format!("Expected ROW (0xD1) or NBCROW (0xD2), got 0x{:02X}", token),
             ));
         }
-
-        let mut row = Vec::with_capacity(count);
-        for ti in &column_types {
-            let val = type_mapping::read_value(&mut reader, ti)?;
-            row.push(val);
-        }
-        rows.push(row);
     }
 
     Ok(BulkLoadData {

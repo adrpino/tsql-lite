@@ -335,6 +335,10 @@ where
     ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         self.session_manager().session_cancel_flag(session_id)
     }
+
+    fn take_print_output(&self, session_id: SessionId) -> Vec<String> {
+        self.session_manager().take_print_output(session_id)
+    }
 }
 
 impl<C, S> StatementExecutorTrait for DatabaseInner<C, S>

@@ -309,6 +309,9 @@ macro_rules! delegate_db_traits {
             ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
                 self.0.session_cancel_flag(sid)
             }
+            fn take_print_output(&self, sid: SessionId) -> Vec<String> {
+                self.0.take_print_output(sid)
+            }
         }
         impl StatementExecutor for $wrapper {
             fn execute_session(

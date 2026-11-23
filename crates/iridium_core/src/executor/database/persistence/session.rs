@@ -118,4 +118,12 @@ where
         let session = session_mutex.lock();
         Some(session.extras.cancel_flag.clone())
     }
+
+    fn take_print_output(&self, session_id: SessionId) -> Vec<String> {
+        self.state
+            .sessions
+            .get(&session_id)
+            .map(|s| std::mem::take(&mut s.lock().diagnostics.print_output))
+            .unwrap_or_default()
+    }
 }

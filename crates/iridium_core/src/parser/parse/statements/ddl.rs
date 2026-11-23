@@ -95,6 +95,8 @@ pub fn parse_column_def(parser: &mut Parser) -> ParseResult<ColumnDef> {
                     let inc = parse_signed_int(parser).unwrap_or(1);
                     parser.expect_rparen()?;
                     identity_spec = Some((seed, inc));
+                } else {
+                    identity_spec = Some((1, 1));
                 }
                 is_identity = true;
             }

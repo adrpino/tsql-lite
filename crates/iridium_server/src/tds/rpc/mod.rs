@@ -1,7 +1,7 @@
 mod decode;
 mod parser;
 mod render;
-mod temporal;
+pub(crate) mod temporal;
 mod types;
 
 pub use parser::{

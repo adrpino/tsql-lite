@@ -57,7 +57,14 @@ pub fn build_param_preamble_with_decls(
 ) -> String {
     let mut out = String::new();
     for (i, p) in params.iter().enumerate() {
-        if p.name.is_empty() {
+        let name = if !p.name.is_empty() {
+            p.name.as_str()
+        } else if let Some((decl_name, _)) = decls.get(i) {
+            decl_name.as_str()
+        } else {
+            continue;
+        };
+        if name.is_empty() {
             continue;
         }
         let type_name = if i < decls.len() {
@@ -66,18 +73,18 @@ pub fn build_param_preamble_with_decls(
             normalize_decl_type(&p.type_name)
         };
         if let Some(rows) = &p.tvp_rows {
-            out.push_str(&format!("DECLARE {} {};\n", p.name, type_name));
+            out.push_str(&format!("DECLARE {} {};\n", name, type_name));
             for row in rows {
                 out.push_str(&format!(
                     "INSERT INTO {} VALUES ({});\n",
-                    p.name,
+                    name,
                     row.join(", ")
                 ));
             }
         } else {
             out.push_str(&format!(
                 "DECLARE {} {} = {};\n",
-                p.name, type_name, p.value_sql
+                name, type_name, p.value_sql
             ));
         }
     }

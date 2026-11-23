@@ -440,6 +440,89 @@ pub(crate) fn execute_sp_tables(exec: &mut ScriptExecutor<'_>) -> Result<QueryRe
     })
 }
 
+pub(crate) fn execute_sp_tablecollations_100(
+    exec: &mut ScriptExecutor<'_>,
+    args: &[String],
+    ctx: &ExecutionContext<'_>,
+) -> Result<QueryResult, DbError> {
+    let raw = args.first().map(|s| s.as_str()).unwrap_or_default();
+    let parts: Vec<String> = raw
+        .split('.')
+        .map(|p| {
+            p.trim()
+                .trim_matches(|c| c == '[' || c == ']' || c == '"')
+                .to_string()
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+    let (schema, table_name) = match parts.len() {
+        0 => ("dbo".to_string(), String::new()),
+        1 => ("dbo".to_string(), parts[0].clone()),
+        _ => (
+            parts[parts.len() - 2].clone(),
+            parts[parts.len() - 1].clone(),
+        ),
+    };
+
+    let active_db = ctx.metadata.database.as_deref().unwrap_or("master");
+    let scoped_schema = crate::executor::database_catalog::resolve_effective_schema(
+        None,
+        &schema,
+        active_db,
+        exec.catalog,
+    );
+    let table_opt = exec
+        .catalog
+        .find_table(&scoped_schema, &table_name)
+        .or_else(|| exec.catalog.find_table(&schema, &table_name));
+
+    let default_collation = vec![0x09u8, 0x04, 0x00, 0x00, 0x00];
+    let mut rows = Vec::new();
+    if let Some(table) = table_opt {
+        for (idx, col) in table.columns.iter().enumerate() {
+            let is_char = matches!(
+                col.data_type,
+                DataType::Char { .. }
+                    | DataType::VarChar { .. }
+                    | DataType::NChar { .. }
+                    | DataType::NVarChar { .. }
+            );
+            let (coll_val, coll_name) = if is_char {
+                (
+                    Value::VarBinary(default_collation.clone()),
+                    Value::NVarChar("SQL_Latin1_General_CP1_CI_AS".into()),
+                )
+            } else {
+                (Value::Null, Value::Null)
+            };
+            rows.push(vec![
+                Value::Int((idx + 1) as i32),
+                Value::NVarChar(col.name.clone()),
+                coll_val,
+                coll_name,
+            ]);
+        }
+    }
+
+    Ok(QueryResult {
+        columns: vec![
+            "colid".into(),
+            "name".into(),
+            "tds_collation".into(),
+            "collation_name".into(),
+        ],
+        column_types: vec![
+            DataType::Int,
+            DataType::NVarChar { max_len: 128 },
+            DataType::VarBinary { max_len: 5 },
+            DataType::NVarChar { max_len: 128 },
+        ],
+        column_nullabilities: vec![false, false, true, true],
+        rows,
+        ..Default::default()
+    })
+}
+
 pub(crate) fn execute_sp_helpfile(
     exec: &mut ScriptExecutor<'_>,
     ctx: &mut ExecutionContext<'_>,

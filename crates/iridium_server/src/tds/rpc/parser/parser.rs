@@ -126,9 +126,10 @@ impl<'a> RpcFrameParser<'a> {
         let mut stmt_handle: Option<i32> = None;
         let mut sql: Option<String> = None;
         let mut param_decl: Option<String> = None;
-        let mut params: Vec<RpcParam> = vec![];
+        let params: Vec<RpcParam> = vec![];
         let mut param_idx: usize = 0;
 
+        // sp_prepare(@handle INT OUT, @params NVARCHAR(MAX), @stmt NVARCHAR(MAX), [@options INT])
         while self.reader.remaining() > 0 {
             let name_len = match self.reader.read_u8() {
                 Ok(n) => n as usize,
@@ -145,15 +146,10 @@ impl<'a> RpcFrameParser<'a> {
 
             match param_idx {
                 0 => stmt_handle = self.read_int_param(type_id)?,
-                1 => sql = self.read_rpc_nvarchar_param()?,
-                2 => param_decl = self.read_rpc_nvarchar_param()?,
+                1 => param_decl = self.read_nvarchar_value_by_type(type_id)?,
+                2 => sql = self.read_nvarchar_value_by_type(type_id)?,
                 _ => {
-                    if sql.is_some() && param_decl.is_some() {
-                        let decl_parts = parse_param_decl(param_decl.as_ref().unwrap());
-                        params = self.read_rpc_params(&decl_parts)?;
-                    } else {
-                        self.skip_typed_value(type_id)?;
-                    }
+                    let _ = decode::read_typed_value(&mut self.reader, type_id)?;
                 }
             }
             param_idx += 1;
@@ -177,9 +173,12 @@ impl<'a> RpcFrameParser<'a> {
                 Ok(n) => n as usize,
                 Err(_) => break,
             };
-            if name_len > 0 && self.reader.remaining() >= name_len * 2 {
-                let _ = self.reader.read_bytes(name_len * 2)?;
-            }
+            let param_name = if name_len > 0 && self.reader.remaining() >= name_len * 2 {
+                let bytes = self.reader.read_bytes(name_len * 2)?;
+                decode::decode_utf16le(bytes)
+            } else {
+                String::new()
+            };
             if self.reader.remaining() < 2 {
                 break;
             }
@@ -192,7 +191,7 @@ impl<'a> RpcFrameParser<'a> {
                     // Collect parameters if any
                     let decoded = decode::read_typed_value(&mut self.reader, type_id)?;
                     params.push(RpcParam {
-                        name: String::new(),
+                        name: param_name,
                         type_name: decoded.type_name,
                         value_sql: decoded.value_sql,
                         tvp_rows: decoded.tvp_rows,
@@ -247,31 +246,37 @@ impl<'a> RpcFrameParser<'a> {
         let mut params: Vec<RpcParam> = vec![];
         let mut param_idx: usize = 0;
 
+        // sp_prepexec(@handle INT OUT, @params NVARCHAR(MAX), @stmt NVARCHAR(MAX), @p1, @p2, ...)
         while self.reader.remaining() > 0 {
             let name_len = match self.reader.read_u8() {
                 Ok(n) => n as usize,
                 Err(_) => break,
             };
-            if name_len > 0 && self.reader.remaining() >= name_len * 2 {
-                let _ = self.reader.read_bytes(name_len * 2)?;
-            }
+            let param_name = if name_len > 0 && self.reader.remaining() >= name_len * 2 {
+                let bytes = self.reader.read_bytes(name_len * 2)?;
+                decode::decode_utf16le(bytes)
+            } else {
+                String::new()
+            };
             if self.reader.remaining() < 2 {
                 break;
             }
-            let _status = self.reader.read_u8()?;
+            let status = self.reader.read_u8()?;
             let type_id = self.reader.read_u8()?;
 
             match param_idx {
                 0 => stmt_handle = self.read_int_param(type_id)?,
-                1 => sql = self.read_rpc_nvarchar_param()?,
-                2 => param_decl = self.read_rpc_nvarchar_param()?,
+                1 => param_decl = self.read_nvarchar_value_by_type(type_id)?,
+                2 => sql = self.read_nvarchar_value_by_type(type_id)?,
                 _ => {
-                    if sql.is_some() && param_decl.is_some() {
-                        let decl_parts = parse_param_decl(param_decl.as_ref().unwrap());
-                        params = self.read_rpc_params(&decl_parts)?;
-                    } else {
-                        self.skip_typed_value(type_id)?;
-                    }
+                    let decoded = decode::read_typed_value(&mut self.reader, type_id)?;
+                    params.push(RpcParam {
+                        name: param_name,
+                        type_name: decoded.type_name,
+                        value_sql: decoded.value_sql,
+                        tvp_rows: decoded.tvp_rows,
+                        is_output: (status & 0x01) != 0,
+                    });
                 }
             }
             param_idx += 1;
@@ -437,31 +442,8 @@ impl<'a> RpcFrameParser<'a> {
     }
 
     fn read_int_param(&mut self, type_id: u8) -> io::Result<Option<i32>> {
-        match type_id {
-            0x26 => {
-                if self.reader.remaining() < 4 {
-                    return Ok(None);
-                }
-                let val = self.reader.read_u32_le()?;
-                let len = self.reader.read_u8()?;
-                if len == 0 {
-                    Ok(None)
-                } else {
-                    Ok(Some(val as i32))
-                }
-            }
-            0x38 => {
-                if self.reader.remaining() < 8 {
-                    return Ok(None);
-                }
-                let val = self.reader.read_u64_le()?;
-                Ok(Some(val as i32))
-            }
-            _ => {
-                self.skip_typed_value(type_id)?;
-                Ok(None)
-            }
-        }
+        let decoded = decode::read_typed_value(&mut self.reader, type_id)?;
+        Ok(decoded.value_sql.trim().parse::<i32>().ok())
     }
 
     fn skip_typed_value(&mut self, type_id: u8) -> io::Result<()> {
@@ -615,7 +597,10 @@ impl<'a> RpcFrameParser<'a> {
         }
         let _status = self.reader.read_u8()?;
         let type_id = self.reader.read_u8()?;
+        self.read_nvarchar_value_by_type(type_id)
+    }
 
+    fn read_nvarchar_value_by_type(&mut self, type_id: u8) -> io::Result<Option<String>> {
         match type_id {
             0xE7 | 0xA7 => {
                 if self.reader.remaining() < 7 {

@@ -21,6 +21,8 @@ const SYSTEM_PROCEDURES: &[&str] = &[
     "sp_helptext",
     "sp_columns",
     "sp_tables",
+    "sp_tablecollations_100",
+    "sp_tablecollations",
     "sp_helpindex",
     "sp_helpconstraint",
     "sp_set_session_context",
@@ -77,6 +79,10 @@ pub(crate) fn execute_system_procedure(
         execute_sp_columns(exec, &args)?
     } else if name.eq_ignore_ascii_case("sp_tables") {
         execute_sp_tables(exec)?
+    } else if name.eq_ignore_ascii_case("sp_tablecollations_100")
+        || name.eq_ignore_ascii_case("sp_tablecollations")
+    {
+        execute_sp_tablecollations_100(exec, &args, ctx)?
     } else if name.eq_ignore_ascii_case("sp_helpindex") {
         execute_sp_helpindex(exec, &args)?
     } else if name.eq_ignore_ascii_case("sp_helpconstraint") {

@@ -32,6 +32,9 @@ pub trait SessionManager {
     ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         None
     }
+    fn take_print_output(&self, _session_id: SessionId) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone)]

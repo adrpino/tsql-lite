@@ -420,7 +420,10 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                 result_sets,
             }))
         }
-        Some(Token::Identifier(_)) | Some(Token::Keyword(_)) | Some(Token::Variable(_)) => {
+        Some(Token::Identifier(_))
+        | Some(Token::Keyword(_))
+        | Some(Token::Variable(_))
+        | Some(Token::Dot) => {
             let mut return_variable = None;
             if let Some(Token::Variable(v)) = parser.peek() {
                 if matches!(parser.peek_at(1), Some(Token::Operator(op)) if *op == "=") {
@@ -428,6 +431,11 @@ pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     let _ = parser.next();
                 }
+            }
+
+            // Tolerate leading dots such as `EXEC ..sp_tablecollations_100`
+            while matches!(parser.peek(), Some(Token::Dot)) {
+                let _ = parser.next();
             }
 
             let name = super::parse_multipart_name(parser)?;

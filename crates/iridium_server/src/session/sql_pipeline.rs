@@ -101,6 +101,8 @@ pub(crate) async fn execute_sql_with_outputs<W: AsyncWriteExt + Unpin>(
         return Ok(true);
     }
 
+    let print_messages = session.db.take_print_output(session_id);
+
     match exec_result {
         Ok(mut results) => {
             let mut extracted_outputs: Vec<(u16, String, Value, DataType)> = Vec::new();
@@ -137,6 +139,9 @@ pub(crate) async fn execute_sql_with_outputs<W: AsyncWriteExt + Unpin>(
 
             let count = results.len();
             let mut b = PacketBuilder::with_capacity(4096);
+            for msg in &print_messages {
+                tokens::write_info(&mut b, 0, 1, 0, msg, "iridium_server", "", 1);
+            }
             let textsize = session
                 .db
                 .session_options(session_id)

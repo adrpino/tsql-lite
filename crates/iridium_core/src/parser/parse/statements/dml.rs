@@ -808,15 +808,25 @@ pub fn parse_insert_bulk(parser: &mut Parser) -> ParseResult<InsertBulkStmt> {
             return p.backtrack(Expected::Description("column name"));
         };
         let data_type = crate::parser::parse::expressions::parse_data_type(p)?;
-        // Handle optional NULL/NOT NULL
+        // Handle optional COLLATE <name> and NULL/NOT NULL in any order
         let mut is_nullable = None;
-        if matches!(p.peek(), Some(Token::Keyword(Keyword::Null))) {
-            let _ = p.next();
-            is_nullable = Some(true);
-        } else if matches!(p.peek(), Some(Token::Keyword(Keyword::Not))) {
-            let _ = p.next();
-            p.expect_keyword(Keyword::Null)?;
-            is_nullable = Some(false);
+        let mut collation = None;
+        loop {
+            if matches!(p.peek(), Some(Token::Keyword(Keyword::Collate))) {
+                let _ = p.next();
+                if let Some(Token::Identifier(c)) = p.next() {
+                    collation = Some(c.clone());
+                }
+            } else if matches!(p.peek(), Some(Token::Keyword(Keyword::Null))) {
+                let _ = p.next();
+                is_nullable = Some(true);
+            } else if matches!(p.peek(), Some(Token::Keyword(Keyword::Not))) {
+                let _ = p.next();
+                p.expect_keyword(Keyword::Null)?;
+                is_nullable = Some(false);
+            } else {
+                break;
+            }
         }
 
         Ok(ColumnDef {
@@ -833,13 +843,28 @@ pub fn parse_insert_bulk(parser: &mut Parser) -> ParseResult<InsertBulkStmt> {
             check_constraint_name: None,
             computed_expr: None,
             foreign_key: None,
-            collation: None,
+            collation,
             is_clustered: false,
             with_values: false,
             masking_function: None,
         })
     })?;
     parser.expect_rparen()?;
+    // Optional `WITH (CHECK_CONSTRAINTS, FIRE_TRIGGERS, ...)` bulk options
+    if matches!(parser.peek(), Some(Token::Keyword(Keyword::With))) {
+        let _ = parser.next();
+        if matches!(parser.peek(), Some(Token::LParen)) {
+            let _ = parser.next();
+            let mut depth = 1usize;
+            while !parser.is_empty() && depth > 0 {
+                match parser.next() {
+                    Some(Token::LParen) => depth += 1,
+                    Some(Token::RParen) => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+    }
 
     Ok(InsertBulkStmt { table, columns })
 }

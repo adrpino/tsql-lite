@@ -14,9 +14,8 @@ use super::query_source::{
 use super::output::build_output_result;
 use super::shared::{rowcount_limit, visit_target_rows};
 use super::validation::{
-    apply_assignments, enforce_checks_on_row, enforce_foreign_keys_on_delete,
-    enforce_foreign_keys_on_insert, enforce_foreign_keys_on_update, enforce_unique_on_update,
-    validate_row_against_table,
+    apply_assignments, enforce_checks_on_row, enforce_foreign_keys_on_insert,
+    enforce_foreign_keys_on_update, enforce_unique_on_update, validate_row_against_table,
 };
 use super::MutationExecutor;
 
@@ -400,9 +399,6 @@ impl<'a> MutationExecutor<'a> {
             &mut updated_indices,
             |stored_row, idx, joined_row| {
                 let mut new_row = stored_row.clone();
-                if has_incoming_fks {
-                    enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
-                }
                 apply_assignments(
                     &table,
                     &mut new_row,

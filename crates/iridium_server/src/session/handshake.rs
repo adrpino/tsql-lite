@@ -220,6 +220,35 @@ impl TdsSession {
                 return Ok(());
             }
         };
+
+        if !login.database.is_empty() && !login.database.eq_ignore_ascii_case(&self.config.database)
+        {
+            let escaped = login.database.replace('\'', "''");
+            let probe = format!("SELECT DB_ID(N'{}')", escaped);
+            let exists = self
+                .db
+                .execute_session_batch_sql(session_id, &probe)
+                .ok()
+                .flatten()
+                .and_then(|qr| qr.rows.first().and_then(|r| r.first()).cloned())
+                .map(|v| !v.is_null())
+                .unwrap_or(false);
+            if !exists {
+                self.session_pool.checkin(self.db.as_ref(), session_id);
+                let err = DbError::Custom {
+                    class: 11,
+                    number: 4060,
+                    message: format!(
+                        "Cannot open database \"{}\" requested by the login. The login failed.",
+                        login.database
+                    ),
+                };
+                let err_resp = build_error_response(&err);
+                let _ = packet::write_packet(&mut writer, TABULAR_RESULT, &err_resp.data).await;
+                return Ok(());
+            }
+        }
+
         self.session_id = Some(session_id);
         if let Some(flag) = self.db.session_cancel_flag(session_id) {
             self.cancel_flag = flag;
@@ -413,6 +442,12 @@ impl TdsSession {
         if header.status & packet::STATUS_RESET != 0 {
             log::debug!("[conn={}] STATUS_RESET connection", self.connection_id);
             self.prepared_stmts.clear();
+            self.tx_descriptor = 0;
+            self.active_savepoints.clear();
+            if let Some(sid) = self.session_id {
+                let _ = self.db.reset_session(sid);
+                let _ = self.db.set_session_database(sid, self.database.clone());
+            }
         }
 
         match header.packet_type {
@@ -748,16 +783,28 @@ impl TdsSession {
                         }
                     }
                     RpcRequest::Prepare(req) => {
-                        let handle = self.prepared_stmts.len() as u32 + 1;
+                        let handle = self.next_prepared_handle;
+                        self.next_prepared_handle =
+                            self.next_prepared_handle.wrapping_add(1).max(1);
                         let param_decls = parse_param_decl(&req.param_decl);
                         let stmt = PreparedStatement {
                             sql: req.sql.clone(),
-                            param_decls: param_decls.clone(),
+                            param_decls,
                         };
                         self.prepared_stmts.insert(handle, stmt);
                         let mut buf = PacketBuilder::new();
-                        tokens::write_output_int(&mut buf, "@handle", handle as i32);
-                        tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
+                        let int_ti = crate::tds::type_mapping::runtime_type_to_tds(
+                            &iridium_core::types::DataType::Int,
+                        );
+                        tokens::write_returnstatus(&mut buf, 0);
+                        tokens::write_returnvalue(
+                            &mut buf,
+                            0,
+                            "@handle",
+                            &iridium_core::types::Value::Int(handle as i32),
+                            &int_ti,
+                        );
+                        tokens::write_doneproc(&mut buf, tokens::DONE_FINAL, 0, 0);
                         let _ =
                             packet::write_packet(&mut writer, TABULAR_RESULT, buf.as_bytes()).await;
                     }
@@ -800,12 +847,15 @@ impl TdsSession {
                         let handle = req.stmt_handle as u32;
                         self.prepared_stmts.remove(&handle);
                         let mut buf = PacketBuilder::new();
-                        tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
+                        tokens::write_returnstatus(&mut buf, 0);
+                        tokens::write_doneproc(&mut buf, tokens::DONE_FINAL, 0, 0);
                         let _ =
                             packet::write_packet(&mut writer, TABULAR_RESULT, buf.as_bytes()).await;
                     }
                     RpcRequest::PrepExec(req) => {
-                        let handle = self.prepared_stmts.len() as u32 + 1;
+                        let handle = self.next_prepared_handle;
+                        self.next_prepared_handle =
+                            self.next_prepared_handle.wrapping_add(1).max(1);
                         let param_decls = parse_param_decl(&req.param_decl);
                         let stmt = PreparedStatement {
                             sql: req.sql.clone(),
@@ -813,12 +863,20 @@ impl TdsSession {
                         };
                         self.prepared_stmts.insert(handle, stmt);
                         let preamble = build_param_preamble_with_decls(&req.params, &param_decls);
-                        let full_sql = if preamble.is_empty() {
-                            req.sql.clone()
-                        } else {
-                            format!("{}{}", preamble, req.sql)
-                        };
-                        match self.execute_sql(full_sql.trim(), &mut writer).await {
+                        let base_sql = format!(
+                            "DECLARE @__rpc_prep_handle INT = {};\n{}{}",
+                            handle, preamble, req.sql
+                        );
+                        let outputs = vec![crate::tds::rpc::OutputParamBinding {
+                            ordinal: 0,
+                            param_name: "@handle".to_string(),
+                            var_name: "@__rpc_prep_handle".to_string(),
+                        }];
+                        let full_sql = append_output_sentinel(&base_sql, &outputs);
+                        match self
+                            .execute_sql_with_outputs(full_sql.trim(), &outputs, &mut writer)
+                            .await
+                        {
                             Ok(_) => {}
                             Err(e) => {
                                 log::error!("sp_prepexec error: {}", e);
@@ -834,6 +892,12 @@ impl TdsSession {
                     }
                     RpcRequest::ResetConnection => {
                         self.prepared_stmts.clear();
+                        self.tx_descriptor = 0;
+                        self.active_savepoints.clear();
+                        if let Some(sid) = self.session_id {
+                            let _ = self.db.reset_session(sid);
+                            let _ = self.db.set_session_database(sid, self.database.clone());
+                        }
                         let mut buf = PacketBuilder::new();
                         tokens::write_done(&mut buf, tokens::DONE_FINAL, 0, 0);
                         let _ =

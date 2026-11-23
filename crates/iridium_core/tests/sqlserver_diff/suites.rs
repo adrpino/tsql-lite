@@ -1245,6 +1245,69 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                       SELECT @init_null AS N'InitNull', @after_set AS N'AfterSet', @after_clear AS N'AfterClear';",
                 ordered: true,
             },
+            DiffStep::Query {
+                label: "multi_table_join_where_pushdown_correlated_exists_and_outer_apply",
+                sql: "CREATE TABLE #JM (Id INT, Tag VARCHAR(20), Weight INT);
+                      INSERT INTO #JM VALUES (1, 'r1_ok', 10), (2, 'r2_low', 20), (3, 'none', 30);
+                      SELECT l.Id, r.Name, m.Weight, ap.TopName
+                      FROM #JL l
+                      LEFT JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1
+                      INNER JOIN #JM m ON m.Id = l.Id
+                      OUTER APPLY (
+                          SELECT TOP 1 r2.Name AS TopName
+                          FROM #JR r2
+                          WHERE r2.Id = l.Id
+                          ORDER BY r2.Name
+                      ) ap
+                      WHERE (r.Name = m.Tag OR r.Id IS NULL)
+                        AND EXISTS (SELECT 1 FROM #JM m2 WHERE m2.Id = l.Id AND m2.Weight >= 10)
+                      ORDER BY l.Id;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "catalog_metadata_constraints_permissions_and_config_parity",
+                sql: "CREATE TABLE dbo.DiffMetaParent (Id INT PRIMARY KEY);
+                      CREATE TABLE dbo.DiffMetaChild (
+                          Id INT PRIMARY KEY,
+                          ParentId INT NOT NULL,
+                          Qty INT NOT NULL,
+                          CONSTRAINT CK_DiffMetaChild_Qty CHECK (Qty >= 0),
+                          CONSTRAINT FK_DiffMetaChild_Parent FOREIGN KEY (ParentId) REFERENCES dbo.DiffMetaParent(Id)
+                      );
+                      SELECT
+                          (SELECT COUNT(*) FROM sys.check_constraints ck
+                           LEFT JOIN sys.filetable_system_defined_objects ft
+                             ON ck.parent_object_id = ft.parent_object_id AND ck.object_id = ft.object_id
+                           WHERE ck.parent_object_id = OBJECT_ID('dbo.DiffMetaChild')
+                             AND ck.is_disabled = 0 AND ck.is_not_trusted = 0
+                             AND ck.is_ms_shipped = 0 AND ft.object_id IS NULL) AS CkCnt,
+                          (SELECT COUNT(*) FROM sys.foreign_keys fk
+                           LEFT JOIN sys.filetable_system_defined_objects ft
+                             ON fk.parent_object_id = ft.parent_object_id AND fk.object_id = ft.object_id
+                           WHERE fk.parent_object_id = OBJECT_ID('dbo.DiffMetaChild')
+                             AND fk.is_disabled = 0 AND fk.is_not_trusted = 0
+                             AND fk.is_ms_shipped = 0 AND ft.object_id IS NULL) AS FkCnt,
+                          (SELECT CAST(value AS INT) FROM [master].[dbo].[sysconfigures] WHERE config = 1126) AS FullTextLang,
+                          (SELECT COUNT(*) FROM [master].[dbo].[sysdatabases] WHERE name = N'master') AS MasterDbCnt,
+                          (SELECT COUNT(*) FROM sys.database_scoped_configurations WHERE name = N'MAXDOP') AS MaxDopCfgCnt,
+                          (SELECT COUNT(*) FROM sys.server_permissions WHERE state = N'D') AS DeniedSrvPerms,
+                          (SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM sys.fn_builtin_permissions('')) AS HasBuiltinPerms;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "binary_substring_datalength_and_null_propagation_parity",
+                sql: "DECLARE @bin VARBINARY(8) = 0xCAFEBABE;
+                      SELECT
+                          SUBSTRING(@bin, 1, 2) AS S1,
+                          SUBSTRING(@bin, 0, 2) AS S0,
+                          SUBSTRING(@bin, 3, 10) AS S3,
+                          SUBSTRING(CAST(NULL AS VARBINARY(4)), 1, 2) AS SNull,
+                          DATALENGTH(@bin) AS BinLen,
+                          DATALENGTH(CAST(NULL AS VARBINARY(4))) AS NullLen,
+                          LEFT(CAST(NULL AS VARCHAR(10)), 2) AS LeftNull,
+                          RIGHT(CAST(NULL AS VARCHAR(10)), 2) AS RightNull;",
+                ordered: true,
+            },
         ],
     }
 }

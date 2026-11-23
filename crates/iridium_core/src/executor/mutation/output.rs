@@ -83,7 +83,7 @@ fn build_output_eval_env(
         };
         env.push(ContextTable {
             table: std::sync::Arc::new(action_table),
-            alias: "__output_meta".to_string(),
+            alias: std::sync::Arc::from("__output_meta"),
             row: Some(StoredRow {
                 values: vec![Value::VarChar(act.to_string())],
                 deleted: false,
@@ -95,7 +95,7 @@ fn build_output_eval_env(
     let table_arc = std::sync::Arc::new(table.clone());
     env.push(ContextTable {
         table: std::sync::Arc::clone(&table_arc),
-        alias: "INSERTED".to_string(),
+        alias: std::sync::Arc::from("INSERTED"),
         row: inserted.map(|vals| StoredRow {
             values: vals.to_vec(),
             deleted: false,
@@ -105,7 +105,7 @@ fn build_output_eval_env(
     });
     env.push(ContextTable {
         table: table_arc,
-        alias: "DELETED".to_string(),
+        alias: std::sync::Arc::from("DELETED"),
         row: deleted.map(|vals| StoredRow {
             values: vals.to_vec(),
             deleted: false,

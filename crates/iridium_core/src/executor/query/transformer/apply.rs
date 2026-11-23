@@ -39,7 +39,7 @@ pub(crate) fn execute_apply(
                 combined.push(
                     ContextTable {
                         table: vtable,
-                        alias: apply.alias.clone(),
+                        alias: std::sync::Arc::from(apply.alias.as_str()),
                         row: None,
                         storage_index: None,
                         source_aliases: Vec::new(),
@@ -50,6 +50,7 @@ pub(crate) fn execute_apply(
             }
         } else {
             let apply_table = std::sync::Arc::new(build_virtual_table(&apply.alias, &sub_result));
+            let apply_alias: std::sync::Arc<str> = std::sync::Arc::from(apply.alias.as_str());
             if cached_table.is_none() {
                 cached_table = Some(std::sync::Arc::clone(&apply_table));
             }
@@ -57,7 +58,7 @@ pub(crate) fn execute_apply(
                 let mut combined = left_row.clone();
                 combined.push(ContextTable {
                     table: std::sync::Arc::clone(&apply_table),
-                    alias: apply.alias.clone(),
+                    alias: std::sync::Arc::clone(&apply_alias),
                     row: Some(StoredRow {
                         values: sub_row_values.clone(),
                         deleted: false,

@@ -66,6 +66,7 @@ pub fn resolve_cte_table<'a>(
 
 pub fn cte_to_context_rows(cte: &CteTable, alias: &str) -> Vec<crate::executor::model::JoinedRow> {
     let table_arc = std::sync::Arc::new(cte.table_def.clone());
+    let alias_arc: std::sync::Arc<str> = std::sync::Arc::from(alias);
     cte.rows
         .iter()
         .enumerate()
@@ -73,7 +74,7 @@ pub fn cte_to_context_rows(cte: &CteTable, alias: &str) -> Vec<crate::executor::
         .map(|(i, row)| {
             vec![crate::executor::model::ContextTable {
                 table: std::sync::Arc::clone(&table_arc),
-                alias: alias.to_string(),
+                alias: std::sync::Arc::clone(&alias_arc),
                 row: Some(row.clone()),
                 storage_index: Some(i),
                 source_aliases: Vec::new(),

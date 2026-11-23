@@ -419,6 +419,7 @@ pub(super) fn index_by_id(
         .get_indexes()
         .iter()
         .find(|idx| idx.table_id as i32 == table_id && idx.id as i32 == index_id)
+        .map(|idx| idx.as_ref())
 }
 
 pub(super) fn index_by_name<'a>(
@@ -430,6 +431,7 @@ pub(super) fn index_by_name<'a>(
         .get_indexes()
         .iter()
         .find(|idx| idx.table_id as i32 == table_id && idx.name.eq_ignore_ascii_case(index_name))
+        .map(|idx| idx.as_ref())
 }
 
 pub(super) fn table_column_by_ordinal(

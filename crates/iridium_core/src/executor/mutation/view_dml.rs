@@ -6,7 +6,7 @@ use crate::error::DbError;
 use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
 use crate::executor::evaluator::eval_expr;
-use crate::executor::model::single_row_context;
+use crate::executor::model::single_row_context_arc;
 use crate::storage::{Storage, StoredRow};
 use crate::types::Value;
 
@@ -485,8 +485,14 @@ pub(crate) fn validate_view_check_option(
     if check_predicates.is_empty() {
         return Ok(());
     }
+    let table_arc = std::sync::Arc::new(table.clone());
+    let alias_arc: std::sync::Arc<str> = std::sync::Arc::from(table.name.as_str());
     for row in rows {
-        let row_ctx = single_row_context(table, row.clone());
+        let row_ctx = single_row_context_arc(
+            std::sync::Arc::clone(&table_arc),
+            std::sync::Arc::clone(&alias_arc),
+            row.clone(),
+        );
         for pred in check_predicates {
             let val = eval_expr(pred, &row_ctx, ctx, catalog, storage, clock)?;
             let passes = matches!(val, Value::Bit(true));

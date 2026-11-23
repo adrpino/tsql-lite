@@ -77,11 +77,60 @@ pub(crate) fn get_expr_side(
             let r_side = get_expr_side(right, left_shape, right_shape);
             combine_sides(l_side, r_side)
         }
-        Expr::Unary { expr, .. } => get_expr_side(expr, left_shape, right_shape),
-        Expr::Cast { expr, .. }
+        Expr::Unary { expr, .. }
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::Cast { expr, .. }
         | Expr::TryCast { expr, .. }
         | Expr::Convert { expr, .. }
         | Expr::TryConvert { expr, .. } => get_expr_side(expr, left_shape, right_shape),
+        Expr::InList { expr, list, .. } => {
+            let mut side = get_expr_side(expr, left_shape, right_shape);
+            for item in list {
+                side = combine_sides(side, get_expr_side(item, left_shape, right_shape));
+            }
+            side
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            let s1 = get_expr_side(expr, left_shape, right_shape);
+            let s2 = get_expr_side(low, left_shape, right_shape);
+            let s3 = get_expr_side(high, left_shape, right_shape);
+            combine_sides(combine_sides(s1, s2), s3)
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            let mut side = combine_sides(
+                get_expr_side(expr, left_shape, right_shape),
+                get_expr_side(pattern, left_shape, right_shape),
+            );
+            if let Some(esc) = escape {
+                side = combine_sides(side, get_expr_side(esc, left_shape, right_shape));
+            }
+            side
+        }
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            let mut side = operand.as_deref().map_or(JoinSide::None, |o| {
+                get_expr_side(o, left_shape, right_shape)
+            });
+            for wc in when_clauses {
+                side = combine_sides(side, get_expr_side(&wc.condition, left_shape, right_shape));
+                side = combine_sides(side, get_expr_side(&wc.result, left_shape, right_shape));
+            }
+            if let Some(el) = else_result {
+                side = combine_sides(side, get_expr_side(el, left_shape, right_shape));
+            }
+            side
+        }
         Expr::FunctionCall { args, .. } => {
             let mut side = JoinSide::None;
             for arg in args {
@@ -89,11 +138,12 @@ pub(crate) fn get_expr_side(
             }
             side
         }
+        Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => JoinSide::Both,
         _ => JoinSide::None,
     }
 }
 
-fn collect_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+pub(crate) fn collect_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     if let Expr::Binary {
         left,
         op: BinaryOp::And,

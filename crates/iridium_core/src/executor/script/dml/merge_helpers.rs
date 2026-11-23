@@ -172,7 +172,7 @@ pub(crate) fn merge_target_context(
 ) -> JoinedRow {
     vec![ContextTable {
         table: std::sync::Arc::new(table.clone()),
-        alias,
+        alias: std::sync::Arc::from(alias),
         row: Some(row),
         storage_index,
         source_aliases: Vec::new(),
@@ -187,7 +187,7 @@ pub(crate) fn merge_source_context(
 ) -> JoinedRow {
     vec![ContextTable {
         table: std::sync::Arc::new(table.clone()),
-        alias,
+        alias: std::sync::Arc::from(alias),
         row: Some(row),
         storage_index,
         source_aliases: Vec::new(),
@@ -210,11 +210,12 @@ fn evaluate_computed_columns(
         return Ok(());
     }
     let table_arc = std::sync::Arc::new(target_table.clone());
+    let alias_arc: std::sync::Arc<str> = std::sync::Arc::from(target_table.name.as_str());
     for (idx, col) in target_table.columns.iter().enumerate() {
         if let Some(ref computed) = col.computed_expr {
             let joined = vec![ContextTable {
                 table: std::sync::Arc::clone(&table_arc),
-                alias: target_table.name.clone(),
+                alias: std::sync::Arc::clone(&alias_arc),
                 row: Some(StoredRow {
                     values: values.to_vec(),
                     deleted: false,

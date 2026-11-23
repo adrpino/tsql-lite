@@ -177,7 +177,7 @@ pub(crate) fn execute_pivot(
 
         result_rows.push(vec![ContextTable {
             table: pivot_table_def.clone(),
-            alias: pivot.alias.clone(),
+            alias: std::sync::Arc::from(pivot.alias.as_str()),
             row: Some(StoredRow {
                 values: row_values,
                 deleted: false,

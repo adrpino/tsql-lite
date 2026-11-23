@@ -134,13 +134,19 @@ pub(crate) fn execute_from_stage(
                 });
             }
         }
-        let single_table_pred =
-            if query.applies.is_empty() && matches!(from_clause, FromNode::Table(_)) {
-                query.filter.selection.as_ref()
-            } else {
-                None
-            };
-        from_tree::execute_from_clause_with_predicate(executor, from_clause, single_table_pred, ctx)
+        let pushable_pred = if query.applies.is_empty() {
+            query.filter.selection.as_ref()
+        } else {
+            None
+        };
+        let allow_unqual = matches!(from_clause, FromNode::Table(_));
+        from_tree::execute_from_clause_with_predicate(
+            executor,
+            from_clause,
+            pushable_pred,
+            allow_unqual,
+            ctx,
+        )
     } else {
         Ok(FromEval {
             iter: Box::new(from_tree::ScanIterator::new(vec![vec![]])),

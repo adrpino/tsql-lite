@@ -245,11 +245,88 @@ fn tier1_perf_benchmark_workloads() {
     }
     let d_top = t3.elapsed();
 
+    // 5. Filtered INNER JOIN with WHERE predicate pushdown on both sides (10 iterations)
+    let t4 = Instant::now();
+    for _ in 0..10 {
+        let res_fjoin = exec(
+            &engine,
+            "SELECT m.Id, d.Label
+             FROM dbo.PerfMain m
+             INNER JOIN dbo.PerfDetail d ON d.ParentId = m.Id
+             WHERE m.GrpId = 42 AND d.IsActive = 1;",
+        );
+        assert!(!res_fjoin.rows.is_empty());
+    }
+    let d_fjoin = t4.elapsed();
+
     eprintln!(
-        "[TIER1_BENCH n={n}] index_seek_50x={:.2}ms | mixed_left_join_2kx2k={:.2}ms | expr_scalar_5x={:.2}ms | top5_50x={:.2}ms",
+        "[TIER1+2_BENCH n={n}] index_seek_50x={:.2}ms | mixed_left_join_2kx2k={:.2}ms | expr_scalar_5x={:.2}ms | top5_50x={:.2}ms | filtered_inner_join_10x={:.2}ms",
         d_seek.as_secs_f64() * 1000.0,
         d_join.as_secs_f64() * 1000.0,
         d_expr.as_secs_f64() * 1000.0,
         d_top.as_secs_f64() * 1000.0,
+        d_fjoin.as_secs_f64() * 1000.0,
     );
+}
+
+#[test]
+fn set_op_trailing_order_by_offset_fetch_and_where_pushdown_anti_join() {
+    let engine = Engine::new();
+    exec(
+        &engine,
+        "CREATE TABLE dbo.SetA (Id INT, Label VARCHAR(20));
+         CREATE TABLE dbo.SetB (Id INT, Tag VARCHAR(20));
+         INSERT INTO dbo.SetA VALUES (3, 'c'), (1, 'a'), (5, 'e');
+         INSERT INTO dbo.SetB VALUES (4, 'd'), (2, 'b'), (1, 'a');",
+    );
+
+    // Trailing ORDER BY uses first-branch alias and sorts the entire combined UNION ALL result,
+    // followed by OFFSET / FETCH pagination.
+    let res = exec(
+        &engine,
+        "SELECT Id AS ItemId, Label AS Name FROM dbo.SetA
+         UNION ALL
+         SELECT Id, Tag FROM dbo.SetB
+         ORDER BY ItemId ASC, Name ASC
+         OFFSET 1 ROWS FETCH NEXT 3 ROWS ONLY;",
+    );
+    assert_eq!(
+        res.rows,
+        vec![
+            vec![Value::Int(1), Value::VarChar("a".into())],
+            vec![Value::Int(2), Value::VarChar("b".into())],
+            vec![Value::Int(3), Value::VarChar("c".into())],
+        ]
+    );
+
+    // Left-associative 3-way set-op chain with trailing ORDER BY DESC.
+    let chain = exec(
+        &engine,
+        "SELECT Id FROM dbo.SetA
+         UNION
+         SELECT Id FROM dbo.SetB
+         EXCEPT
+         SELECT 3 AS Id
+         ORDER BY Id DESC;",
+    );
+    assert_eq!(
+        chain.rows,
+        vec![
+            vec![Value::Int(5)],
+            vec![Value::Int(4)],
+            vec![Value::Int(2)],
+            vec![Value::Int(1)],
+        ]
+    );
+
+    // LEFT JOIN anti-join: WHERE b.Id IS NULL MUST NOT be pushed below LEFT JOIN!
+    let anti = exec(
+        &engine,
+        "SELECT a.Id
+         FROM dbo.SetA a
+         LEFT JOIN dbo.SetB b ON a.Id = b.Id
+         WHERE b.Id IS NULL AND a.Id >= 3
+         ORDER BY a.Id;",
+    );
+    assert_eq!(anti.rows, vec![vec![Value::Int(3)], vec![Value::Int(5)]]);
 }

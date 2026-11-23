@@ -178,7 +178,7 @@ pub(super) fn bind_builtin_tvf(
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref.alias.clone().unwrap_or_else(|| "STRING_SPLIT".into()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("STRING_SPLIT")),
         virtual_rows: Some(rows),
     }))
 }
@@ -260,7 +260,7 @@ fn bind_xml_nodes(
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref.alias.clone().unwrap_or_else(|| "nodes".into()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("nodes")),
         virtual_rows: Some(rows),
     }))
 }
@@ -726,7 +726,7 @@ fn bind_openjson(
         };
         return Ok(Some(BoundTable {
             table: std::sync::Arc::new(table_def),
-            alias: tref.alias.clone().unwrap_or_else(|| "OPENJSON".into()),
+            alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("OPENJSON")),
             virtual_rows: Some(rows),
         }));
     }
@@ -802,7 +802,7 @@ fn bind_openjson(
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref.alias.clone().unwrap_or_else(|| "OPENJSON".into()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("OPENJSON")),
         virtual_rows: Some(rows),
     }))
 }
@@ -1061,10 +1061,7 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref
-            .alias
-            .clone()
-            .unwrap_or_else(|| "fn_my_permissions".into()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("fn_my_permissions")),
         virtual_rows: Some(rows),
     }))
 }
@@ -1270,10 +1267,7 @@ fn bind_generate_series(
 
     Ok(Some(BoundTable {
         table: std::sync::Arc::new(table_def),
-        alias: tref
-            .alias
-            .clone()
-            .unwrap_or_else(|| "GENERATE_SERIES".into()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or("GENERATE_SERIES")),
         virtual_rows: Some(rows),
     }))
 }

@@ -3,18 +3,21 @@ use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
 impl IndexRegistry for CatalogImpl {
-    fn get_indexes(&self) -> &[IndexDef] {
-        &self.indexes
+    fn get_indexes(&self) -> CowRegistryView<'_, IndexDef> {
+        self.indexes.view()
     }
 
     fn register_index(&mut self, index: IndexDef) {
-        Arc::make_mut(&mut self.indexes).push(index);
+        let key = (
+            index.schema_id,
+            index.table_id,
+            normalize_identifier(&index.name),
+        );
+        self.indexes.insert_or_replace(key, index);
     }
 
     fn drop_index_by_table_id(&mut self, table_id: u32) {
-        if self.indexes.iter().any(|idx| idx.table_id == table_id) {
-            Arc::make_mut(&mut self.indexes).retain(|idx| idx.table_id != table_id);
-        }
+        self.remove_indexes_for_table_id(table_id);
     }
 
     fn create_index(
@@ -33,11 +36,8 @@ impl IndexRegistry for CatalogImpl {
             .ok_or_else(|| DbError::table_not_found(table_schema, table_name))?
             .clone();
 
-        if self.indexes.iter().any(|idx| {
-            idx.schema_id == index_schema_id
-                && idx.table_id == table.id
-                && idx.name.eq_ignore_ascii_case(name)
-        }) {
+        let key = (index_schema_id, table.id, normalize_identifier(name));
+        if self.indexes.contains_key(&key) {
             return Err(DbError::Execution(format!(
                 "index '{}.{}' already exists",
                 schema, name
@@ -56,20 +56,19 @@ impl IndexRegistry for CatalogImpl {
         }
 
         let new_index_id = self.alloc_index_id();
-        let indexes = Arc::make_mut(&mut self.indexes);
-        indexes.push(IndexDef {
-            id: new_index_id,
-            schema_id: index_schema_id,
-            table_id: table.id,
-            name: name.to_string(),
-            column_ids,
-            is_unique: false,
-            is_clustered: false,
-            filter_predicate: None,
-        });
-        let new_idx = indexes.len() - 1;
-        Arc::make_mut(&mut self.index_map)
-            .insert((index_schema_id, normalize_identifier(name)), new_idx);
+        self.indexes.insert_or_replace(
+            key,
+            IndexDef {
+                id: new_index_id,
+                schema_id: index_schema_id,
+                table_id: table.id,
+                name: name.to_string(),
+                column_ids,
+                is_unique: false,
+                is_clustered: false,
+                filter_predicate: None,
+            },
+        );
         Ok(())
     }
 
@@ -92,11 +91,8 @@ impl IndexRegistry for CatalogImpl {
             .ok_or_else(|| DbError::table_not_found(table_schema, table_name))?
             .clone();
 
-        if self.indexes.iter().any(|idx| {
-            idx.schema_id == index_schema_id
-                && idx.table_id == table.id
-                && idx.name.eq_ignore_ascii_case(name)
-        }) {
+        let key = (index_schema_id, table.id, normalize_identifier(name));
+        if self.indexes.contains_key(&key) {
             return Err(DbError::Execution(format!(
                 "index '{}.{}' already exists",
                 schema, name
@@ -121,20 +117,19 @@ impl IndexRegistry for CatalogImpl {
             self.alloc_index_id()
         };
 
-        let indexes = Arc::make_mut(&mut self.indexes);
-        indexes.push(IndexDef {
-            id: new_index_id,
-            schema_id: index_schema_id,
-            table_id: table.id,
-            name: name.to_string(),
-            column_ids,
-            is_unique,
-            is_clustered,
-            filter_predicate,
-        });
-        let new_idx = indexes.len() - 1;
-        Arc::make_mut(&mut self.index_map)
-            .insert((index_schema_id, normalize_identifier(name)), new_idx);
+        self.indexes.insert_or_replace(
+            key,
+            IndexDef {
+                id: new_index_id,
+                schema_id: index_schema_id,
+                table_id: table.id,
+                name: name.to_string(),
+                column_ids,
+                is_unique,
+                is_clustered,
+                filter_predicate,
+            },
+        );
         Ok(())
     }
 
@@ -153,23 +148,16 @@ impl IndexRegistry for CatalogImpl {
             .map(|t| t.id)
             .ok_or_else(|| DbError::table_not_found(table_schema, table_name))?;
 
-        let Some(pos) = self.indexes.iter().position(|idx| {
-            idx.schema_id == schema_id
-                && idx.table_id == table_id
-                && idx.name.eq_ignore_ascii_case(name)
-        }) else {
+        let key = (schema_id, table_id, normalize_identifier(name));
+        if self
+            .indexes
+            .remove(&key, |i| {
+                (i.schema_id, i.table_id, normalize_identifier(&i.name))
+            })
+            .is_none()
+        {
             return Err(DbError::index_not_found(table_name, name));
-        };
-
-        let indexes = Arc::make_mut(&mut self.indexes);
-        indexes.swap_remove(pos);
-        self.index_map = Arc::new(
-            indexes
-                .iter()
-                .enumerate()
-                .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-                .collect(),
-        );
+        }
         Ok(())
     }
 }

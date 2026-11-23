@@ -7,8 +7,12 @@ impl ObjectResolver for CatalogImpl {
             return Some(table.id as i32);
         }
         if let Some(schema_id) = self.get_schema_id(schema) {
-            if let Some(idx) = self.index_map.get(&(schema_id, normalize_identifier(name))) {
-                return Some(self.indexes[*idx].id as i32);
+            if let Some(idx) = self
+                .indexes
+                .iter()
+                .find(|i| i.schema_id == schema_id && i.name.eq_ignore_ascii_case(name))
+            {
+                return Some(idx.id as i32);
             }
         }
         if let Some(routine) = self.find_routine(schema, name) {

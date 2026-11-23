@@ -12,19 +12,53 @@ use crate::executor::model::JoinedRow;
 impl<'a> QueryExecutor<'a> {
     pub fn execute_select(
         &self,
-        query: RelationalQuery,
+        mut query: RelationalQuery,
         ctx: &mut ExecutionContext,
     ) -> Result<QueryResult, DbError> {
-        let set_op = query.set_op.clone();
+        let mut set_op = query.set_op.take();
         let into_table = query.into_table.clone();
         let for_xml = query.for_xml.clone();
         let for_json = query.for_json.clone();
-        let result = select::execute_select_internal(self, &query, ctx)?;
-        let mut result = result;
 
-        if let Some(set_op) = set_op {
-            let right = self.execute_select(RelationalQuery::from(set_op.right), ctx)?;
-            result = crate::executor::engine::execute_set_op(result, right, set_op.kind)?;
+        // In SQL Server, a trailing ORDER BY / OFFSET / FETCH at the end of a UNION /
+        // INTERSECT / EXCEPT chain applies to the entire combined set-op result (using the
+        // first branch's column names/aliases), not solely to the final branch.
+        let mut trailing_order_by = Vec::new();
+        let mut trailing_offset = None;
+        let mut trailing_fetch = None;
+        if let Some(ref mut head_op) = set_op {
+            let mut tail = &mut head_op.right;
+            while let Some(ref mut next_op) = tail.set_op {
+                tail = &mut next_op.right;
+            }
+            if tail.top.is_none()
+                && (!tail.order_by.is_empty() || tail.offset.is_some() || tail.fetch.is_some())
+            {
+                trailing_order_by = std::mem::take(&mut tail.order_by);
+                trailing_offset = tail.offset.take();
+                trailing_fetch = tail.fetch.take();
+            }
+        }
+
+        let mut result = select::execute_select_internal(self, &query, ctx)?;
+
+        // Evaluate the set-op chain iteratively left-to-right (SQL Server semantics).
+        while let Some(mut cur_op) = set_op {
+            let next_op = cur_op.right.set_op.take();
+            let right_query = RelationalQuery::from(cur_op.right);
+            let right = select::execute_select_internal(self, &right_query, ctx)?;
+            result = crate::executor::engine::execute_set_op(result, right, cur_op.kind)?;
+            set_op = next_op;
+        }
+
+        if !trailing_order_by.is_empty() || trailing_offset.is_some() || trailing_fetch.is_some() {
+            result = self.apply_set_op_post_order_and_pagination(
+                result,
+                trailing_order_by,
+                trailing_offset,
+                trailing_fetch,
+                ctx,
+            )?;
         }
 
         if ctx.options.rowcount > 0 && result.rows.len() > ctx.options.rowcount as usize {
@@ -43,6 +77,60 @@ impl<'a> QueryExecutor<'a> {
             ));
         }
 
+        Ok(result)
+    }
+
+    pub(crate) fn apply_set_op_post_order_and_pagination(
+        &self,
+        mut result: QueryResult,
+        order_by: Vec<crate::ast::OrderByExpr>,
+        offset: Option<crate::ast::Expr>,
+        fetch: Option<crate::ast::Expr>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<QueryResult, DbError> {
+        let post_query = RelationalQuery {
+            from_clause: None,
+            applies: Vec::new(),
+            projection: super::plan::ProjectionPlan {
+                items: Vec::new(),
+                distinct: false,
+            },
+            filter: super::plan::FilterPlan {
+                selection: None,
+                group_by: Vec::new(),
+                grouping_sets: Vec::new(),
+                having: None,
+            },
+            sort: super::plan::SortPlan { order_by },
+            pagination: super::plan::PaginationPlan {
+                top: None,
+                offset,
+                fetch,
+            },
+            into_table: None,
+            set_op: None,
+            for_xml: None,
+            for_json: None,
+        };
+        if !post_query.sort.order_by.is_empty() {
+            result.rows = super::pipeline::order::apply_result_ordering(
+                self,
+                &post_query,
+                &result.columns,
+                result.rows,
+                ctx,
+            )?;
+        }
+        if post_query.pagination.offset.is_some() || post_query.pagination.fetch.is_some() {
+            result.rows = super::pipeline::pagination::apply_pagination(
+                self,
+                &post_query,
+                &result.columns,
+                result.rows,
+                None,
+                ctx,
+            )?;
+        }
         Ok(result)
     }
 

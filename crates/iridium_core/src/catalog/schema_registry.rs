@@ -3,13 +3,12 @@ use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 
 impl SchemaRegistry for CatalogImpl {
-    fn get_schemas(&self) -> &[SchemaDef] {
-        &self.schemas
+    fn get_schemas(&self) -> CowRegistryView<'_, SchemaDef> {
+        self.schemas.view()
     }
 
     fn get_schema_id(&self, name: &str) -> Option<u32> {
-        let idx = self.schema_map.get(&normalize_identifier(name))?;
-        Some(self.schemas[*idx].id)
+        self.schemas.get(&normalize_identifier(name)).map(|s| s.id)
     }
 
     fn create_schema(&mut self, name: &str) -> Result<(), DbError> {
@@ -17,12 +16,13 @@ impl SchemaRegistry for CatalogImpl {
             return Err(DbError::duplicate_schema(name));
         }
         let id = self.alloc_schema_id();
-        let idx = self.schemas.len();
-        Arc::make_mut(&mut self.schemas).push(SchemaDef {
-            id,
-            name: name.to_string(),
-        });
-        Arc::make_mut(&mut self.schema_map).insert(normalize_identifier(name), idx);
+        self.schemas.insert_or_replace(
+            normalize_identifier(name),
+            SchemaDef {
+                id,
+                name: name.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -39,15 +39,9 @@ impl SchemaRegistry for CatalogImpl {
             )));
         }
 
-        let schemas = Arc::make_mut(&mut self.schemas);
-        schemas.retain(|s| s.id != schema_id);
-        self.schema_map = Arc::new(
-            schemas
-                .iter()
-                .enumerate()
-                .map(|(i, s)| (normalize_identifier(&s.name), i))
-                .collect(),
-        );
+        self.schemas.remove(&normalize_identifier(name), |s| {
+            normalize_identifier(&s.name)
+        });
         Ok(())
     }
 
@@ -175,21 +169,26 @@ impl SchemaRegistry for CatalogImpl {
             moved.schema_name = target_schema_name.clone();
             self.tables.insert_or_replace(table_dst_key, moved);
 
-            // Update indexes attached to this table.
-            let has_table_idx = self.indexes.iter().any(|i| i.table_id == table_id);
-            if has_table_idx {
-                let idxs = Arc::make_mut(&mut self.indexes);
-                for idx in idxs.iter_mut() {
-                    if idx.table_id == table_id {
-                        idx.schema_id = target_schema_id;
-                    }
+            // Update indexes attached to this table via O(1) CoW key move.
+            let attached_idx_keys: Vec<(u32, u32, String)> = self
+                .indexes
+                .iter()
+                .filter(|i| i.table_id == table_id)
+                .map(|i| (i.schema_id, i.table_id, normalize_identifier(&i.name)))
+                .collect();
+            for old_key in attached_idx_keys {
+                if let Some(idx_arc) = self.indexes.remove(&old_key, |i| {
+                    (i.schema_id, i.table_id, normalize_identifier(&i.name))
+                }) {
+                    let mut idx_def = (*idx_arc).clone();
+                    idx_def.schema_id = target_schema_id;
+                    let new_key = (
+                        idx_def.schema_id,
+                        idx_def.table_id,
+                        normalize_identifier(&idx_def.name),
+                    );
+                    self.indexes.insert_or_replace(new_key, idx_def);
                 }
-                self.index_map = Arc::new(
-                    idxs.iter()
-                        .enumerate()
-                        .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-                        .collect(),
-                );
             }
 
             // Move triggers attached to this table.

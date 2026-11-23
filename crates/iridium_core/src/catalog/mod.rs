@@ -345,7 +345,7 @@ pub trait IdAllocator {
 }
 
 pub trait SchemaRegistry {
-    fn get_schemas(&self) -> &[SchemaDef];
+    fn get_schemas(&self) -> CowRegistryView<'_, SchemaDef>;
     fn get_schema_id(&self, name: &str) -> Option<u32>;
     fn create_schema(&mut self, name: &str) -> Result<(), DbError>;
     fn drop_schema(&mut self, name: &str) -> Result<(), DbError>;
@@ -372,7 +372,7 @@ pub trait TableRegistry {
 }
 
 pub trait IndexRegistry {
-    fn get_indexes(&self) -> &[IndexDef];
+    fn get_indexes(&self) -> CowRegistryView<'_, IndexDef>;
     fn register_index(&mut self, index: IndexDef);
     fn drop_index_by_table_id(&mut self, table_id: u32);
     fn create_index(
@@ -732,11 +732,9 @@ mod arc_serde {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogImpl {
-    #[serde(with = "arc_serde")]
-    schemas: Arc<Vec<SchemaDef>>,
+    schemas: CowRegistry<String, SchemaDef>,
     tables: CowRegistry<(u32, String), TableDef>,
-    #[serde(with = "arc_serde")]
-    indexes: Arc<Vec<IndexDef>>,
+    indexes: CowRegistry<(u32, u32, String), IndexDef>,
     routines: CowRegistry<(String, String), RoutineDef>,
     #[serde(with = "arc_serde")]
     table_types: Arc<Vec<TableTypeDef>>,
@@ -784,8 +782,6 @@ pub struct CatalogImpl {
     next_rowversion: Arc<AtomicU64>,
 
     #[serde(skip)]
-    schema_map: Arc<HashMap<String, usize>>,
-    #[serde(skip)]
     type_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
     scalar_type_map: Arc<HashMap<(String, String), usize>>,
@@ -793,32 +789,29 @@ pub struct CatalogImpl {
     synonym_map: Arc<HashMap<(String, String), usize>>,
     #[serde(skip)]
     sequence_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
-    index_map: Arc<HashMap<(u32, String), usize>>,
 }
 
 impl CatalogImpl {
     pub fn new() -> Self {
         let mut c = Self::default();
         let dbo_id = c.alloc_schema_id();
-        Arc::make_mut(&mut c.schemas).push(SchemaDef {
-            id: dbo_id,
-            name: "dbo".to_string(),
-        });
+        c.schemas.insert_or_replace(
+            normalize_identifier("dbo"),
+            SchemaDef {
+                id: dbo_id,
+                name: "dbo".to_string(),
+            },
+        );
         c.rebuild_maps();
         c
     }
 
     pub fn rebuild_maps(&mut self) {
-        self.schema_map = Arc::new(
-            self.schemas
-                .iter()
-                .enumerate()
-                .map(|(i, s)| (normalize_identifier(&s.name), i))
-                .collect(),
-        );
+        self.schemas.rebuild_map(|s| normalize_identifier(&s.name));
         self.tables
             .rebuild_map(|t| (t.schema_id, normalize_identifier(&t.name)));
+        self.indexes
+            .rebuild_map(|idx| (idx.schema_id, idx.table_id, normalize_identifier(&idx.name)));
         self.routines.rebuild_map(|r| {
             (
                 normalize_identifier(&r.schema),
@@ -897,27 +890,20 @@ impl CatalogImpl {
                 normalize_identifier(&t.name),
             )
         });
-        self.index_map = Arc::new(
-            self.indexes
-                .iter()
-                .enumerate()
-                .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-                .collect(),
-        );
     }
 
-    /// Remove any indexes belonging to `table_id`, cloning `indexes` only if needed.
+    /// Remove any indexes belonging to `table_id` via O(1)-per-entry CoW tombstones.
     pub(crate) fn remove_indexes_for_table_id(&mut self, table_id: u32) {
-        if self.indexes.iter().any(|i| i.table_id == table_id) {
-            let indexes = Arc::make_mut(&mut self.indexes);
-            indexes.retain(|i| i.table_id != table_id);
-            self.index_map = Arc::new(
-                indexes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-                    .collect(),
-            );
+        let keys: Vec<(u32, u32, String)> = self
+            .indexes
+            .iter()
+            .filter(|i| i.table_id == table_id)
+            .map(|i| (i.schema_id, i.table_id, normalize_identifier(&i.name)))
+            .collect();
+        for key in keys {
+            self.indexes.remove(&key, |i| {
+                (i.schema_id, i.table_id, normalize_identifier(&i.name))
+            });
         }
     }
 }
@@ -925,9 +911,9 @@ impl CatalogImpl {
 impl Default for CatalogImpl {
     fn default() -> Self {
         Self {
-            schemas: Arc::new(Vec::new()),
+            schemas: CowRegistry::default(),
             tables: CowRegistry::default(),
-            indexes: Arc::new(Vec::new()),
+            indexes: CowRegistry::default(),
             routines: CowRegistry::default(),
             table_types: Arc::new(Vec::new()),
             scalar_types: Arc::new(Vec::new()),
@@ -952,12 +938,10 @@ impl Default for CatalogImpl {
             next_index_id: Arc::new(AtomicU32::new(234567890)),
             next_object_id: Arc::new(AtomicI32::new(-1)),
             next_rowversion: default_next_rowversion(),
-            schema_map: Arc::new(HashMap::new()),
             type_map: Arc::new(HashMap::new()),
             scalar_type_map: Arc::new(HashMap::new()),
             synonym_map: Arc::new(HashMap::new()),
             sequence_map: Arc::new(HashMap::new()),
-            index_map: Arc::new(HashMap::new()),
         }
     }
 }
@@ -1280,28 +1264,14 @@ impl Catalog for CatalogImpl {
                 )
             });
 
-        if merge_arc_vec(&mut self.schemas, &workspace.schemas, &base.schemas, |s| {
-            normalize_identifier(&s.name)
-        }) {
-            self.schema_map = Arc::new(
-                self.schemas
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| (normalize_identifier(&s.name), i))
-                    .collect(),
-            );
-        }
-        if merge_arc_vec(&mut self.indexes, &workspace.indexes, &base.indexes, |i| {
-            (i.schema_id, normalize_identifier(&i.name))
-        }) {
-            self.index_map = Arc::new(
-                self.indexes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, idx)| ((idx.schema_id, normalize_identifier(&idx.name)), i))
-                    .collect(),
-            );
-        }
+        self.schemas
+            .merge_delta_against_base(&workspace.schemas, &base.schemas, |s| {
+                normalize_identifier(&s.name)
+            });
+        self.indexes
+            .merge_delta_against_base(&workspace.indexes, &base.indexes, |i| {
+                (i.schema_id, i.table_id, normalize_identifier(&i.name))
+            });
         if merge_arc_vec(
             &mut self.table_types,
             &workspace.table_types,

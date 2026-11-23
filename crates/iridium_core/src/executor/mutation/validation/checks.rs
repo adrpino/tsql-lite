@@ -87,8 +87,14 @@ pub(crate) fn validate_check_constraint_on_rows(
             Err(e) => Some(Err(e)),
         })
         .collect::<Result<Vec<_>, DbError>>()?;
+    let table_arc = std::sync::Arc::new(table.clone());
+    let alias_arc: std::sync::Arc<str> = std::sync::Arc::from(table.name.as_str());
     for row in rows {
-        let joined = single_row_context(table, row);
+        let joined = super::super::super::model::single_row_context_arc(
+            std::sync::Arc::clone(&table_arc),
+            std::sync::Arc::clone(&alias_arc),
+            row,
+        );
         let check_val =
             super::super::super::evaluator::eval_expr(expr, &joined, ctx, catalog, storage, clock)?;
         if !check_val.is_null() && !super::super::super::value_ops::truthy(&check_val) {

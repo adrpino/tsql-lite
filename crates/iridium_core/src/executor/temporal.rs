@@ -311,7 +311,7 @@ pub(crate) fn bind_temporal_table(
     };
 
     Ok(BoundTable {
-        alias: tref.alias.clone().unwrap_or_else(|| table.name.clone()),
+        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or(table.name.as_str())),
         table,
         virtual_rows: Some(filtered),
     })

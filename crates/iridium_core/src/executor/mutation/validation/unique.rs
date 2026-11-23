@@ -177,7 +177,7 @@ pub(crate) fn enforce_unique_indexes_on_write(
         .get_indexes()
         .iter()
         .filter(|i| i.table_id == table_id && i.is_unique)
-        .cloned()
+        .map(|i| i.as_ref().clone())
         .collect();
     if unique_indexes.is_empty() {
         return Ok(());

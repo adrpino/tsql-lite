@@ -23,6 +23,38 @@ fn take_leftmost_into_table(stmt: &mut crate::ast::Statement) -> Option<crate::a
     }
 }
 
+type TrailingOrderPagination = (
+    Vec<crate::ast::OrderByExpr>,
+    Option<crate::ast::Expr>,
+    Option<crate::ast::Expr>,
+);
+
+fn take_rightmost_order_pagination(stmt: &mut crate::ast::Statement) -> TrailingOrderPagination {
+    match stmt {
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(s)) => {
+            let mut tail: &mut crate::ast::SelectStmt = s;
+            while let Some(ref mut next_op) = tail.set_op {
+                tail = &mut next_op.right;
+            }
+            if tail.top.is_none()
+                && (!tail.order_by.is_empty() || tail.offset.is_some() || tail.fetch.is_some())
+            {
+                (
+                    std::mem::take(&mut tail.order_by),
+                    tail.offset.take(),
+                    tail.fetch.take(),
+                )
+            } else {
+                (Vec::new(), None, None)
+            }
+        }
+        crate::ast::Statement::Dml(crate::ast::DmlStatement::SetOp(op)) => {
+            take_rightmost_order_pagination(&mut op.right)
+        }
+        _ => (Vec::new(), None, None),
+    }
+}
+
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_dml(
         &mut self,
@@ -48,15 +80,54 @@ impl<'a> ScriptExecutor<'a> {
             }
             DmlStatement::SetOp(mut stmt) => {
                 // In T-SQL, `SELECT ... INTO #tbl FROM a UNION [ALL] SELECT ... FROM b`
-                // attaches INTO to the leftmost SELECT; lift it so the combined result
-                // populates the target table.
+                // attaches INTO to the leftmost SELECT, while trailing ORDER BY / OFFSET / FETCH
+                // on the final branch applies to the entire combined set-op result.
                 let into_table = take_leftmost_into_table(&mut stmt.left);
+                let (trailing_order_by, trailing_offset, trailing_fetch) =
+                    take_rightmost_order_pagination(&mut stmt.right);
+                // If `stmt.right` is a Select with a chained `set_op`, detach its tail so we
+                // evaluate all branches strictly left-to-right (e.g. `(A UNION B) EXCEPT C`).
+                let mut extra_tail: Option<Box<crate::ast::SetOpClause>> = None;
+                if let crate::ast::Statement::Dml(crate::ast::DmlStatement::Select(ref mut r_sel)) =
+                    *stmt.right
+                {
+                    extra_tail = r_sel.set_op.take();
+                }
+
                 let left_outcome = self.execute(*stmt.left, ctx)?;
                 let right_outcome = self.execute(*stmt.right, ctx)?;
 
                 match (left_outcome, right_outcome) {
                     (StmtOutcome::Ok(Some(left)), StmtOutcome::Ok(Some(right))) => {
-                        let result = crate::executor::engine::execute_set_op(left, right, stmt.op)?;
+                        let mut result =
+                            crate::executor::engine::execute_set_op(left, right, stmt.op)?;
+                        let qe = QueryExecutor {
+                            catalog: self.catalog as &dyn Catalog,
+                            storage: self.storage as &dyn Storage,
+                            clock: self.clock,
+                        };
+                        while let Some(mut next_op) = extra_tail {
+                            extra_tail = next_op.right.set_op.take();
+                            let branch_res =
+                                qe.execute_select(RelationalQuery::from(next_op.right), ctx)?;
+                            result = crate::executor::engine::execute_set_op(
+                                result,
+                                branch_res,
+                                next_op.kind,
+                            )?;
+                        }
+                        if !trailing_order_by.is_empty()
+                            || trailing_offset.is_some()
+                            || trailing_fetch.is_some()
+                        {
+                            result = qe.apply_set_op_post_order_and_pagination(
+                                result,
+                                trailing_order_by,
+                                trailing_offset,
+                                trailing_fetch,
+                                ctx,
+                            )?;
+                        }
                         ctx.set_last_rowcount(result.rows.len());
                         if let Some(target) = into_table {
                             self.materialize_select_into_table(target, &result, ctx)?;

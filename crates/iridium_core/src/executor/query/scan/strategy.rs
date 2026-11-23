@@ -14,6 +14,7 @@ pub(crate) fn choose_scan_strategy(
         .get_indexes()
         .iter()
         .filter(|idx| idx.table_id == bound.table.id)
+        .map(|idx| idx.as_ref())
         .collect();
     if indexes.is_empty() {
         return ScanStrategy::TableScan;
@@ -76,9 +77,11 @@ fn flip_cmp_op(op: BinaryOp) -> BinaryOp {
     }
 }
 
-fn expr_matches_column(expr: &Expr, alias: &str, column: &str) -> bool {
+fn expr_matches_column(expr: &Expr, alias: &str, column: &str, allow_unqualified: bool) -> bool {
     match expr {
-        Expr::Identifier(name) => !name.starts_with('@') && name.eq_ignore_ascii_case(column),
+        Expr::Identifier(name) => {
+            allow_unqualified && !name.starts_with('@') && name.eq_ignore_ascii_case(column)
+        }
         Expr::QualifiedIdentifier(parts) => {
             parts.len() >= 2
                 && parts[parts.len() - 2].eq_ignore_ascii_case(alias)
@@ -116,20 +119,40 @@ pub(crate) fn extract_index_predicate_rhs(
     alias: &str,
     column: &str,
 ) -> Option<(BinaryOp, Expr)> {
+    extract_index_predicate_rhs_scoped(predicate, alias, column, true)
+}
+
+fn extract_index_predicate_rhs_scoped(
+    predicate: Option<&Expr>,
+    alias: &str,
+    column: &str,
+    allow_unqualified: bool,
+) -> Option<(BinaryOp, Expr)> {
     let pred = predicate?;
     match pred {
         Expr::Binary { left, op, right } => {
             if is_supported_index_op(*op) {
-                if expr_matches_column(left, alias, column) && is_row_independent_expr(right) {
+                if expr_matches_column(left, alias, column, allow_unqualified)
+                    && is_row_independent_expr(right)
+                {
                     return Some((*op, (**right).clone()));
                 }
-                if expr_matches_column(right, alias, column) && is_row_independent_expr(left) {
+                if expr_matches_column(right, alias, column, allow_unqualified)
+                    && is_row_independent_expr(left)
+                {
                     return Some((flip_cmp_op(*op), (**left).clone()));
                 }
             }
             if *op == BinaryOp::And {
-                extract_index_predicate_rhs(Some(left), alias, column)
-                    .or_else(|| extract_index_predicate_rhs(Some(right), alias, column))
+                extract_index_predicate_rhs_scoped(Some(left), alias, column, allow_unqualified)
+                    .or_else(|| {
+                        extract_index_predicate_rhs_scoped(
+                            Some(right),
+                            alias,
+                            column,
+                            allow_unqualified,
+                        )
+                    })
             } else {
                 None
             }
@@ -144,6 +167,7 @@ pub(crate) fn extract_index_predicate_rhs(
 pub(crate) fn extract_fast_scan_predicate(
     predicate: &Expr,
     bound: &BoundTable,
+    allow_unqualified: bool,
 ) -> Option<(usize, BinaryOp, Expr)> {
     let mut best: Option<(u8, usize, BinaryOp, Expr)> = None;
     for (col_idx, col) in bound.table.columns.iter().enumerate() {
@@ -151,9 +175,12 @@ pub(crate) fn extract_fast_scan_predicate(
         if col.collation.is_some() {
             continue;
         }
-        if let Some((op, rhs)) =
-            extract_index_predicate_rhs(Some(predicate), &bound.alias, &col.name)
-        {
+        if let Some((op, rhs)) = extract_index_predicate_rhs_scoped(
+            Some(predicate),
+            &bound.alias,
+            &col.name,
+            allow_unqualified,
+        ) {
             let score = match (op, col.primary_key || col.unique) {
                 (BinaryOp::Eq, true) => 3,
                 (BinaryOp::Eq, false) => 2,

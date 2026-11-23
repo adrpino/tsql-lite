@@ -661,7 +661,7 @@ pub(super) fn bind_openxml(
             foreign_keys: vec![],
         };
         return Ok(Some(BoundTable {
-            alias: tref.alias.clone().unwrap_or_else(|| "OPENXML".to_string()),
+            alias: Arc::from(tref.alias.as_deref().unwrap_or("OPENXML")),
             table: Arc::new(table_def),
             virtual_rows: Some(rows),
         }));
@@ -741,7 +741,7 @@ pub(super) fn bind_openxml(
         foreign_keys: vec![],
     };
     Ok(Some(BoundTable {
-        alias: tref.alias.clone().unwrap_or_else(|| "OPENXML".to_string()),
+        alias: Arc::from(tref.alias.as_deref().unwrap_or("OPENXML")),
         table: Arc::new(table_def),
         virtual_rows: Some(rows),
     }))

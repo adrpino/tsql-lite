@@ -1201,7 +1201,7 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                           (1, 0, 50, 'r1_off'),
                           (2, 1, 50, 'r2_low'),
                           (4, 1, 10, 'r4_only'),
-                          (NULL, 1, 0, 'r_null');
+                          (NULL, 1, 0, 'r9_null');
                       SELECT 'L' AS Side, l.Id, r.Name
                       FROM #JL l
                       LEFT JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal
@@ -1212,8 +1212,27 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                       UNION ALL
                       SELECT 'F' AS Side, l.Id, r.Name
                       FROM #JL l
-                      FULL OUTER JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal;",
-                ordered: false,
+                      FULL OUTER JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal
+                      ORDER BY Side, Id, Name;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "set_op_trailing_order_by_offset_fetch_and_join_where_pushdown",
+                sql: "SELECT Id AS ItemId, Val AS Score FROM #JL WHERE Id IS NOT NULL
+                      UNION ALL
+                      SELECT Id, MinVal FROM #JR WHERE Id IS NOT NULL
+                      ORDER BY ItemId ASC, Score DESC
+                      OFFSET 1 ROWS FETCH NEXT 4 ROWS ONLY;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "left_join_anti_join_where_not_pushed_to_right",
+                sql: "SELECT l.Id, l.Val
+                      FROM #JL l
+                      LEFT JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1
+                      WHERE r.Id IS NULL AND l.Val >= 50
+                      ORDER BY COALESCE(l.Id, 999);",
+                ordered: true,
             },
         ],
     }

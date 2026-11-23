@@ -125,7 +125,7 @@ pub(crate) fn attach_base_rows_from_cte(
         }
         jr.push(crate::executor::model::ContextTable {
             table: std::sync::Arc::new(base_target.table_def.clone()),
-            alias: target_alias.to_string(),
+            alias: std::sync::Arc::from(target_alias),
             row: Some(stored),
             storage_index: Some(base_idx),
             source_aliases: Vec::new(),

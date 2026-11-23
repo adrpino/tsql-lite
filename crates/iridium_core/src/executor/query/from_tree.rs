@@ -65,18 +65,19 @@ pub(crate) fn execute_from_clause(
     node: FromNode,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
-    execute_from_clause_with_predicate(executor, node, None, ctx)
+    execute_from_clause_with_predicate(executor, node, None, true, ctx)
 }
 
 pub(crate) fn execute_from_clause_with_predicate(
     executor: &QueryExecutor<'_>,
     node: FromNode,
     predicate: Option<&crate::ast::Expr>,
+    allow_unqualified: bool,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
     match node {
         FromNode::Table(table_ref) => {
-            execute_table_ref_with_predicate(executor, table_ref, predicate, ctx)
+            execute_table_ref_with_predicate(executor, table_ref, predicate, allow_unqualified, ctx)
         }
         FromNode::Aliased { source, alias } => {
             let source_eval = execute_from_clause(executor, *source, ctx)?;
@@ -88,8 +89,80 @@ pub(crate) fn execute_from_clause_with_predicate(
             right,
             on,
         } => {
-            let left_eval = execute_from_clause(executor, *left, ctx)?;
-            let right_eval = execute_from_clause(executor, *right, ctx)?;
+            // Propagate single-table WHERE predicates down into safe join inputs so leaf
+            // TableScanIterator::fast_filter / IndexSeek can prune rows before join build/probe:
+            //   INNER / CROSS: both left & right are safe to pre-filter
+            //   LEFT:          left side ONLY
+            //   RIGHT:         right side ONLY
+            //   FULL:          neither side
+            let push_left_pred = match join_type {
+                crate::ast::JoinType::Inner
+                | crate::ast::JoinType::Cross
+                | crate::ast::JoinType::Left => predicate,
+                crate::ast::JoinType::Right | crate::ast::JoinType::Full => None,
+            };
+            let push_right_pred = match join_type {
+                crate::ast::JoinType::Inner
+                | crate::ast::JoinType::Cross
+                | crate::ast::JoinType::Right => predicate,
+                crate::ast::JoinType::Left | crate::ast::JoinType::Full => None,
+            };
+
+            let mut left_eval =
+                execute_from_clause_with_predicate(executor, *left, push_left_pred, false, ctx)?;
+            let mut right_eval =
+                execute_from_clause_with_predicate(executor, *right, push_right_pred, false, ctx)?;
+
+            // Push single-side WHERE conjuncts into FilterIterators on the lazy join inputs
+            // before HashJoin builds/probes or NestedLoop iterates.
+            if let Some(pred) = predicate {
+                let mut conjuncts = Vec::new();
+                crate::executor::joins::collect_and_conjuncts(pred, &mut conjuncts);
+                let mut left_filters: Vec<crate::ast::Expr> = Vec::new();
+                let mut right_filters: Vec<crate::ast::Expr> = Vec::new();
+                for c in conjuncts {
+                    match crate::executor::joins::get_expr_side(
+                        c,
+                        &left_eval.shape,
+                        &right_eval.shape,
+                    ) {
+                        crate::executor::joins::JoinSide::Left if push_left_pred.is_some() => {
+                            left_filters.push(c.clone());
+                        }
+                        crate::executor::joins::JoinSide::Right if push_right_pred.is_some() => {
+                            right_filters.push(c.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(lf) = left_filters
+                    .into_iter()
+                    .reduce(|a, b| crate::ast::Expr::Binary {
+                        left: Box::new(a),
+                        op: crate::ast::BinaryOp::And,
+                        right: Box::new(b),
+                    })
+                {
+                    left_eval.iter = Box::new(FilterIterator {
+                        source: left_eval.iter,
+                        predicate: lf,
+                    });
+                }
+                if let Some(rf) =
+                    right_filters
+                        .into_iter()
+                        .reduce(|a, b| crate::ast::Expr::Binary {
+                            left: Box::new(a),
+                            op: crate::ast::BinaryOp::And,
+                            right: Box::new(b),
+                        })
+                {
+                    right_eval.iter = Box::new(FilterIterator {
+                        source: right_eval.iter,
+                        predicate: rf,
+                    });
+                }
+            }
 
             let mut shape = left_eval.shape.clone();
             shape.extend(right_eval.shape.clone());
@@ -197,6 +270,7 @@ fn execute_table_ref_with_predicate(
     executor: &QueryExecutor<'_>,
     table_ref: crate::ast::TableRef,
     predicate: Option<&crate::ast::Expr>,
+    allow_unqualified: bool,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
     let bound = super::binding::bind_table(executor, executor.catalog, table_ref.clone(), ctx)?;
@@ -267,7 +341,7 @@ fn execute_table_ref_with_predicate(
                 .map(|r| {
                     r.iter()
                         .flat_map(|ct| {
-                            let mut aliases = vec![ct.alias.clone()];
+                            let mut aliases = vec![ct.alias.to_string()];
                             if !ct.alias.eq_ignore_ascii_case(&ct.table.name) {
                                 aliases.push(ct.table.name.clone());
                             }
@@ -323,7 +397,7 @@ fn execute_table_ref_with_predicate(
         let fast_filter = if ctx.options.ansi_nulls {
             predicate.and_then(|pred| {
                 let (col_idx, op, rhs_expr) =
-                    super::scan::extract_fast_scan_predicate(pred, &bound)?;
+                    super::scan::extract_fast_scan_predicate(pred, &bound, allow_unqualified)?;
                 let rhs_val = crate::executor::evaluator::eval_expr(
                     &rhs_expr,
                     &[],
@@ -408,7 +482,7 @@ fn execute_table_ref_with_predicate(
             .map(|r| {
                 r.iter()
                     .flat_map(|ct| {
-                        let mut aliases = vec![ct.alias.clone()];
+                        let mut aliases = vec![ct.alias.to_string()];
                         if !ct.alias.eq_ignore_ascii_case(&ct.table.name) {
                             aliases.push(ct.table.name.clone());
                         }
@@ -492,9 +566,10 @@ fn apply_from_alias(
                     .extend((0..ctx_table.table.columns.len()).map(|_| crate::types::Value::Null));
             }
         }
+        let alias_arc: std::sync::Arc<str> = std::sync::Arc::from(alias);
         aliased_rows.push(vec![ContextTable {
             table: alias_table.clone(),
-            alias: alias.to_string(),
+            alias: std::sync::Arc::clone(&alias_arc),
             row: Some(StoredRow {
                 values,
                 deleted: false,
@@ -506,7 +581,7 @@ fn apply_from_alias(
 
     let shape = vec![ContextTable {
         table: alias_table,
-        alias: alias.to_string(),
+        alias: std::sync::Arc::from(alias),
         row: None,
         storage_index: None,
         source_aliases: Vec::new(),

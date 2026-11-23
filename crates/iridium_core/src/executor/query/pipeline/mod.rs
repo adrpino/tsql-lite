@@ -1,9 +1,9 @@
 pub(crate) mod analysis;
 mod distinct;
 pub mod iterator;
-mod order;
+pub(crate) mod order;
 mod order_validation;
-mod pagination;
+pub(crate) mod pagination;
 mod pagination_value;
 mod projection;
 

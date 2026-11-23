@@ -17,10 +17,24 @@ use crate::storage::Storage;
 pub enum AggregateFn {
     Count,
     CountDistinct,
+    CountBig,
+    CountBigDistinct,
     Sum,
+    SumDistinct,
     Avg,
+    AvgDistinct,
     Min,
     Max,
+    Stdev,
+    StdevDistinct,
+    Stdevp,
+    StdevpDistinct,
+    Var,
+    VarDistinct,
+    Varp,
+    VarpDistinct,
+    ChecksumAgg,
+    ChecksumAggDistinct,
     StringAgg,
     JsonObjectAggNull,
     JsonObjectAggAbsent,
@@ -34,10 +48,24 @@ impl AggregateFn {
         match normalize_identifier(name).as_str() {
             "COUNT" => Some(AggregateFn::Count),
             "COUNT_DISTINCT" => Some(AggregateFn::CountDistinct),
+            "COUNT_BIG" => Some(AggregateFn::CountBig),
+            "COUNT_BIG_DISTINCT" => Some(AggregateFn::CountBigDistinct),
             "SUM" => Some(AggregateFn::Sum),
+            "SUM_DISTINCT" => Some(AggregateFn::SumDistinct),
             "AVG" => Some(AggregateFn::Avg),
+            "AVG_DISTINCT" => Some(AggregateFn::AvgDistinct),
             "MIN" => Some(AggregateFn::Min),
             "MAX" => Some(AggregateFn::Max),
+            "STDEV" => Some(AggregateFn::Stdev),
+            "STDEV_DISTINCT" => Some(AggregateFn::StdevDistinct),
+            "STDEVP" => Some(AggregateFn::Stdevp),
+            "STDEVP_DISTINCT" => Some(AggregateFn::StdevpDistinct),
+            "VAR" => Some(AggregateFn::Var),
+            "VAR_DISTINCT" => Some(AggregateFn::VarDistinct),
+            "VARP" => Some(AggregateFn::Varp),
+            "VARP_DISTINCT" => Some(AggregateFn::VarpDistinct),
+            "CHECKSUM_AGG" => Some(AggregateFn::ChecksumAgg),
+            "CHECKSUM_AGG_DISTINCT" => Some(AggregateFn::ChecksumAggDistinct),
             "STRING_AGG" => Some(AggregateFn::StringAgg),
             "JSON_OBJECTAGG" | "__JSON_OBJECTAGG_NULL" => Some(AggregateFn::JsonObjectAggNull),
             "__JSON_OBJECTAGG_ABSENT" => Some(AggregateFn::JsonObjectAggAbsent),
@@ -91,23 +119,59 @@ pub fn dispatch_aggregate(
 ) -> Option<Result<Value, DbError>> {
     let agg = AggregateFn::from_name(name)?;
     match agg {
-        AggregateFn::Count => Some(Ok(eval_aggregate_count(
+        AggregateFn::Count | AggregateFn::CountBig => Some(Ok(eval_aggregate_count(
             args, group, ctx, catalog, storage, clock,
         ))),
-        AggregateFn::CountDistinct => Some(Ok(eval_aggregate_count_distinct(
-            args, group, ctx, catalog, storage, clock,
-        ))),
-        AggregateFn::Sum => Some(eval_aggregate_sum(
-            args, group, ctx, catalog, storage, clock,
+        AggregateFn::CountDistinct | AggregateFn::CountBigDistinct => Some(Ok(
+            eval_aggregate_count_distinct(args, group, ctx, catalog, storage, clock),
         )),
-        AggregateFn::Avg => Some(eval_aggregate_avg(
-            args, group, ctx, catalog, storage, clock,
+        AggregateFn::Sum => Some(eval_aggregate_sum_inner(
+            args, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::SumDistinct => Some(eval_aggregate_sum_inner(
+            args, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::Avg => Some(eval_aggregate_avg_inner(
+            args, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::AvgDistinct => Some(eval_aggregate_avg_inner(
+            args, true, group, ctx, catalog, storage, clock,
         )),
         AggregateFn::Min => Some(eval_aggregate_min(
             args, group, ctx, catalog, storage, clock,
         )),
         AggregateFn::Max => Some(eval_aggregate_max(
             args, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::Stdev => Some(eval_aggregate_stat(
+            args, true, true, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::StdevDistinct => Some(eval_aggregate_stat(
+            args, true, true, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::Stdevp => Some(eval_aggregate_stat(
+            args, false, true, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::StdevpDistinct => Some(eval_aggregate_stat(
+            args, false, true, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::Var => Some(eval_aggregate_stat(
+            args, true, false, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::VarDistinct => Some(eval_aggregate_stat(
+            args, true, false, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::Varp => Some(eval_aggregate_stat(
+            args, false, false, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::VarpDistinct => Some(eval_aggregate_stat(
+            args, false, false, true, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::ChecksumAgg => Some(eval_aggregate_checksum_agg(
+            args, false, group, ctx, catalog, storage, clock,
+        )),
+        AggregateFn::ChecksumAggDistinct => Some(eval_aggregate_checksum_agg(
+            args, true, group, ctx, catalog, storage, clock,
         )),
         AggregateFn::StringAgg => Some(eval_aggregate_string_agg(
             args, group, ctx, catalog, storage, clock,
@@ -182,8 +246,22 @@ pub fn eval_aggregate_count_distinct(
     }
 }
 
-pub fn eval_aggregate_sum(
+fn dedup_aggregate_values(values: Vec<Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::with_capacity(values.len());
+    for v in values {
+        if !out
+            .iter()
+            .any(|existing| compare_values(existing, &v) == std::cmp::Ordering::Equal)
+        {
+            out.push(v);
+        }
+    }
+    out
+}
+
+fn eval_aggregate_sum_inner(
     args: &[Expr],
+    distinct: bool,
     group: &Group,
     ctx: &mut ExecutionContext,
     catalog: &dyn Catalog,
@@ -193,6 +271,14 @@ pub fn eval_aggregate_sum(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("SUM requires 1 argument".into()))?;
+    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
+    if distinct {
+        values = dedup_aggregate_values(values);
+    }
+    sum_values(&values)
+}
+
+fn sum_values(values: &[Value]) -> Result<Value, DbError> {
     let mut sum_i64: i64 = 0;
     let mut sum_f64: f64 = 0.0;
     let mut sum_i128: i128 = 0;
@@ -202,10 +288,10 @@ pub fn eval_aggregate_sum(
     let mut is_float = false;
     let mut is_money = false;
 
-    for val in collect_group_values(expr, group, ctx, catalog, storage, clock) {
+    for val in values {
         if !has_values {
             has_values = true;
-            match &val {
+            match val {
                 Value::Decimal(_, s) => {
                     is_decimal = true;
                     current_scale = *s;
@@ -220,7 +306,7 @@ pub fn eval_aggregate_sum(
             }
         }
 
-        match &val {
+        match val {
             Value::Float(v) => {
                 is_float = true;
                 sum_f64 += f64::from_bits(*v);
@@ -263,8 +349,9 @@ pub fn eval_aggregate_sum(
     }
 }
 
-pub fn eval_aggregate_avg(
+fn eval_aggregate_avg_inner(
     args: &[Expr],
+    distinct: bool,
     group: &Group,
     ctx: &mut ExecutionContext,
     catalog: &dyn Catalog,
@@ -274,7 +361,10 @@ pub fn eval_aggregate_avg(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("AVG requires 1 argument".into()))?;
-    let values = collect_group_values(expr, group, ctx, catalog, storage, clock);
+    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
+    if distinct {
+        values = dedup_aggregate_values(values);
+    }
     if values.is_empty() {
         return Ok(Value::Null);
     }
@@ -304,7 +394,7 @@ pub fn eval_aggregate_avg(
         return Ok(Value::Money(sum_i128 / values.len() as i128));
     }
 
-    let sum = eval_aggregate_sum(args, group, ctx, catalog, storage, clock)?;
+    let sum = sum_values(&values)?;
     let n = values.len() as i128;
     match sum {
         Value::BigInt(v) => {
@@ -326,6 +416,83 @@ pub fn eval_aggregate_avg(
         Value::SmallMoney(v) => Ok(Value::SmallMoney((v as i128 / n) as i64)),
         _ => Ok(Value::Null),
     }
+}
+
+fn value_to_f64_numeric(val: &Value) -> Result<f64, DbError> {
+    match val {
+        Value::TinyInt(v) => Ok(*v as f64),
+        Value::SmallInt(v) => Ok(*v as f64),
+        Value::Int(v) => Ok(*v as f64),
+        Value::BigInt(v) => Ok(*v as f64),
+        Value::Float(bits) => Ok(f64::from_bits(*bits)),
+        Value::Decimal(raw, scale) => Ok(*raw as f64 / 10_f64.powi(*scale as i32)),
+        Value::Money(v) => Ok(*v as f64 / 10_000.0),
+        Value::SmallMoney(v) => Ok(*v as f64 / 10_000.0),
+        _ => Err(DbError::Execution(
+            "Statistical aggregate requires numeric argument".into(),
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_aggregate_stat(
+    args: &[Expr],
+    sample: bool,
+    take_sqrt: bool,
+    distinct: bool,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    let expr = args
+        .first()
+        .ok_or_else(|| DbError::Execution("Statistical aggregate requires 1 argument".into()))?;
+    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
+    if distinct {
+        values = dedup_aggregate_values(values);
+    }
+    let n = values.len();
+    if (sample && n < 2) || (!sample && n == 0) {
+        return Ok(Value::Null);
+    }
+    let mut nums = Vec::with_capacity(n);
+    for v in &values {
+        nums.push(value_to_f64_numeric(v)?);
+    }
+    let mean = nums.iter().sum::<f64>() / n as f64;
+    let sum_sq: f64 = nums.iter().map(|x| (x - mean) * (x - mean)).sum();
+    let denom = if sample { (n - 1) as f64 } else { n as f64 };
+    let variance = sum_sq / denom;
+    let result = if take_sqrt { variance.sqrt() } else { variance };
+    Ok(Value::Float(result.to_bits()))
+}
+
+fn eval_aggregate_checksum_agg(
+    args: &[Expr],
+    distinct: bool,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    let expr = args
+        .first()
+        .ok_or_else(|| DbError::Execution("CHECKSUM_AGG requires 1 argument".into()))?;
+    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
+    if distinct {
+        values = dedup_aggregate_values(values);
+    }
+    let mut acc: i32 = 0;
+    for v in &values {
+        let i = v
+            .to_integer_i64()
+            .ok_or_else(|| DbError::Execution("CHECKSUM_AGG requires integer argument".into()))?;
+        acc ^= i as i32;
+    }
+    Ok(Value::Int(acc))
 }
 
 pub fn eval_aggregate_min(

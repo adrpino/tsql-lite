@@ -1,3 +1,4 @@
+pub(crate) mod bitwise;
 mod builtin_registry;
 pub(crate) mod datetime;
 pub(crate) mod logic;
@@ -7,6 +8,11 @@ pub(crate) mod string;
 pub(crate) mod system;
 pub(crate) mod udf;
 pub(crate) mod vector;
+
+/// Returns `true` if `name` (case-insensitive) is registered as a built-in scalar function.
+pub fn is_builtin_scalar_registered(name: &str) -> bool {
+    builtin_registry::lookup_builtin_handler(&name.to_ascii_uppercase()).is_some()
+}
 
 use crate::ast::Expr;
 use crate::catalog::Catalog;
@@ -62,14 +68,17 @@ pub(crate) fn eval_function(
     }
 
     // Handle aggregates not in grouped context
-    match upper_str {
-        "COUNT" | "SUM" | "AVG" | "COUNT_BIG" => Err(DbError::Execution(format!(
-            "{} is only supported in grouped projection",
-            name
-        ))),
-        "MIN" | "MAX" => Err(DbError::Execution(
-            "MIN/MAX require a FROM clause when used in scalar context (use in GROUP BY)".into(),
-        )),
-        _ => udf::eval_user_scalar_function(name, args, row, ctx, catalog, storage, clock),
+    if is_aggregate_function(upper_str) {
+        return match upper_str {
+            "MIN" | "MAX" => Err(DbError::Execution(
+                "MIN/MAX require a FROM clause when used in scalar context (use in GROUP BY)"
+                    .into(),
+            )),
+            _ => Err(DbError::Execution(format!(
+                "{} is only supported in grouped projection",
+                name
+            ))),
+        };
     }
+    udf::eval_user_scalar_function(name, args, row, ctx, catalog, storage, clock)
 }

@@ -34,9 +34,24 @@ pub(crate) fn deterministic_rand(state: &mut u64) -> f64 {
     bits as f64 / (1u64 << 31) as f64
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static SEQUENTIAL_UUID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 pub(crate) fn eval_newid(ctx: &mut ExecutionContext) -> Value {
     let uuid = deterministic_uuid(&mut *ctx.session.random_state);
     Value::UniqueIdentifier(uuid)
+}
+
+pub(crate) fn eval_newsequentialid() -> Value {
+    let seq = SEQUENTIAL_UUID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let hi: u64 = 0x0001_0000_0000_0000 | (seq & 0x0000_FFFF_FFFF_FFFF);
+    let mut bytes = [0u8; 16];
+    bytes[0..8].copy_from_slice(&hi.to_be_bytes());
+    bytes[8..16].copy_from_slice(&seq.to_be_bytes());
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    Value::UniqueIdentifier(uuid::Uuid::from_bytes(bytes))
 }
 
 pub(crate) fn eval_rand(ctx: &mut ExecutionContext) -> Value {

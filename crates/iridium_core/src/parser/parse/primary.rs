@@ -631,11 +631,47 @@ fn parse_identifier_or_function(parser: &mut Parser, name: String) -> ParseResul
                 }
             });
         }
+        if parts.len() == 1 && parts[0].eq_ignore_ascii_case("ISJSON") {
+            let _ = parser.next(); // consume '('
+            let first = parse_expr(parser)?;
+            let mut args = vec![first];
+            if matches!(parser.peek(), Some(Token::Comma)) {
+                let _ = parser.next();
+                let second = match parser.peek() {
+                    Some(Token::Keyword(Keyword::Value)) => {
+                        let _ = parser.next();
+                        Expr::String("VALUE".into())
+                    }
+                    Some(Token::Identifier(id))
+                        if matches!(
+                            id.to_ascii_uppercase().as_str(),
+                            "VALUE" | "ARRAY" | "OBJECT" | "SCALAR"
+                        ) =>
+                    {
+                        let s = id.to_ascii_uppercase();
+                        let _ = parser.next();
+                        Expr::String(s)
+                    }
+                    _ => parse_expr(parser)?,
+                };
+                args.push(second);
+            }
+            parser.expect_rparen()?;
+            return Ok(Expr::FunctionCall {
+                name: "ISJSON".into(),
+                args,
+                within_group: None,
+            });
+        }
         let _ = parser.next();
         let mut has_distinct = false;
         if parser.at_keyword(Keyword::Distinct) {
             let _ = parser.next();
             has_distinct = true;
+        } else if parser.at_keyword(Keyword::All)
+            && !matches!(parser.peek_at(1), Some(Token::RParen))
+        {
+            let _ = parser.next();
         }
         let args = if matches!(parser.peek(), Some(Token::Star)) {
             let _ = parser.next();

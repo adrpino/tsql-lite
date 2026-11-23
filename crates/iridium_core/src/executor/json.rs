@@ -148,6 +148,28 @@ pub fn is_json(json_str: &str) -> Result<Value, DbError> {
     Ok(Value::Bit(is_valid))
 }
 
+pub fn is_json_typed(json_str: &str, json_type: &str) -> Result<Value, DbError> {
+    let parsed = match serde_json::from_str::<JsonValue>(json_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(Value::Bit(false)),
+    };
+    let matches = match json_type.trim().to_ascii_uppercase().as_str() {
+        "VALUE" => true,
+        "ARRAY" => parsed.is_array(),
+        "OBJECT" => parsed.is_object(),
+        "SCALAR" => {
+            parsed.is_string() || parsed.is_number() || parsed.is_boolean() || parsed.is_null()
+        }
+        other => {
+            return Err(DbError::Execution(format!(
+                "Invalid JSON type constraint '{}' for ISJSON (expected VALUE, ARRAY, OBJECT, or SCALAR)",
+                other
+            )));
+        }
+    };
+    Ok(Value::Bit(matches))
+}
+
 pub fn json_path_exists(json_str: &str, path: &str) -> Result<Value, DbError> {
     let json = parse_json(json_str)?;
     let normalized_path = normalize_json_path(path);

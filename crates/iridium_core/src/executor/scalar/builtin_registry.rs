@@ -11,7 +11,9 @@ use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
 use crate::executor::model::ContextTable;
 use crate::executor::scalar::vector;
-use crate::executor::scalar::{datetime, logic, math, metadata as tsql_metadata, string, system};
+use crate::executor::scalar::{
+    bitwise, datetime, logic, math, metadata as tsql_metadata, string, system,
+};
 use crate::executor::{fuzzy, json, metadata as exec_metadata, regexp};
 
 pub(crate) type ScalarHandler = for<'a> fn(
@@ -44,6 +46,44 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
             return Err(DbError::Execution("NEWID expects no arguments".into()));
         }
         Ok(system::random::eval_newid(ctx))
+    }),
+    builtin!("NEWSEQUENTIALID" => |args, _row, _ctx, _catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("NEWSEQUENTIALID expects no arguments".into()));
+        }
+        Ok(system::random::eval_newsequentialid())
+    }),
+    builtin!("ROWCOUNT_BIG" => |args, _row, ctx, _catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("ROWCOUNT_BIG expects no arguments".into()));
+        }
+        Ok(Value::BigInt(
+            ctx.session
+                .variables
+                .get("@@ROWCOUNT")
+                .and_then(|v| v.1.to_integer_i64())
+                .unwrap_or(0),
+        ))
+    }),
+    builtin!("MIN_ACTIVE_ROWVERSION" => |args, _row, _ctx, catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("MIN_ACTIVE_ROWVERSION expects no arguments".into()));
+        }
+        Ok(Value::Binary(catalog.current_rowversion().to_be_bytes().to_vec()))
+    }),
+    builtin!("CURRENT_TRANSACTION_ID" => |args, _row, ctx, _catalog, _storage, _clock| {
+        if !args.is_empty() {
+            return Err(DbError::Execution("CURRENT_TRANSACTION_ID expects no arguments".into()));
+        }
+        Ok(Value::BigInt(
+            (ctx.session_id() as i64) * 1000 + (ctx.frame.trancount as i64) + 1,
+        ))
+    }),
+    builtin!("GETANSINULL" => |args, _row, _ctx, _catalog, _storage, _clock| {
+        if args.len() > 1 {
+            return Err(DbError::Execution("GETANSINULL expects 0 or 1 arguments".into()));
+        }
+        Ok(Value::Int(1))
     }),
     builtin!("RAND" => |_args, _row, ctx, _catalog, _storage, _clock| {
         Ok(system::random::eval_rand(ctx))
@@ -92,12 +132,6 @@ const SYSTEM_FUNCTIONS: &[BuiltinScalarFunction] = &[
     }),
     builtin!("@@SPID" => |_args, _row, ctx, _catalog, _storage, _clock| {
         Ok(Value::Int(ctx.metadata.id as i32))
-    }),
-    builtin!("@@SERVERNAME" => |_args, _row, _ctx, _catalog, _storage, _clock| {
-        Ok(Value::NVarChar("iridium-wasm-server".into()))
-    }),
-    builtin!("@@VERSION" => |_args, _row, _ctx, _catalog, _storage, _clock| {
-        Ok(Value::NVarChar("PostgreSQL 15.0 on x86_64-pc-linux-gnu (iridium-wasm emulation)".into()))
     }),
     builtin!("@@MAX_CONNECTIONS" => |_args, _row, _ctx, _catalog, _storage, _clock| {
         Ok(Value::Int(100))
@@ -389,8 +423,13 @@ const DATETIME_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("DATE_BUCKET" => datetime::eval_date_bucket),
     builtin!("EOMONTH" => datetime::eval_eomonth),
     builtin!("DATEFROMPARTS" => datetime::eval_datefromparts),
+    builtin!("TIMEFROMPARTS" => datetime::eval_timefromparts),
+    builtin!("SMALLDATETIMEFROMPARTS" => datetime::eval_smalldatetimefromparts),
     builtin!("DATETIMEFROMPARTS" => datetime::eval_datetimefromparts),
     builtin!("DATETIME2FROMPARTS" => datetime::eval_datetime2fromparts),
+    builtin!("DATETIMEOFFSETFROMPARTS" => datetime::eval_datetimeoffsetfromparts),
+    builtin!("CURRENT_TIMEZONE" => datetime::eval_current_timezone),
+    builtin!("CURRENT_TIMEZONE_ID" => datetime::eval_current_timezone_id),
     builtin!("ISDATE" => datetime::eval_isdate),
     builtin!("YEAR" => datetime::eval_year),
     builtin!("MONTH" => datetime::eval_month),
@@ -464,6 +503,11 @@ const MATH_FUNCTIONS: &[BuiltinScalarFunction] = &[
     builtin!("SIGN" => math::eval_sign),
     builtin!("RAND" => math::eval_rand),
     builtin!("CHECKSUM" => math::eval_checksum),
+    builtin!("LEFT_SHIFT" => bitwise::eval_left_shift),
+    builtin!("RIGHT_SHIFT" => bitwise::eval_right_shift),
+    builtin!("BIT_COUNT" => bitwise::eval_bit_count),
+    builtin!("GET_BIT" => bitwise::eval_get_bit),
+    builtin!("SET_BIT" => bitwise::eval_set_bit),
 ];
 
 const LOGIC_FUNCTIONS: &[BuiltinScalarFunction] = &[
@@ -527,14 +571,22 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         json::json_path_exists(&json_val.to_string_value(), &path_val.to_string_value())
     }),
     builtin!("ISJSON" => |args, row, ctx, catalog, storage, clock| {
-        if args.len() != 1 {
-            return Err(DbError::Execution("ISJSON expects 1 argument".into()));
+        if args.is_empty() || args.len() > 2 {
+            return Err(DbError::Execution("ISJSON expects 1 or 2 arguments".into()));
         }
         let json_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
         if json_val.is_null() {
             return Ok(Value::Null);
         }
-        json::is_json(&json_val.to_string_value())
+        if args.len() == 2 {
+            let type_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+            if type_val.is_null() {
+                return Ok(Value::Null);
+            }
+            json::is_json_typed(&json_val.to_string_value(), &type_val.to_string_value())
+        } else {
+            json::is_json(&json_val.to_string_value())
+        }
     }),
     builtin!("JSON_ARRAY_LENGTH" => |args, row, ctx, catalog, storage, clock| {
         if args.len() != 1 {

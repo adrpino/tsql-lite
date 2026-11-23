@@ -1,3 +1,5 @@
+use chrono::{NaiveDate, Timelike};
+
 use crate::ast::Expr;
 use crate::catalog::Catalog;
 use crate::error::DbError;
@@ -874,4 +876,213 @@ pub(crate) fn eval_date_bucket(
     };
 
     Ok(wrap_matching_date_type(&date_val, bucketed))
+}
+
+fn scale_fraction_to_nanos(fractions: i64, precision: i64) -> Result<u32, DbError> {
+    if !(0..=7).contains(&precision) {
+        return Err(DbError::Execution(format!(
+            "Invalid precision '{}' (must be 0..=7)",
+            precision
+        )));
+    }
+    if fractions < 0 {
+        return Err(DbError::Execution(
+            "Invalid negative fractions value".into(),
+        ));
+    }
+    if precision == 0 {
+        if fractions != 0 {
+            return Err(DbError::Execution(
+                "Fractions must be 0 when precision is 0".into(),
+            ));
+        }
+        return Ok(0);
+    }
+    let max_val = 10_i64.pow(precision as u32);
+    if fractions >= max_val {
+        return Err(DbError::Execution(format!(
+            "Fractions '{}' out of range for precision {}",
+            fractions, precision
+        )));
+    }
+    let scale = 10_i64.pow((9 - precision) as u32);
+    Ok((fractions * scale) as u32)
+}
+
+pub(crate) fn eval_timefromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 5 {
+        return Err(DbError::Execution(
+            "TIMEFROMPARTS expects 5 arguments".into(),
+        ));
+    }
+    let mut vals = Vec::with_capacity(5);
+    for a in args {
+        let v = eval_expr(a, row, ctx, catalog, storage, clock)?;
+        if v.is_null() {
+            return Ok(Value::Null);
+        }
+        vals.push(v.to_integer_i64().ok_or_else(|| {
+            DbError::Execution("TIMEFROMPARTS arguments must be integers".into())
+        })?);
+    }
+    let (h, m, s, frac, prec) = (vals[0], vals[1], vals[2], vals[3], vals[4]);
+    let nanos = scale_fraction_to_nanos(frac, prec)?;
+    let time = chrono::NaiveTime::from_hms_nano_opt(h as u32, m as u32, s as u32, nanos)
+        .ok_or_else(|| DbError::Execution("Cannot construct time from invalid parts".into()))?;
+    Ok(Value::Time(time))
+}
+
+pub(crate) fn eval_smalldatetimefromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 5 {
+        return Err(DbError::Execution(
+            "SMALLDATETIMEFROMPARTS expects 5 arguments".into(),
+        ));
+    }
+    let mut vals = Vec::with_capacity(5);
+    for a in args {
+        let v = eval_expr(a, row, ctx, catalog, storage, clock)?;
+        if v.is_null() {
+            return Ok(Value::Null);
+        }
+        vals.push(v.to_integer_i64().ok_or_else(|| {
+            DbError::Execution("SMALLDATETIMEFROMPARTS arguments must be integers".into())
+        })?);
+    }
+    let (y, mo, d, h, mi) = (vals[0], vals[1], vals[2], vals[3], vals[4]);
+    if !(1900..=2079).contains(&y) {
+        return Err(DbError::Execution(
+            "SMALLDATETIMEFROMPARTS year out of range (1900..=2079)".into(),
+        ));
+    }
+    let date = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32).ok_or_else(|| {
+        DbError::Execution("Cannot construct smalldatetime from invalid date parts".into())
+    })?;
+    let dt = date.and_hms_opt(h as u32, mi as u32, 0).ok_or_else(|| {
+        DbError::Execution("Cannot construct smalldatetime from invalid time parts".into())
+    })?;
+    Ok(Value::SmallDateTime(dt))
+}
+
+pub(crate) fn eval_datetimeoffsetfromparts(
+    args: &[Expr],
+    row: &[ContextTable],
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if args.len() != 10 {
+        return Err(DbError::Execution(
+            "DATETIMEOFFSETFROMPARTS expects 10 arguments".into(),
+        ));
+    }
+    let mut vals = Vec::with_capacity(10);
+    for a in args {
+        let v = eval_expr(a, row, ctx, catalog, storage, clock)?;
+        if v.is_null() {
+            return Ok(Value::Null);
+        }
+        vals.push(v.to_integer_i64().ok_or_else(|| {
+            DbError::Execution("DATETIMEOFFSETFROMPARTS arguments must be integers".into())
+        })?);
+    }
+    let (y, mo, d, h, mi, s, frac, off_h, off_m, prec) = (
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], vals[8], vals[9],
+    );
+    if !(-14..=14).contains(&off_h) || !(-59..=59).contains(&off_m) {
+        return Err(DbError::Execution(
+            "DATETIMEOFFSETFROMPARTS offset out of range".into(),
+        ));
+    }
+    if (off_h > 0 && off_m < 0) || (off_h < 0 && off_m > 0) {
+        return Err(DbError::Execution(
+            "DATETIMEOFFSETFROMPARTS hour_offset and minute_offset must have the same sign".into(),
+        ));
+    }
+    let total_off_min = off_h * 60 + off_m;
+    if !(-840..=840).contains(&total_off_min) {
+        return Err(DbError::Execution(
+            "DATETIMEOFFSETFROMPARTS offset must be between -14:00 and +14:00".into(),
+        ));
+    }
+    let nanos = scale_fraction_to_nanos(frac, prec)?;
+    let date = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32).ok_or_else(|| {
+        DbError::Execution("Cannot construct datetimeoffset from invalid date parts".into())
+    })?;
+    let time = chrono::NaiveTime::from_hms_nano_opt(h as u32, mi as u32, s as u32, nanos)
+        .ok_or_else(|| {
+            DbError::Execution("Cannot construct datetimeoffset from invalid time parts".into())
+        })?;
+    let sign = if total_off_min < 0 { '-' } else { '+' };
+    let abs_h = (total_off_min.abs()) / 60;
+    let abs_m = (total_off_min.abs()) % 60;
+    let base = format!(
+        "{} {:02}:{:02}:{:02}",
+        date.format("%Y-%m-%d"),
+        time.hour(),
+        time.minute(),
+        time.second()
+    );
+    let formatted = if prec > 0 {
+        format!(
+            "{}.{:0width$} {}{:02}:{:02}",
+            base,
+            frac,
+            sign,
+            abs_h,
+            abs_m,
+            width = prec as usize
+        )
+    } else {
+        format!("{} {}{:02}:{:02}", base, sign, abs_h, abs_m)
+    };
+    Ok(Value::DateTimeOffset(formatted))
+}
+
+pub(crate) fn eval_current_timezone(
+    args: &[Expr],
+    _row: &[ContextTable],
+    _ctx: &mut ExecutionContext,
+    _catalog: &dyn Catalog,
+    _storage: &dyn Storage,
+    _clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if !args.is_empty() {
+        return Err(DbError::Execution(
+            "CURRENT_TIMEZONE expects 0 arguments".into(),
+        ));
+    }
+    Ok(Value::NVarChar(
+        "(UTC+00:00) Coordinated Universal Time".into(),
+    ))
+}
+
+pub(crate) fn eval_current_timezone_id(
+    args: &[Expr],
+    _row: &[ContextTable],
+    _ctx: &mut ExecutionContext,
+    _catalog: &dyn Catalog,
+    _storage: &dyn Storage,
+    _clock: &dyn Clock,
+) -> Result<Value, DbError> {
+    if !args.is_empty() {
+        return Err(DbError::Execution(
+            "CURRENT_TIMEZONE_ID expects 0 arguments".into(),
+        ));
+    }
+    Ok(Value::NVarChar("UTC".into()))
 }

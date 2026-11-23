@@ -45,7 +45,7 @@ fn test_sp_describe_first_result_set_zero_rows() {
 
 #[test]
 fn test_sp_describe_first_result_set_empty_sql() {
-    let mut engine = Engine::new();
+    let engine = Engine::new();
     let result = engine.execute(parse_sql("EXEC sp_describe_first_result_set N''").unwrap());
     assert!(result.is_err());
 }

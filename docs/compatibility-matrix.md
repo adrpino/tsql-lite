@@ -11,17 +11,16 @@ This document is the current compatibility scoreboard for the project.
 - `shim`: behavior exists mainly to satisfy tooling or client compatibility, not as a full implementation
 - `unsupported`: not implemented for the supported scope
 
-This matrix is the user-facing scoreboard. For the per-axis breakdown
-(`Lexical | Parser | Execution | Metadata | TDS client | Differential parity`)
-that explains *which axis* is the bottleneck behind each row, see
-`docs/sql-server-2025-implementation-status.md`. The two documents are kept
-deliberately separate: a keyword may be lexically reserved by the parser
-(`Lexical: ✅`) while its statement is rejected at execution time
-(`Execution: ❌`) — that case is reported as `unsupported` here and as
-`Lexical: ✅ / Execution: ❌` there. A historical version of the status doc
-previously labeled such cases `✅ Implemented`, which this matrix never
-endorsed; the contradiction is closed by the status doc revision and the
-clarification note at the top of `docs/roadmap.md`'s changelog.
+This matrix is the high-level subsystem scoreboard. For the **code-verified**
+function-by-function inventory (aggregates, window functions, scalar built-ins,
+built-in TVFs, system variables, and `sp_*` procedures — enforced by
+`crates/iridium_core/tests/tsql_function_parity_doc.rs`), see
+[`docs/tsql-function-parity.md`](tsql-function-parity.md).
+
+For partial or unsupported SQL Server areas where the lexer may reserve a
+keyword (`Lexical: ✅`) while execution intentionally rejects it
+(`Execution: ❌`), see the **Per-Axis Parity Breakdown** section at the bottom
+of this document.
 
 The baseline below is seeded from the current README, tests, and explicit code-level limitations. It should be updated alongside feature work.
 
@@ -49,10 +48,11 @@ The baseline below is seeded from the current README, tests, and explicit code-l
 | Common numeric, string, date/time, GUID, `ROWVERSION`, and scalar alias UDTs | compatible subset | Practical T-SQL type set including Unicode literals (`N'...'`), `NVARCHAR`/`NCHAR`, auto-incrementing 8-byte `ROWVERSION`/`TIMESTAMP`, and native scalar alias UDTs (`CREATE TYPE ... FROM`) | `README.md`, `crates/iridium_core/tests/new_string_functions.rs`, `crates/iridium_core/tests/tsql_udt_top_json_series.rs`, `crates/iridium_core/tests/tsql_alter_dbcc_rowversion_xact.rs` |
 | Conversion semantics (`CAST`, `CONVERT`, `TRY_CAST`, `TRY_CONVERT`, `PARSE`, `TRY_PARSE`) | compatible subset | Supported across numeric, string, date/time, binary/GUID, and scalar UDT conversions with length truncation and SQL Server date styles | `README.md`, `crates/iridium_core/tests/try_cast_try_convert.rs`, `crates/iridium_core/tests/sqlserver_conversion.rs` |
 | String built-ins | compatible subset | Extensive support including `LEN`, `DATALENGTH`, `SUBSTRING`, `UPPER`, `LOWER`, `LTRIM`, `RTRIM`, `TRIM`, `REPLACE`, `LEFT`, `RIGHT`, `CHARINDEX`, `ASCII`, `CHAR`, `NCHAR`, `UNICODE`, `CONCAT`, `CONCAT_WS`, `REPLICATE`, `REVERSE`, `STUFF`, `SPACE`, `STR`, `TRANSLATE`, `FORMAT`, `FORMATMESSAGE`, `PATINDEX`, `SOUNDEX`, `DIFFERENCE`, `STRING_AGG`, `STRING_SPLIT`, and `STRING_ESCAPE` | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/new_string_functions.rs` |
-| Math built-ins | compatible subset | Strong coverage including `ABS`, `CEILING`, `FLOOR`, `ROUND`, `SQRT`, `SQUARE`, `POWER`, `EXP`, `LOG`, `LOG10`, `SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`, `ATN2`, `COT`, `DEGREES`, `RADIANS`, `PI`, `SIGN`, `RAND`, and `CHECKSUM` | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/new_math_functions.rs` |
-| Date/time built-ins | compatible subset | Extensive support including `GETDATE`, `CURRENT_TIMESTAMP`, `GETUTCDATE`, `SYSDATETIME`, `SYSUTCDATETIME`, `DATEPART`, `DATENAME`, `DATEDIFF`, `DATEDIFF_BIG`, `DATEADD`, `DATETRUNC`, `DATE_BUCKET`, `EOMONTH`, `ISDATE`, `YEAR`, `MONTH`, `DAY`, `DATEFROMPARTS`, `DATETIMEFROMPARTS`, `DATETIME2FROMPARTS`, `TODATETIMEOFFSET`, `SWITCHOFFSET`, and DST-aware `AT TIME ZONE` | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/sqlserver_dates.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs` |
-| Metadata / system built-ins | compatible subset | Extensive support for metadata functions (`OBJECT_ID`, `OBJECT_NAME`, `OBJECT_DEFINITION`, `SCHEMA_NAME`, `TYPE_ID`, `TYPE_NAME`, `TYPEPROPERTY`, `COLUMNPROPERTY`, `DATABASEPROPERTYEX`, `IDENT_SEED`, `IDENT_INCR`, `IDENT_CURRENT`, `SCOPE_IDENTITY`, `DB_NAME`, `DB_ID`, `PARSENAME`, `QUOTENAME`, `HOST_ID`, `BINARY_CHECKSUM`, `COMPRESS`, `DECOMPRESS`) and system variables (`@@IDENTITY`, `@@ROWCOUNT`, `@@TRANCOUNT`, `@@ERROR`, `@@SPID`, `@@VERSION`, `@@SERVERNAME`, `@@FETCH_STATUS`, `@@NESTLEVEL`, `@@DATEFIRST`, `@@MICROSOFTVERSION`) | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/new_system_functions.rs`, `crates/iridium_core/tests/tsql_udt_top_json_series.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs` |
-| Logic and JSON functions | compatible subset | Logic (`ISNULL`, `COALESCE`, `IIF`, `NULLIF`, `CHOOSE`, `GREATEST`, `LEAST`, `ISNUMERIC`, `IS [NOT] DISTINCT FROM`) and JSON (`JSON_VALUE`, `JSON_QUERY`, `JSON_MODIFY`, `ISJSON`, `JSON_ARRAY_LENGTH`, `JSON_KEYS`, `JSON_PATH_EXISTS`, `JSON_OBJECT`, `JSON_ARRAY`, `JSON_OBJECTAGG`, `JSON_ARRAYAGG`, `OPENJSON`, `FOR JSON PATH/AUTO`) | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/new_logic_functions.rs`, `crates/iridium_core/tests/r7/r7_json_functions.rs`, `crates/iridium_core/tests/tsql_udt_top_json_series.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs` |
+| Math & Bitwise built-ins | compatible subset | Strong coverage including `ABS`, `CEILING`, `FLOOR`, `ROUND`, `SQRT`, `SQUARE`, `POWER`, `EXP`, `LOG`, `LOG10`, `SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`, `ATN2`, `COT`, `DEGREES`, `RADIANS`, `PI`, `SIGN`, `RAND`, `CHECKSUM`, and SQL Server 2022 bitwise functions (`LEFT_SHIFT`, `RIGHT_SHIFT`, `BIT_COUNT`, `GET_BIT`, `SET_BIT`) | `docs/tsql-function-parity.md`, `crates/iridium_core/tests/new_math_functions.rs`, `crates/iridium_core/tests/tsql_aggregates_bitwise_dates_system.rs` |
+| Date/time built-ins | compatible subset | Full practical coverage including `GETDATE`, `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMEZONE`, `CURRENT_TIMEZONE_ID`, `GETUTCDATE`, `SYSDATETIME`, `SYSUTCDATETIME`, `SYSDATETIMEOFFSET`, `DATEPART`, `DATENAME`, `DATEDIFF`, `DATEDIFF_BIG`, `DATEADD`, `DATETRUNC`, `DATE_BUCKET`, `EOMONTH`, `ISDATE`, `YEAR`, `MONTH`, `DAY`, `DATEFROMPARTS`, `TIMEFROMPARTS`, `SMALLDATETIMEFROMPARTS`, `DATETIMEFROMPARTS`, `DATETIME2FROMPARTS`, `DATETIMEOFFSETFROMPARTS`, `TODATETIMEOFFSET`, `SWITCHOFFSET`, and DST-aware `AT TIME ZONE` | `docs/tsql-function-parity.md`, `crates/iridium_core/tests/sqlserver_dates.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs`, `crates/iridium_core/tests/tsql_aggregates_bitwise_dates_system.rs` |
+| Aggregates | compatible subset | `COUNT`, `COUNT_BIG`, `SUM`, `AVG`, `MIN`, `MAX`, `STDEV`, `STDEVP`, `VAR`, `VARP`, `CHECKSUM_AGG` (all supporting `ALL`/`DISTINCT` and `OVER (...)`), `STRING_AGG`, `JSON_OBJECTAGG`, `JSON_ARRAYAGG`, `GROUPING`, `GROUPING_ID` | `docs/tsql-function-parity.md`, `crates/iridium_core/src/executor/aggregates.rs`, `crates/iridium_core/tests/tsql_aggregates_bitwise_dates_system.rs` |
+| Metadata / system built-ins | compatible subset | Extensive support for metadata functions (`OBJECT_ID`, `OBJECT_NAME`, `OBJECT_DEFINITION`, `SCHEMA_NAME`, `TYPE_ID`, `TYPE_NAME`, `TYPEPROPERTY`, `COLUMNPROPERTY`, `DATABASEPROPERTYEX`, `IDENT_SEED`, `IDENT_INCR`, `IDENT_CURRENT`, `SCOPE_IDENTITY`, `DB_NAME`, `DB_ID`, `PARSENAME`, `QUOTENAME`, `HOST_ID`, `BINARY_CHECKSUM`, `COMPRESS`, `DECOMPRESS`, `ROWCOUNT_BIG`, `NEWID`, `NEWSEQUENTIALID`, `MIN_ACTIVE_ROWVERSION`, `CURRENT_TRANSACTION_ID`, `GETANSINULL`) and system variables (`@@IDENTITY`, `@@ROWCOUNT`, `@@TRANCOUNT`, `@@ERROR`, `@@SPID`, `@@VERSION`, `@@SERVERNAME`, `@@FETCH_STATUS`, `@@NESTLEVEL`, `@@DATEFIRST`, `@@MICROSOFTVERSION`) | `docs/tsql-function-parity.md`, `crates/iridium_core/tests/new_system_functions.rs`, `crates/iridium_core/tests/tsql_udt_top_json_series.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs`, `crates/iridium_core/tests/tsql_aggregates_bitwise_dates_system.rs` |
+| Logic and JSON functions | compatible subset | Logic (`ISNULL`, `COALESCE`, `IIF`, `NULLIF`, `CHOOSE`, `GREATEST`, `LEAST`, `ISNUMERIC`, `IS [NOT] DISTINCT FROM`) and JSON (`JSON_VALUE`, `JSON_QUERY`, `JSON_MODIFY`, `ISJSON` 1-arg & 2-arg `VALUE`/`ARRAY`/`OBJECT`/`SCALAR`, `JSON_ARRAY_LENGTH`, `JSON_KEYS`, `JSON_PATH_EXISTS`, `JSON_OBJECT`, `JSON_ARRAY`, `JSON_OBJECTAGG`, `JSON_ARRAYAGG`, `OPENJSON`, `FOR JSON PATH/AUTO`) | `docs/tsql-function-parity.md`, `crates/iridium_core/tests/new_logic_functions.rs`, `crates/iridium_core/tests/r7/r7_json_functions.rs`, `crates/iridium_core/tests/tsql_udt_top_json_series.rs`, `crates/iridium_core/tests/tsql_triggers_distinct_dates_json_window.rs`, `crates/iridium_core/tests/tsql_aggregates_bitwise_dates_system.rs` |
 | Session and Connection built-ins | compatible subset | Support for `CONNECTIONPROPERTY`, `SESSIONPROPERTY`, `CONTEXT_INFO()`, `SESSION_CONTEXT()`, `SUSER_SID()`, `USER_SID()`, and `SUSER_NAME()` | `crates/iridium_core/src/executor/scalar/system/properties.rs`, `crates/iridium_core/tests/session_state_test.rs` |
 | Extended / Non-standard built-ins | exact | Specialized functions unique to Iridium SQL including RegEx (`REGEXP_LIKE`, `REGEXP_REPLACE`, `REGEXP_SUBSTR`, `REGEXP_INSTR`, `REGEXP_COUNT`) and Fuzzy Matching (`EDIT_DISTANCE`, `EDIT_DISTANCE_SIMILARITY`, `JARO_WINKLER_DISTANCE`, `JARO_WINKLER_SIMILARITY`) | `crates/iridium_core/src/executor/scalar/builtin_registry.rs`, `crates/iridium_core/tests/r7/r7_regexp_functions.rs`, `crates/iridium_core/tests/r7/r7_fuzzy_matching.rs` |
 | Collation and type-fidelity behavior | compatible subset | Per-column `collation_name` stored and exposed in `sys.columns` / `INFORMATION_SCHEMA.COLUMNS`, and `COLLATE` expression modifier evaluates `_CS_`/`_BIN` vs `_CI_` in comparisons, `LIKE`, `IN`, `ORDER BY`, and `GROUP BY`; accent-sensitivity and locale sort orders are not yet modeled | `crates/iridium_core/tests/tsql_schema_transfer_and_collation.rs` |
@@ -117,16 +117,34 @@ The baseline below is seeded from the current README, tests, and explicit code-l
 | Area | Status | Notes | Evidence |
 |---|---|---|---|
 | Playground server for local tooling | shim | Useful for compatibility testing, not a SQL Server-equivalent admin surface | `README.md`, `crates/iridium_server/src/playground/*`, `scripts/start-playground-sa.ps1` |
-| Backup / restore | unsupported | No implementation present. `BACKUP`/`RESTORE` are lexically reserved (`parser/token/keyword.rs:`) but `phase7_admin_classification.rs` asserts execution fails; see `docs/sql-server-2025-implementation-status.md` for the per-axis breakdown | aggregate repo state, `crates/iridium_core/tests/phase7_admin_classification.rs` |
+| Backup / restore | unsupported | No implementation present. `BACKUP`/`RESTORE` are lexically reserved (`parser/token/keyword.rs`) and `phase7_admin_classification.rs` asserts execution fails; see the per-axis breakdown below | aggregate repo state, `crates/iridium_core/tests/phase7_admin_classification.rs` |
 | SQL Agent | unsupported | No implementation present | aggregate repo state |
 | Linked servers | unsupported | No implementation present | aggregate repo state |
 | Service Broker | unsupported | No implementation present | aggregate repo state |
-| CDC / replication / temporal / partitioning / columnstore / full-text / SQLCLR | unsupported | No implementation present | aggregate repo state |
+| CDC / replication / temporal / columnstore / full-text / SQLCLR | unsupported | No implementation present (partitioning metadata DDL is persisted in catalog per the Metadata section above; physical partitioned storage routing is not yet implemented) | aggregate repo state |
+
+## Per-Axis Parity Breakdown (Partial & Unsupported Features)
+
+Where a feature is partially supported or intentionally rejected, this table
+separates lexical recognition from parser, executor, metadata, and wire support
+(consolidated from the former `sql-server-2025-implementation-status.md`):
+
+| Feature / Keyword | Lexical | Parser | Execution | Metadata | TDS Client | Notes |
+|---|:---:|:---:|:---:|:---:|:---:|---|
+| `BACKUP` / `RESTORE` | ✅ | ❌ | ❌ | — | ❌ | Lexically reserved; `phase7_admin_classification.rs` asserts execution fails |
+| `BULK INSERT` | ✅ | ✅ | 📝 | — | 📝 | Shim converting rows into individual `INSERT` statements |
+| `CLUSTERED` | ✅ | ✅ | 📝 | ✅ | 📝 | Parsed and cataloged; storage engine is not physically B-tree clustered |
+| `COLLATE` | ✅ | ✅ | 📝 | ✅ | 📝 | Per-column metadata + `_CS_`/`_BIN` vs `_CI_` comparison/sorting enforced; accent sensitivity & locale sort orders not modeled |
+| `CONTAINS` / `FREETEXT` / `CONTAINSTABLE` / `FREETEXTTABLE` | ✅ | ❌ | ❌ | 📝 | ❌ | Full-text search execution unsupported (`sys.fulltext_indexes` catalog metadata only) |
+| `PARTITION FUNCTION` / `PARTITION SCHEME` / `FILEGROUP` | ✅ | ✅ | 📝 | ✅ | 📝 | Persisted in catalog (`sys.partition_*`, `sys.filegroups`, `sys.data_spaces`); physical partitioned storage routing not implemented |
+| `GRANT` / `DENY` / `REVOKE` / `USER` / `ROLE` | ✅ | ✅ | 📝 | ✅ | 📝 | Persisted in catalog (`sys.database_principals`/`role_members`/`permissions`); runtime access-control enforcement not yet active |
+| `COMPUTE` / `BROWSE` / `READTEXT` / `WRITETEXT` / `UPDATETEXT` | ✅ | ❌ | ❌ | — | ❌ | Deprecated/legacy T-SQL syntax; lexically reserved only |
+| `OPENROWSET` / `OPENQUERY` / `OPENDATASOURCE` / `OPENXML` | ✅ | ❌ | ❌ | — | ❌ | External/legacy rowset TVFs unsupported |
+| `REPLICATION` / `SERVICE BROKER` / `SQL AGENT` | ✅ | ❌ | ❌ | ❌ | ❌ | Out of scope for embedded single-node engine |
 
 ## Immediate Gaps to Convert into Work
 
 - Expand the matrix row-by-row with exact source links once features change.
-- Split `compatible subset` rows into finer-grained subfeatures where the status is hiding too much variability.
+- Keep [`docs/tsql-function-parity.md`](tsql-function-parity.md) synced (enforced automatically by `tsql_function_parity_doc`).
 - Replace `aggregate repo state` evidence with concrete doc and test references as features are implemented.
-- Add a dated snapshot section once the matrix starts changing frequently.
 

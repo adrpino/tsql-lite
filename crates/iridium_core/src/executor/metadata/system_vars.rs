@@ -98,6 +98,12 @@ static SYSTEM_VARIABLES: &[SystemVariable] = &[
     },
 ];
 
+pub fn is_system_variable_registered(name: &str) -> bool {
+    SYSTEM_VARIABLES
+        .iter()
+        .any(|var| var.name.eq_ignore_ascii_case(name))
+}
+
 pub(crate) fn resolve_system_variable(
     name: &str,
     ctx: &ExecutionContext,

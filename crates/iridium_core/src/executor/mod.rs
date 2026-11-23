@@ -46,3 +46,7 @@ pub(crate) mod value_helpers;
 pub(crate) mod value_ops;
 pub mod wal;
 pub(crate) mod window;
+
+pub use aggregates::is_aggregate_function;
+pub use metadata::system_vars::is_system_variable_registered;
+pub use scalar::is_builtin_scalar_registered;

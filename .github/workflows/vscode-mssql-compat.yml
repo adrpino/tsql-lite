@@ -250,12 +250,14 @@ jobs:
           done
           exit 1
 
-      - name: Build compat-query + recapture
+      - name: Run Rust SQL Server differential parity suite
+        env:
+          SQLSERVER_HOST: 127.0.0.1
+          SQLSERVER_PORT: "11433"
+          SQLSERVER_USER: sa
+          SQLSERVER_PASSWORD: Test@12345
         run: |
-          cargo build --release -p iridium_server --bin compat-query
-          # The recapture tooling lives in scripts/compat-runner (C#). It writes
-          # normalized JSON captures into tests/vscode_mssql/fixtures/capture/.
-          pwsh scripts/test-compat.ps1 -Recapture
+          cargo test -p iridium_core --test sqlserver_differential -- --ignored --nocapture
 
       - name: Commit recaptured fixtures
         env:

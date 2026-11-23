@@ -31,8 +31,8 @@ Priority values:
 - Priority: P0
 - Goal: compare behavior, not just values
 - Primary areas:
-  - `scripts/test-compat.ps1`
-  - `scripts/compat-runner/*`
+  - `scripts/test-compat.sh` / `scripts/test-compat.ps1`
+  - `crates/iridium_core/tests/sqlserver_differential.rs`
 - Deliverables:
   - compare rowcount
   - compare column names and type shape

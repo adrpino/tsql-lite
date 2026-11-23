@@ -168,6 +168,25 @@ where
                 let workspace = workspace_slot.as_mut().ok_or_else(|| {
                     DbError::Execution("ROLLBACK without active transaction".into())
                 })?;
+                // Preserve @table variable definitions and rows across ROLLBACK (SQL Server semantics)
+                let saved_table_vars: Vec<(
+                    crate::catalog::TableDef,
+                    Vec<crate::storage::StoredRow>,
+                )> = ctx
+                    .session
+                    .var_map
+                    .values()
+                    .filter_map(|physical| {
+                        let tdef = workspace.catalog.find_table("dbo", physical)?.clone();
+                        let rows = workspace
+                            .storage
+                            .scan_rows(tdef.id)
+                            .ok()?
+                            .collect::<Result<Vec<_>, _>>()
+                            .ok()?;
+                        Some((tdef, rows))
+                    })
+                    .collect();
                 let mut extra = ctx.create_snapshot(session_options);
                 let full_rollback = tx_manager.rollback(
                     savepoint.clone(),
@@ -193,6 +212,23 @@ where
                             drop(storage_guard);
                         }
                     }
+                    if !saved_table_vars.is_empty() {
+                        let mut storage_guard = state.storage.write();
+                        for (tdef, rows) in saved_table_vars {
+                            if storage_guard
+                                .catalog
+                                .find_table("dbo", &tdef.name)
+                                .is_none()
+                            {
+                                storage_guard.catalog.register_table(tdef.clone());
+                            }
+                            let _ = storage_guard.storage.remove_table(tdef.id);
+                            let _ = storage_guard.storage.ensure_table(tdef.id);
+                            for row in rows {
+                                let _ = storage_guard.storage.insert_row(tdef.id, row);
+                            }
+                        }
+                    }
                     tx_manager.active = None;
                     tx_manager.depth = 0;
                     tx_manager.xact_state = 0;
@@ -207,6 +243,16 @@ where
                     }
                     *workspace_slot = None;
                 } else {
+                    for (tdef, rows) in saved_table_vars {
+                        if workspace.catalog.find_table("dbo", &tdef.name).is_none() {
+                            workspace.catalog.register_table(tdef.clone());
+                        }
+                        let _ = workspace.storage.remove_table(tdef.id);
+                        let _ = workspace.storage.ensure_table(tdef.id);
+                        for row in rows {
+                            let _ = workspace.storage.insert_row(tdef.id, row);
+                        }
+                    }
                     if let Some(ref sp_name) = savepoint {
                         state.wal_savepoint(tx_id, sp_name);
                     }

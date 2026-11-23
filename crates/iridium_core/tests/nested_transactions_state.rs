@@ -71,11 +71,7 @@ fn test_table_var_restoration_on_savepoint_rollback() {
 
     engine.exec("SAVE TRANSACTION sp1").unwrap();
 
-    // In our implementation, table variables ARE backed by real tables in the workspace.
-    // If we rollback, the table variable mapping should also be rolled back if it was created AFTER the savepoint.
-    // But here it was created BEFORE. So the mapping remains, but let's see if its content is rolled back.
-    // Actually, table variable content IS transactional in our implementation because it's in the workspace storage.
-
+    // In SQL Server, table variables (@tv) are immune to transaction and savepoint rollbacks.
     engine.exec("INSERT INTO @tv VALUES (2)").unwrap();
     let r = engine.query("SELECT COUNT(*) FROM @tv").unwrap();
     assert_eq!(r.rows[0][0], Value::BigInt(2));
@@ -83,7 +79,7 @@ fn test_table_var_restoration_on_savepoint_rollback() {
     engine.exec("ROLLBACK TRANSACTION sp1").unwrap();
 
     let r = engine.query("SELECT COUNT(*) FROM @tv").unwrap();
-    assert_eq!(r.rows[0][0], Value::BigInt(1));
+    assert_eq!(r.rows[0][0], Value::BigInt(2));
 
     engine.exec("COMMIT").unwrap();
 }

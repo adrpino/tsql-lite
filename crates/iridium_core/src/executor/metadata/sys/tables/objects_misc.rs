@@ -867,6 +867,22 @@ impl VirtualTable for SysSqlExpressionDependencies {
                     true,
                 ),
                 ("is_schema_bound", DataType::Bit, false),
+                (
+                    "referenced_schema_name",
+                    DataType::VarChar { max_len: 128 },
+                    true,
+                ),
+                (
+                    "referenced_entity_name",
+                    DataType::VarChar { max_len: 128 },
+                    true,
+                ),
+                (
+                    "referenced_database_name",
+                    DataType::VarChar { max_len: 128 },
+                    true,
+                ),
+                ("is_schema_bound_reference", DataType::Bit, false),
             ],
         )
     }

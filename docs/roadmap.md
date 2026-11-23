@@ -80,7 +80,7 @@ Current status tracking lives in:
 
 The project needs explicit references for truth:
 
-- Semantic oracle: Azure SQL Edge via `scripts/test-compat.ps1` and `scripts/compat-runner`
+- Semantic oracle: Live SQL Server 2022 via cross-platform Rust differential suite (`crates/iridium_core/tests/sqlserver_differential.rs`, launched via `scripts/test-compat.sh` / `scripts/test-compat.ps1`)
 - Tooling oracle: SSMS Object Explorer contract replay in `crates/iridium_server/tests/ssms_object_explorer_contract.rs`
 - Client oracle: `sqlcmd`, SSMS, Azure Data Studio, `tedious`, `tiberius`, and other drivers added phase by phase
 - Local regression oracle: `cargo test -p iridium_core`, `cargo test -p iridium_server`, and targeted integration suites

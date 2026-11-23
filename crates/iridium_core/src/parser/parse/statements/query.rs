@@ -1246,6 +1246,22 @@ fn parse_required_alias(parser: &mut Parser) -> ParseResult<String> {
 }
 
 pub fn parse_select_item(parser: &mut Parser) -> ParseResult<SelectItem> {
+    // T-SQL column alias assignment syntax: `SELECT alias = expr` (distinct from `@var = expr`)
+    if let Some(Token::Identifier(alias)) = parser.peek() {
+        if !alias.starts_with('@')
+            && !crate::parser::parse::expressions::is_stop_keyword(alias)
+            && matches!(parser.peek_at(1), Some(Token::Operator(op)) if op == "=")
+        {
+            let alias = alias.clone();
+            let _ = parser.next(); // alias
+            let _ = parser.next(); // =
+            let expr = crate::parser::parse::expressions::parse_expr(parser)?;
+            return Ok(SelectItem {
+                expr,
+                alias: Some(alias),
+            });
+        }
+    }
     let expr = crate::parser::parse::expressions::parse_expr(parser)?;
     let alias = if let Some(Token::Keyword(k)) = parser.peek() {
         if *k == Keyword::As {

@@ -23,6 +23,9 @@ parking_lot = "0.12"
 dashmap = "6.1.0"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+md-5 = { version = "0.10", default-features = false }
+sha1 = { version = "0.10", default-features = false }
+sha2 = { version = "0.10", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }

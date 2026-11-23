@@ -456,7 +456,11 @@ fn scalar_strings_math_dates_crypto_sql2019() -> DiffSuite {
                 label: "compress_decompress_and_hashbytes",
                 sql: "SELECT
                         CAST(DECOMPRESS(COMPRESS('hello gzip roundtrip')) AS VARCHAR(MAX)),
-                        HASHBYTES('SHA2_256', 'hello');",
+                        HASHBYTES('MD5', 'hello'),
+                        HASHBYTES('SHA1', 'hello'),
+                        HASHBYTES('SHA2_256', 'hello'),
+                        HASHBYTES('SHA2_512', 'hello'),
+                        HASHBYTES('SHA2_256', N'hello');",
                 ordered: true,
             },
             DiffStep::Query {

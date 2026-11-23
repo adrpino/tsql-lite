@@ -119,6 +119,7 @@ pub enum SessionStatement {
     SetContextInfo(Expr),
     ExecuteAs(String),
     Revert,
+    Checkpoint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

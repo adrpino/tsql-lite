@@ -12,7 +12,9 @@ use crate::tds::prelogin::{
     build_prelogin_response, parse_prelogin, ENCRYPT_NOT_SUP, ENCRYPT_OFF, ENCRYPT_ON,
     ENCRYPT_REQUIRED,
 };
-use crate::tds::rpc::{build_param_preamble, build_param_preamble_with_decls};
+use crate::tds::rpc::{
+    build_param_preamble, build_param_preamble_with_decls, build_stored_proc_exec,
+};
 use crate::tds::rpc::{parse_param_decl, parse_rpc, CatalogProc, CursorOp, RpcRequest};
 use crate::tds::tokens;
 use crate::tds_tls_io::TdsTlsIo;
@@ -303,6 +305,28 @@ impl TdsSession {
                                         Ok(_) => {}
                                         Err(e) => {
                                             log::error!("RPC SQL error: {}", e);
+                                            let err_resp = build_error_response(&e);
+                                            let _ = packet::write_packet(
+                                                &mut writer,
+                                                TABULAR_RESULT,
+                                                &err_resp.data,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                RpcRequest::StoredProcedure(sp_req) => {
+                                    let full_sql =
+                                        build_stored_proc_exec(&sp_req.name, &sp_req.params);
+                                    log::debug!(
+                                        "[conn={}] StoredProcedure RPC: {}",
+                                        self.connection_id,
+                                        full_sql
+                                    );
+                                    match self.execute_sql(full_sql.trim(), &mut writer).await {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            log::error!("RPC StoredProcedure error: {}", e);
                                             let err_resp = build_error_response(&e);
                                             let _ = packet::write_packet(
                                                 &mut writer,

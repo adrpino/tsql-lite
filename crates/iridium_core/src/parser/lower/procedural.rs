@@ -484,6 +484,9 @@ pub fn lower_session(session: ast::SessionStatement) -> Result<executor_ast::Sta
         ast::SessionStatement::Revert => Ok(executor_ast::Statement::Session(
             executor_ast::statements::SessionStatement::Revert,
         )),
+        ast::SessionStatement::Checkpoint => Ok(executor_ast::Statement::Session(
+            executor_ast::statements::SessionStatement::Checkpoint,
+        )),
     }
 }
 

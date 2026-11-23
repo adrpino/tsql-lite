@@ -39,6 +39,7 @@ fn is_statement_starter(tok: Option<&Token>) -> bool {
                 | Keyword::End
                 | Keyword::Else
                 | Keyword::RaiseError
+                | Keyword::Checkpoint
         ),
         _ => false,
     }

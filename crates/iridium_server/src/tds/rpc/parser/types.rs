@@ -9,6 +9,7 @@ pub(crate) enum RpcProcSelector {
 #[derive(Debug, Clone)]
 pub enum RpcRequest {
     Sql(SqlRpcRequest),
+    StoredProcedure(StoredProcedureRpcRequest),
     Cursor(CursorRpcRequest),
     Prepare(PrepareRpcRequest),
     Execute(ExecuteRpcRequest),
@@ -16,6 +17,12 @@ pub enum RpcRequest {
     PrepExec(PrepExecRpcRequest),
     ResetConnection,
     Catalog(CatalogRpcRequest),
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredProcedureRpcRequest {
+    pub name: String,
+    pub params: Vec<RpcParam>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

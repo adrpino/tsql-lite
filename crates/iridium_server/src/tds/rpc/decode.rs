@@ -53,45 +53,102 @@ pub(super) fn read_typed_value(r: &mut PacketReader, type_id: u8) -> io::Result<
             };
             Ok(scalar("FLOAT".into(), format!("{}", val)))
         }
-        // NVARCHARTYPE
-        0xE7 => {
+        // NVARCHARTYPE / NCHARTYPE
+        0xE7 | 0xEF => {
             if r.remaining() < 7 {
                 return Ok(scalar("NVARCHAR(MAX)".into(), "NULL".into()));
             }
             let max_len = r.read_u16_le()?;
             r.skip(5)?;
-            let actual_len = r.read_u16_le()? as usize;
-            if actual_len == 0xFFFF || r.remaining() < actual_len {
+            if max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => {
+                        let s = decode_utf16le(&bytes);
+                        Ok(scalar(
+                            "NVARCHAR(MAX)".into(),
+                            format!("N'{}'", s.replace('\'', "''")),
+                        ))
+                    }
+                    None => Ok(scalar("NVARCHAR(MAX)".into(), "NULL".into())),
+                };
+            }
+            if r.remaining() < 2 {
                 return Ok(scalar("NVARCHAR(MAX)".into(), "NULL".into()));
+            }
+            let actual_len = r.read_u16_le()? as usize;
+            let ty = if type_id == 0xEF {
+                format!("NCHAR({})", (max_len / 2).max(1))
+            } else {
+                format!("NVARCHAR({})", (max_len / 2).max(1))
+            };
+            if actual_len == 0xFFFF || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
             }
             let bytes = r.read_bytes(actual_len)?;
             let s = decode_utf16le(bytes);
-            let ty = if max_len == 0xFFFF {
-                "NVARCHAR(MAX)".to_string()
-            } else {
-                format!("NVARCHAR({})", max_len / 2)
-            };
             Ok(scalar(ty, format!("N'{}'", s.replace('\'', "''"))))
         }
-        // BIGVARCHARTYPE
-        0xA7 => {
+        // BIGVARCHARTYPE / BIGCHARTYPE
+        0xA7 | 0xAF => {
             if r.remaining() < 7 {
                 return Ok(scalar("VARCHAR(MAX)".into(), "NULL".into()));
             }
             let max_len = r.read_u16_le()?;
             r.skip(5)?;
-            let actual_len = r.read_u16_le()? as usize;
-            if actual_len == 0xFFFF || r.remaining() < actual_len {
+            if max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => {
+                        let s = String::from_utf8_lossy(&bytes).to_string();
+                        Ok(scalar(
+                            "VARCHAR(MAX)".into(),
+                            format!("'{}'", s.replace('\'', "''")),
+                        ))
+                    }
+                    None => Ok(scalar("VARCHAR(MAX)".into(), "NULL".into())),
+                };
+            }
+            if r.remaining() < 2 {
                 return Ok(scalar("VARCHAR(MAX)".into(), "NULL".into()));
+            }
+            let actual_len = r.read_u16_le()? as usize;
+            let ty = if type_id == 0xAF {
+                format!("CHAR({})", max_len.max(1))
+            } else {
+                format!("VARCHAR({})", max_len.max(1))
+            };
+            if actual_len == 0xFFFF || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
             }
             let bytes = r.read_bytes(actual_len)?;
             let s = String::from_utf8_lossy(bytes).to_string();
-            let ty = if max_len == 0xFFFF {
-                "VARCHAR(MAX)".to_string()
-            } else {
-                format!("VARCHAR({})", max_len)
-            };
             Ok(scalar(ty, format!("'{}'", s.replace('\'', "''"))))
+        }
+        // BIGVARBINARYTYPE / BIGBINARYTYPE
+        0xA5 | 0xAD => {
+            if r.remaining() < 2 {
+                return Ok(scalar("VARBINARY(MAX)".into(), "NULL".into()));
+            }
+            let max_len = r.read_u16_le()?;
+            if max_len == 0xFFFF {
+                return match read_plp_bytes(r)? {
+                    Some(bytes) => Ok(scalar("VARBINARY(MAX)".into(), format_hex_literal(&bytes))),
+                    None => Ok(scalar("VARBINARY(MAX)".into(), "NULL".into())),
+                };
+            }
+            if r.remaining() < 2 {
+                return Ok(scalar("VARBINARY(MAX)".into(), "NULL".into()));
+            }
+            let actual_len = r.read_u16_le()? as usize;
+            let ty = if type_id == 0xAD {
+                format!("BINARY({})", max_len.max(1))
+            } else {
+                format!("VARBINARY({})", max_len.max(1))
+            };
+            if actual_len == 0xFFFF || r.remaining() < actual_len {
+                return Ok(scalar(ty, "NULL".into()));
+            }
+            let bytes = r.read_bytes(actual_len)?;
+            Ok(scalar(ty, format_hex_literal(bytes)))
         }
         // NTEXTTYPE
         0x63 => {
@@ -150,38 +207,98 @@ pub(super) fn read_typed_value(r: &mut PacketReader, type_id: u8) -> io::Result<
             }
             Ok(scalar(ty, format_decimal(val, scale)))
         }
-        // GUIDTYPE
+        // GUIDTYPE: TYPE_INFO has max_len (u8=16), followed by actual_len (u8=0|16) + 16 bytes.
         0x24 => {
+            let _max_len = r.read_u8()?;
             let actual_len = r.read_u8()?;
             if actual_len == 0 || r.remaining() < 16 {
                 return Ok(scalar("UNIQUEIDENTIFIER".into(), "NULL".into()));
             }
             let b = r.read_bytes(16)?;
-            let guid = format!(
-                "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-                b[3],
-                b[2],
-                b[1],
-                b[0],
-                b[5],
-                b[4],
-                b[7],
-                b[6],
-                b[8],
-                b[9],
-                b[10],
-                b[11],
-                b[12],
-                b[13],
-                b[14],
-                b[15]
-            );
-            Ok(scalar("UNIQUEIDENTIFIER".into(), format!("'{}'", guid)))
+            Ok(scalar(
+                "UNIQUEIDENTIFIER".into(),
+                format!("'{}'", format_guid_bytes(b)),
+            ))
+        }
+        // Fixed-length integer/bit/float types
+        0x30 => {
+            let v = r.read_u8()?;
+            Ok(scalar("TINYINT".into(), v.to_string()))
+        }
+        0x32 => {
+            let v = r.read_u8()?;
+            Ok(scalar(
+                "BIT".into(),
+                if v != 0 { "1".into() } else { "0".into() },
+            ))
+        }
+        0x34 => {
+            let b = r.read_bytes(2)?;
+            Ok(scalar(
+                "SMALLINT".into(),
+                i16::from_le_bytes([b[0], b[1]]).to_string(),
+            ))
+        }
+        0x38 => {
+            let b = r.read_bytes(4)?;
+            Ok(scalar(
+                "INT".into(),
+                i32::from_le_bytes([b[0], b[1], b[2], b[3]]).to_string(),
+            ))
+        }
+        0x7F => {
+            let b = r.read_bytes(8)?;
+            Ok(scalar(
+                "BIGINT".into(),
+                i64::from_le_bytes(b.try_into().unwrap_or([0u8; 8])).to_string(),
+            ))
         }
         // TVPTYPE
         0xF3 => read_tvp_value(r),
         _ => Ok(scalar("NVARCHAR(MAX)".into(), "NULL".into())),
     }
+}
+
+pub(super) fn read_plp_bytes(r: &mut PacketReader) -> io::Result<Option<Vec<u8>>> {
+    if r.remaining() < 8 {
+        return Ok(None);
+    }
+    let total_len = r.read_u64_le()?;
+    if total_len == u64::MAX {
+        return Ok(None);
+    }
+    let mut out = Vec::new();
+    loop {
+        if r.remaining() < 4 {
+            break;
+        }
+        let chunk_len = r.read_u32_le()? as usize;
+        if chunk_len == 0 {
+            break;
+        }
+        if r.remaining() < chunk_len {
+            break;
+        }
+        out.extend_from_slice(r.read_bytes(chunk_len)?);
+    }
+    Ok(Some(out))
+}
+
+fn format_guid_bytes(b: &[u8]) -> String {
+    format!(
+        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    )
+}
+
+fn format_hex_literal(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(2 + bytes.len() * 2);
+    s.push_str("0x");
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02X}", byte);
+    }
+    s
 }
 
 fn scalar(type_name: String, value_sql: String) -> DecodedValue {
@@ -283,7 +400,7 @@ fn read_tvp_col_meta(r: &mut PacketReader, type_id: u8) -> io::Result<TvpColMeta
     };
 
     match type_id {
-        0x26 | 0x68 | 0x6D => {
+        0x24 | 0x26 | 0x68 | 0x6D => {
             if r.remaining() >= 1 {
                 let _ = r.read_u8()?;
             }
@@ -315,6 +432,17 @@ fn read_tvp_col_meta(r: &mut PacketReader, type_id: u8) -> io::Result<TvpColMeta
 
 fn read_tvp_cell_value(r: &mut PacketReader, col: &TvpColMeta) -> io::Result<String> {
     match col.type_id {
+        0x24 => {
+            if r.remaining() < 1 {
+                return Ok("NULL".into());
+            }
+            let len = r.read_u8()? as usize;
+            if len < 16 || r.remaining() < len {
+                return Ok("NULL".into());
+            }
+            let b = r.read_bytes(len)?;
+            Ok(format!("'{}'", format_guid_bytes(&b[..16])))
+        }
         0x26 => {
             if r.remaining() < 1 {
                 return Ok("NULL".into());

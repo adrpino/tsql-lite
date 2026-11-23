@@ -78,6 +78,7 @@ pub fn statement_kind(stmt: &Statement) -> &'static str {
             crate::ast::SessionStatement::SetContextInfo(_) => "SET_CONTEXT_INFO",
             crate::ast::SessionStatement::ExecuteAs(_) => "EXECUTE_AS",
             crate::ast::SessionStatement::Revert => "REVERT",
+            crate::ast::SessionStatement::Checkpoint => "CHECKPOINT",
         },
         Statement::Transaction(_) => match stmt {
             Statement::Transaction(crate::ast::TransactionStatement::Begin(_)) => "BEGIN_TRAN",

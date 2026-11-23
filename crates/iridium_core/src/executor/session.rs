@@ -255,7 +255,7 @@ where
             user: None,
             app_name: None,
             host_name: None,
-            context_info: vec![0u8; 128],
+            context_info: Vec::new(),
             session_context: HashMap::new(),
             bulk_load: BulkLoadState::new(),
             extras: SessionExtras::new(),
@@ -277,7 +277,7 @@ where
         self.user = None;
         self.app_name = None;
         self.host_name = None;
-        self.context_info = vec![0u8; 128];
+        self.context_info.clear();
         self.session_context.clear();
         self.bulk_load.reset();
         self.extras.reset();

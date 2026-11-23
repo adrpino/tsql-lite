@@ -9,6 +9,8 @@ use crate::types::{DataType, Value};
 pub(crate) struct SysDatabases;
 pub(crate) struct SysSysDatabases;
 pub(crate) struct SysConfigurations;
+pub(crate) struct SysConfigures;
+pub(crate) struct SysDatabaseScopedConfigurations;
 
 impl VirtualTable for SysDatabases {
     fn definition(&self) -> crate::catalog::TableDef {
@@ -176,6 +178,81 @@ impl VirtualTable for SysSysDatabases {
                     Value::TinyInt(db.compatibility_level),
                     Value::Null,
                     Value::Int(0),
+                ],
+                deleted: false,
+            })
+            .collect()
+    }
+}
+
+impl VirtualTable for SysConfigures {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "sysconfigures",
+            vec![
+                ("value", DataType::Int, true),
+                ("config", DataType::Int, false),
+                ("comment", DataType::NVarChar { max_len: 255 }, false),
+                ("status", DataType::SmallInt, true),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let entries: &[(i32, i32, &str, i16)] = &[
+            (1033, 1126, "default full-text language", 2),
+            (1033, 124, "default language", 2),
+            (0, 16384, "contained database authentication", 3),
+        ];
+        entries
+            .iter()
+            .map(|(val, cfg, comment, status)| StoredRow {
+                values: vec![
+                    Value::Int(*val),
+                    Value::Int(*cfg),
+                    Value::NVarChar((*comment).to_string()),
+                    Value::SmallInt(*status),
+                ],
+                deleted: false,
+            })
+            .collect()
+    }
+}
+
+impl VirtualTable for SysDatabaseScopedConfigurations {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "database_scoped_configurations",
+            vec![
+                ("configuration_id", DataType::Int, false),
+                ("name", DataType::NVarChar { max_len: 60 }, false),
+                ("value", DataType::NVarChar { max_len: 128 }, true),
+                (
+                    "value_for_secondary",
+                    DataType::NVarChar { max_len: 128 },
+                    true,
+                ),
+                ("is_value_default", DataType::Bit, false),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let entries: &[(i32, &str, &str)] = &[
+            (1, "MAXDOP", "0"),
+            (2, "LEGACY_CARDINALITY_ESTIMATION", "0"),
+            (3, "PARAMETER_SNIFFING", "1"),
+            (4, "QUERY_OPTIMIZER_HOTFIXES", "0"),
+        ];
+        entries
+            .iter()
+            .map(|(id, name, val)| StoredRow {
+                values: vec![
+                    Value::Int(*id),
+                    Value::NVarChar((*name).to_string()),
+                    Value::NVarChar((*val).to_string()),
+                    Value::Null,
+                    Value::Bit(true),
                 ],
                 deleted: false,
             })

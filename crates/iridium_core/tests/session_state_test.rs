@@ -6,17 +6,12 @@ fn test_context_info() {
     let engine = Engine::new();
     let session_id = engine.create_session();
 
-    // Default is 128 zeros
+    // Default before SET CONTEXT_INFO is NULL (matches SQL Server)
     let res = engine
         .execute_session_batch_sql(session_id, "SELECT CONTEXT_INFO()")
         .unwrap()
         .unwrap();
-    if let Value::VarBinary(bytes) = &res.rows[0][0] {
-        assert_eq!(bytes.len(), 128);
-        assert!(bytes.iter().all(|&b| b == 0));
-    } else {
-        panic!("Expected VarBinary");
-    }
+    assert_eq!(res.rows[0][0], Value::Null);
 
     // Set context info from string
     engine

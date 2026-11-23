@@ -145,12 +145,14 @@ where
         ) {
             Ok(val) => {
                 let bytes = match val {
-                    Value::Null => vec![0u8; 128],
+                    Value::Null => Vec::new(),
                     Value::Binary(mut b) | Value::VarBinary(mut b) => {
-                        if b.len() > 128 {
-                            b.truncate(128);
-                        } else {
-                            b.resize(128, 0);
+                        if !b.is_empty() {
+                            if b.len() > 128 {
+                                b.truncate(128);
+                            } else {
+                                b.resize(128, 0);
+                            }
                         }
                         b
                     }

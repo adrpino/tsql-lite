@@ -252,6 +252,13 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                     let _ = parser.next();
                     return parse_create_type(parser);
                 }
+                if parser.at_keyword(Keyword::Database) {
+                    let _ = parser.next();
+                    statements::alter::skip_ddl_tail(parser);
+                    return Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                        Vec::new(),
+                    )));
+                }
                 if parser.at_keyword(Keyword::Schema) {
                     let _ = parser.next();
                     return parse_create_schema(parser);
@@ -785,6 +792,17 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             Keyword::Fetch => {
                 let _ = parser.next();
                 statements::cursor::parse_fetch_cursor(parser)
+            }
+            Keyword::Checkpoint => {
+                let _ = parser.next();
+                // Optional checkpoint_duration (integer literal or variable).
+                if matches!(
+                    parser.peek(),
+                    Some(Token::Number { .. }) | Some(Token::Variable(_))
+                ) {
+                    let _ = parser.next();
+                }
+                Ok(Statement::Session(SessionStatement::Checkpoint))
             }
             _ => parser.backtrack(Expected::Description("statement keyword")),
         },

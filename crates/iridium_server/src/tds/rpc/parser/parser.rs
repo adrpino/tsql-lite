@@ -32,10 +32,18 @@ impl<'a> RpcFrameParser<'a> {
 
         let proc = match proc {
             Some(p) => p,
-            None => {
-                log::warn!("Unsupported RPC procedure selector: {:?}", proc_selector);
-                return Ok(None);
-            }
+            None => match proc_selector {
+                RpcProcSelector::Name(name) if !name.trim().is_empty() => {
+                    let params = self.read_rpc_params(&[])?;
+                    return Ok(Some(RpcRequest::StoredProcedure(
+                        StoredProcedureRpcRequest { name, params },
+                    )));
+                }
+                other => {
+                    log::warn!("Unsupported RPC procedure selector: {:?}", other);
+                    return Ok(None);
+                }
+            },
         };
 
         if proc.is_cursor() {
@@ -606,11 +614,25 @@ impl<'a> RpcFrameParser<'a> {
 
         match type_id {
             0xE7 | 0xA7 => {
-                if self.reader.remaining() < 9 {
+                if self.reader.remaining() < 7 {
                     return Ok(None);
                 }
-                let _max_len = self.reader.read_u16_le()?;
+                let max_len = self.reader.read_u16_le()?;
                 self.reader.skip(5)?;
+                if max_len == 0xFFFF {
+                    let bytes = match decode::read_plp_bytes(&mut self.reader)? {
+                        Some(b) => b,
+                        None => return Ok(Some(String::new())),
+                    };
+                    if type_id == 0xE7 {
+                        return Ok(Some(decode::decode_utf16le(&bytes)));
+                    } else {
+                        return Ok(Some(String::from_utf8_lossy(&bytes).to_string()));
+                    }
+                }
+                if self.reader.remaining() < 2 {
+                    return Ok(None);
+                }
                 let actual_len = self.reader.read_u16_le()? as usize;
                 if actual_len == 0xFFFF {
                     return Ok(Some(String::new()));

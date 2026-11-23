@@ -1312,7 +1312,7 @@ pub fn parse_select_item(parser: &mut Parser) -> ParseResult<SelectItem> {
             let _ = parser.next();
             match parser.next() {
                 Some(Token::Identifier(alias)) => Some(alias.clone()),
-                Some(Token::String(alias)) => Some(alias.clone()),
+                Some(Token::String(alias)) | Some(Token::NString(alias)) => Some(alias.clone()),
                 Some(Token::Keyword(kw)) => Some(kw.as_ref().to_string()),
                 _ => return parser.backtrack(Expected::Description("alias")),
             }
@@ -1338,7 +1338,7 @@ pub fn parse_select_item(parser: &mut Parser) -> ParseResult<SelectItem> {
         } else {
             None
         }
-    } else if let Some(Token::String(alias)) = parser.peek() {
+    } else if let Some(Token::String(alias)) | Some(Token::NString(alias)) = parser.peek() {
         let alias = alias.clone();
         let _ = parser.next();
         Some(alias)

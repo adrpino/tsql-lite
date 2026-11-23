@@ -482,11 +482,13 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
     } else if parser.at_keyword(Keyword::Database) {
         let saved = parser.save();
         let _ = parser.next();
-        // Database name (or CURRENT)
-        if matches!(
-            parser.peek(),
-            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
-        ) {
+        // Database name (or CURRENT, or SCOPED CONFIGURATION with no db name)
+        if !matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCOPED"))
+            && matches!(
+                parser.peek(),
+                Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+            )
+        {
             let _ = parser.next();
         }
         // Support storage clauses: ADD FILEGROUP / ADD FILE / MODIFY FILE / REMOVE FILE
@@ -512,16 +514,35 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         } else if matches!(
             parser.peek(),
             Some(Token::Identifier(id))
-                if id.eq_ignore_ascii_case("MODIFY") || id.eq_ignore_ascii_case("REMOVE")
-        ) {
+                if id.eq_ignore_ascii_case("MODIFY")
+                    || id.eq_ignore_ascii_case("REMOVE")
+                    || id.eq_ignore_ascii_case("SCOPED")
+                    || id.eq_ignore_ascii_case("COLLATE")
+        ) || parser.at_keyword(Keyword::Set)
+        {
+            // Support ALTER DATABASE <db> SET ..., ALTER DATABASE <db> COLLATE ...,
+            // ALTER DATABASE SCOPED CONFIGURATION SET ..., MODIFY/REMOVE FILE ...
             let _ = parser.next();
+            if matches!(
+                parser.peek(),
+                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CONFIGURATION")
+            ) {
+                let _ = parser.next();
+                if parser.at_keyword(Keyword::Set)
+                    || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CLEAR"))
+                {
+                    let _ = parser.next();
+                }
+            }
             skip_ddl_tail(parser);
             Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
                 Vec::new(),
             )))
         } else {
             parser.restore(saved);
-            parser.backtrack(Expected::Description("ALTER DATABASE ADD/MODIFY/REMOVE"))
+            parser.backtrack(Expected::Description(
+                "ALTER DATABASE ADD/MODIFY/REMOVE/SET",
+            ))
         }
     } else if parser.at_keyword(Keyword::Schema) {
         let _ = parser.next();

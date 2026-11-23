@@ -342,6 +342,7 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
                 crate::executor::security::revert(ctx)?;
                 Ok(StmtOutcome::Ok(None))
             }
+            SessionStatement::Checkpoint => Ok(StmtOutcome::Ok(None)),
         }
     }
 

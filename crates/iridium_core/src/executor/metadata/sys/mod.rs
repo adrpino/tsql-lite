@@ -30,6 +30,10 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(spt::SysSptValues))
     } else if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("sysobjects") {
         Some(Box::new(objects::SysCompatSysObjects))
+    } else if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("sysconfigures") {
+        Some(Box::new(tables::SysConfigures))
+    } else if schema.eq_ignore_ascii_case("dbo") && name.eq_ignore_ascii_case("sysdatabases") {
+        Some(Box::new(tables::SysSysDatabases))
     } else if !schema.eq_ignore_ascii_case("sys") {
         None
     } else if name.eq_ignore_ascii_case("schemas") {
@@ -38,15 +42,23 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(tables::SysDatabases))
     } else if name.eq_ignore_ascii_case("sysdatabases") {
         Some(Box::new(tables::SysSysDatabases))
+    } else if name.eq_ignore_ascii_case("sysconfigures") {
+        Some(Box::new(tables::SysConfigures))
     } else if name.eq_ignore_ascii_case("configurations") {
         Some(Box::new(tables::SysConfigurations))
+    } else if name.eq_ignore_ascii_case("database_scoped_configurations") {
+        Some(Box::new(tables::SysDatabaseScopedConfigurations))
     } else if name.eq_ignore_ascii_case("tables") {
         Some(Box::new(tables::SysTables))
     } else if name.eq_ignore_ascii_case("filetables") {
         Some(Box::new(tables::SysFileTables))
+    } else if name.eq_ignore_ascii_case("filetable_system_defined_objects") {
+        Some(Box::new(tables::SysFiletableSystemDefinedObjects))
     } else if name.eq_ignore_ascii_case("columns") {
         Some(Box::new(tables::SysColumns))
-    } else if name.eq_ignore_ascii_case("all_columns") {
+    } else if name.eq_ignore_ascii_case("all_columns")
+        || name.eq_ignore_ascii_case("system_columns")
+    {
         Some(Box::new(tables::SysAllColumns))
     } else if name.eq_ignore_ascii_case("view_columns") {
         Some(Box::new(tables::SysViewColumns))
@@ -102,6 +114,12 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(partition::SysFilegroups))
     } else if name.eq_ignore_ascii_case("edge_constraints") {
         Some(Box::new(tables::SysEdgeConstraints))
+    } else if name.eq_ignore_ascii_case("edge_constraint_clauses") {
+        Some(Box::new(tables::SysEdgeConstraintClauses))
+    } else if name.eq_ignore_ascii_case("messages") {
+        Some(Box::new(tables::SysMessages))
+    } else if name.eq_ignore_ascii_case("syslanguages") {
+        Some(Box::new(tables::SysSysLanguages))
     } else if name.eq_ignore_ascii_case("assembly_modules") {
         Some(Box::new(tables::SysAssemblyModules))
     } else if name.eq_ignore_ascii_case("assembly_types") {
@@ -192,6 +210,14 @@ pub(crate) fn lookup(schema: &str, name: &str) -> Option<Box<dyn VirtualTable>> 
         Some(Box::new(database_principals::SysDatabasePrincipals))
     } else if name.eq_ignore_ascii_case("database_permissions") {
         Some(Box::new(database_principals::SysDatabasePermissions))
+    } else if name.eq_ignore_ascii_case("server_permissions") {
+        Some(Box::new(database_principals::SysServerPermissions))
+    } else if name.eq_ignore_ascii_case("fn_builtin_permissions")
+        || name
+            .to_ascii_lowercase()
+            .starts_with("fn_builtin_permissions(")
+    {
+        Some(Box::new(database_principals::SysFnBuiltinPermissions))
     } else if name.eq_ignore_ascii_case("database_role_members") {
         Some(Box::new(database_principals::SysDatabaseRoleMembers))
     } else if name.eq_ignore_ascii_case("security_policies") {

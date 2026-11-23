@@ -7,17 +7,22 @@ mod tables;
 mod types;
 
 pub(crate) use columns::{SysAllColumns, SysColumns, SysComputedColumns, SysViewColumns};
-pub(crate) use databases::{SysConfigurations, SysDatabases, SysSysDatabases};
+pub(crate) use databases::{
+    SysConfigurations, SysConfigures, SysDatabaseScopedConfigurations, SysDatabases,
+    SysSysDatabases,
+};
 pub(crate) use encryption::{
     SysColumnEncryptionKeyValues, SysColumnEncryptionKeys, SysColumnMasterKeys,
 };
 pub(crate) use identity_columns::SysIdentityColumns;
 pub(crate) use objects_misc::{
-    SysAllSqlModules, SysAssemblyModules, SysDataSpaces, SysEdgeConstraints, SysExtendedProperties,
-    SysForeignKeyColumns, SysIndexColumns, SysInternalTables, SysMaskedColumns, SysPeriods,
-    SysSequences, SysServerPrincipals, SysServerRoleMembers, SysSqlExpressionDependencies,
-    SysSqlModules, SysStats, SysStatsColumns, SysSynonyms, SysSystemSqlModules, SysTriggerEvents,
-    SysTriggers, SysXmlIndexes, SysXmlSchemaCollections,
+    SysAllSqlModules, SysAssemblyModules, SysDataSpaces, SysEdgeConstraintClauses,
+    SysEdgeConstraints, SysExtendedProperties, SysFiletableSystemDefinedObjects,
+    SysForeignKeyColumns, SysIndexColumns, SysInternalTables, SysMaskedColumns, SysMessages,
+    SysPeriods, SysSequences, SysServerPrincipals, SysServerRoleMembers,
+    SysSqlExpressionDependencies, SysSqlModules, SysStats, SysStatsColumns, SysSynonyms,
+    SysSysLanguages, SysSystemSqlModules, SysTriggerEvents, SysTriggers, SysXmlIndexes,
+    SysXmlSchemaCollections,
 };
 pub(crate) use tables::{SysFileTables, SysTables};
 pub(crate) use types::{SysAssemblyTypes, SysTableTypes, SysTypes};

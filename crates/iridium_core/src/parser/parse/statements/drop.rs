@@ -140,6 +140,18 @@ pub fn parse_drop(parser: &mut Parser) -> ParseResult<Statement> {
             name,
             if_exists,
         })))
+    } else if parser.at_keyword(Keyword::Database) {
+        let _ = parser.next();
+        let _if_exists = consume_if_exists(parser);
+        if matches!(
+            parser.peek(),
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+        ) {
+            let _ = parser.next();
+        }
+        Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+            Vec::new(),
+        )))
     } else if parser.at_keyword(Keyword::User) {
         let _ = parser.next();
         let if_exists = consume_if_exists(parser);

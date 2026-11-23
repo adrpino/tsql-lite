@@ -15,6 +15,10 @@ pub(crate) struct SysPeriods;
 pub(crate) struct SysXmlIndexes;
 pub(crate) struct SysInternalTables;
 pub(crate) struct SysEdgeConstraints;
+pub(crate) struct SysEdgeConstraintClauses;
+pub(crate) struct SysFiletableSystemDefinedObjects;
+pub(crate) struct SysMessages;
+pub(crate) struct SysSysLanguages;
 pub(crate) struct SysAssemblyModules;
 pub(crate) struct SysTriggers;
 pub(crate) struct SysSqlModules;
@@ -454,14 +458,99 @@ impl VirtualTable for SysEdgeConstraints {
             "edge_constraints",
             vec![
                 ("name", DataType::VarChar { max_len: 128 }, false),
+                ("object_id", DataType::Int, false),
+                ("schema_id", DataType::Int, false),
                 ("parent_object_id", DataType::Int, false),
                 ("create_date", DataType::DateTime, false),
+                ("is_system_named", DataType::Bit, false),
+                ("is_disabled", DataType::Bit, false),
+                ("is_not_trusted", DataType::Bit, false),
+                ("delete_referential_action", DataType::TinyInt, false),
             ],
         )
     }
 
     fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         Vec::new()
+    }
+}
+
+impl VirtualTable for SysEdgeConstraintClauses {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "edge_constraint_clauses",
+            vec![
+                ("object_id", DataType::Int, false),
+                ("clause_number", DataType::Int, false),
+                ("from_object_id", DataType::Int, false),
+                ("to_object_id", DataType::Int, false),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        Vec::new()
+    }
+}
+
+impl VirtualTable for SysFiletableSystemDefinedObjects {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "filetable_system_defined_objects",
+            vec![
+                ("object_id", DataType::Int, false),
+                ("parent_object_id", DataType::Int, false),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        Vec::new()
+    }
+}
+
+impl VirtualTable for SysMessages {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "messages",
+            vec![
+                ("message_id", DataType::Int, false),
+                ("language_id", DataType::SmallInt, false),
+                ("severity", DataType::TinyInt, false),
+                ("is_event_logged", DataType::Bit, false),
+                ("text", DataType::NVarChar { max_len: 2048 }, false),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        Vec::new()
+    }
+}
+
+impl VirtualTable for SysSysLanguages {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "syslanguages",
+            vec![
+                ("langid", DataType::SmallInt, false),
+                ("alias", DataType::NVarChar { max_len: 128 }, false),
+                ("msglangid", DataType::SmallInt, false),
+                ("name", DataType::NVarChar { max_len: 128 }, false),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        vec![StoredRow {
+            values: vec![
+                Value::SmallInt(0),
+                Value::NVarChar("English".to_string()),
+                Value::SmallInt(1033),
+                Value::NVarChar("us_english".to_string()),
+            ],
+            deleted: false,
+        }]
     }
 }
 

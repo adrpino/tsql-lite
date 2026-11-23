@@ -222,6 +222,9 @@ pub(crate) fn eval_context_info(
             "CONTEXT_INFO expects no arguments".into(),
         ));
     }
+    if ctx.session.context_info.is_empty() {
+        return Ok(Value::Null);
+    }
     Ok(Value::VarBinary(ctx.session.context_info.clone()))
 }
 

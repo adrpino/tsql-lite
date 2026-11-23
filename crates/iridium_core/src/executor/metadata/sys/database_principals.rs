@@ -7,6 +7,8 @@ use crate::types::{DataType, Value};
 
 pub(crate) struct SysDatabasePrincipals;
 pub(crate) struct SysDatabasePermissions;
+pub(crate) struct SysServerPermissions;
+pub(crate) struct SysFnBuiltinPermissions;
 pub(crate) struct SysDatabaseRoleMembers;
 pub(crate) struct SysSecurityPolicies;
 pub(crate) struct SysSecurityPredicates;
@@ -140,6 +142,109 @@ impl VirtualTable for SysDatabasePermissions {
                     Value::VarChar(p.permission_name.clone()),
                     Value::Char(p.state.clone()),
                     Value::VarChar(p.state_desc.clone()),
+                ],
+                deleted: false,
+            })
+            .collect()
+    }
+}
+
+impl VirtualTable for SysServerPermissions {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "server_permissions",
+            vec![
+                ("class", DataType::TinyInt, false),
+                ("class_desc", DataType::NVarChar { max_len: 60 }, true),
+                ("major_id", DataType::Int, false),
+                ("minor_id", DataType::Int, false),
+                ("grantee_principal_id", DataType::Int, false),
+                ("grantor_principal_id", DataType::Int, false),
+                ("type", DataType::Char { len: 4 }, false),
+                ("permission_name", DataType::NVarChar { max_len: 128 }, true),
+                ("state", DataType::Char { len: 1 }, false),
+                ("state_desc", DataType::NVarChar { max_len: 60 }, true),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        vec![StoredRow {
+            values: vec![
+                Value::TinyInt(100),
+                Value::NVarChar("SERVER".to_string()),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(1),
+                Value::Int(1),
+                Value::Char("CL  ".to_string()),
+                Value::NVarChar("CONTROL SERVER".to_string()),
+                Value::Char("G".to_string()),
+                Value::NVarChar("GRANT".to_string()),
+            ],
+            deleted: false,
+        }]
+    }
+}
+
+impl VirtualTable for SysFnBuiltinPermissions {
+    fn definition(&self) -> crate::catalog::TableDef {
+        virtual_table_def(
+            "fn_builtin_permissions",
+            vec![
+                ("class_desc", DataType::NVarChar { max_len: 60 }, false),
+                (
+                    "permission_name",
+                    DataType::NVarChar { max_len: 128 },
+                    false,
+                ),
+                ("type", DataType::Char { len: 4 }, false),
+                (
+                    "covering_permission_name",
+                    DataType::NVarChar { max_len: 128 },
+                    true,
+                ),
+                (
+                    "parent_class_desc",
+                    DataType::NVarChar { max_len: 60 },
+                    true,
+                ),
+                (
+                    "parent_covering_permission_name",
+                    DataType::NVarChar { max_len: 128 },
+                    true,
+                ),
+            ],
+        )
+    }
+
+    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let perms: &[(&str, &str, &str)] = &[
+            ("SERVER", "CONTROL SERVER", "CL  "),
+            ("SERVER", "VIEW ANY DEFINITION", "VWAD"),
+            ("SERVER", "VIEW SERVER STATE", "VWSS"),
+            ("DATABASE", "CONTROL", "CL  "),
+            ("DATABASE", "ALTER", "AL  "),
+            ("DATABASE", "VIEW DEFINITION", "VW  "),
+            ("DATABASE", "VIEW DATABASE STATE", "VWDS"),
+            ("DATABASE", "UNMASK", "UMSK"),
+            ("OBJECT", "SELECT", "SL  "),
+            ("OBJECT", "INSERT", "IN  "),
+            ("OBJECT", "UPDATE", "UP  "),
+            ("OBJECT", "DELETE", "DL  "),
+            ("OBJECT", "EXECUTE", "EX  "),
+            ("OBJECT", "REFERENCES", "RF  "),
+        ];
+        perms
+            .iter()
+            .map(|(cls, name, ty)| StoredRow {
+                values: vec![
+                    Value::NVarChar((*cls).to_string()),
+                    Value::NVarChar((*name).to_string()),
+                    Value::Char((*ty).to_string()),
+                    Value::Null,
+                    Value::Null,
+                    Value::Null,
                 ],
                 deleted: false,
             })

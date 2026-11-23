@@ -1234,6 +1234,17 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                       ORDER BY COALESCE(l.Id, 999);",
                 ordered: true,
             },
+            DiffStep::Query {
+                label: "context_info_default_null_nstring_alias_and_checkpoint",
+                sql: "DECLARE @init_null BIT = CASE WHEN CONTEXT_INFO() IS NULL THEN 1 ELSE 0 END;
+                      SET CONTEXT_INFO 0xCAFE;
+                      DECLARE @after_set VARBINARY(2) = SUBSTRING(CONTEXT_INFO(), 1, 2);
+                      SET CONTEXT_INFO 0x;
+                      DECLARE @after_clear BIT = CASE WHEN CONTEXT_INFO() IS NULL THEN 1 ELSE 0 END;
+                      CHECKPOINT;
+                      SELECT @init_null AS N'InitNull', @after_set AS N'AfterSet', @after_clear AS N'AfterClear';",
+                ordered: true,
+            },
         ],
     }
 }

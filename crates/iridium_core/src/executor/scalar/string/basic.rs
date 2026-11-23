@@ -48,9 +48,29 @@ pub(crate) fn eval_substring(
     let start = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
     let length = eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
 
-    let s = val.to_string_value();
+    if val.is_null() || start.is_null() || length.is_null() {
+        return Ok(Value::Null);
+    }
+
     let start_i = start.to_integer_i64().unwrap_or(1) as i32;
     let len_i = length.to_integer_i64().unwrap_or(0) as i32;
+
+    if let Value::Binary(ref bytes) | Value::VarBinary(ref bytes) = val {
+        let start_idx = if start_i <= 0 {
+            0
+        } else {
+            (start_i as usize - 1).min(bytes.len())
+        };
+        let adj_len = if start_i <= 0 {
+            (len_i + start_i - 1).max(0) as usize
+        } else {
+            len_i.max(0) as usize
+        };
+        let end_idx = (start_idx + adj_len).min(bytes.len());
+        return Ok(Value::VarBinary(bytes[start_idx..end_idx].to_vec()));
+    }
+
+    let s = val.to_string_value();
 
     let chars: Vec<char> = s.chars().collect();
     let start_idx = if start_i <= 0 {

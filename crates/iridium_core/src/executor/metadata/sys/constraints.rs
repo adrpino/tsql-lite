@@ -18,7 +18,11 @@ impl VirtualTable for SysCheckConstraints {
             vec![
                 ("name", DataType::VarChar { max_len: 128 }, false),
                 ("object_id", DataType::Int, false),
+                ("schema_id", DataType::Int, false),
                 ("parent_object_id", DataType::Int, false),
+                ("create_date", DataType::DateTime, false),
+                ("modify_date", DataType::DateTime, false),
+                ("is_ms_shipped", DataType::Bit, false),
                 ("definition", DataType::VarChar { max_len: 8000 }, true),
                 ("is_not_for_replication", DataType::Bit, false),
                 ("is_disabled", DataType::Bit, false),
@@ -31,13 +35,22 @@ impl VirtualTable for SysCheckConstraints {
     fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let mut rows = Vec::new();
         let mut object_id = 1_000_000i32;
+        let epoch = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         for t in catalog.get_tables() {
+            let schema_id = t.schema_id as i32;
             for chk in &t.check_constraints {
                 rows.push(StoredRow {
                     values: vec![
                         Value::VarChar(chk.name.clone()),
                         Value::Int(object_id),
+                        Value::Int(schema_id),
                         Value::Int(t.id as i32),
+                        Value::DateTime(epoch),
+                        Value::DateTime(epoch),
+                        Value::Bit(false),
                         Value::VarChar(format!("({})", format_expr(&chk.expr))),
                         Value::Bit(false),
                         Value::Bit(!chk.enabled),
@@ -60,6 +73,7 @@ impl VirtualTable for SysForeignKeys {
             vec![
                 ("name", DataType::VarChar { max_len: 128 }, false),
                 ("object_id", DataType::Int, false),
+                ("schema_id", DataType::Int, false),
                 ("parent_object_id", DataType::Int, false),
                 ("type", DataType::Char { len: 2 }, false),
                 ("type_desc", DataType::VarChar { max_len: 128 }, false),
@@ -68,6 +82,8 @@ impl VirtualTable for SysForeignKeys {
                 ("is_ms_shipped", DataType::Bit, false),
                 ("is_disabled", DataType::Bit, false),
                 ("is_not_for_replication", DataType::Bit, false),
+                ("is_not_trusted", DataType::Bit, false),
+                ("is_system_named", DataType::Bit, false),
                 ("referenced_object_id", DataType::Int, false),
                 ("key_index_id", DataType::Int, false),
                 ("delete_referential_action", DataType::TinyInt, false),
@@ -91,6 +107,7 @@ impl VirtualTable for SysForeignKeys {
         let mut fk_idx = 0;
 
         for table in catalog.get_tables() {
+            let schema_id = table.schema_id as i32;
             for fk in &table.foreign_keys {
                 let object_id = 4_000_000 + fk_idx;
                 fk_idx += 1;
@@ -105,6 +122,7 @@ impl VirtualTable for SysForeignKeys {
                     values: vec![
                         Value::VarChar(fk.name.clone()),
                         Value::Int(object_id),
+                        Value::Int(schema_id),
                         Value::Int(parent_id),
                         Value::Char("F ".to_string()),
                         Value::VarChar("FOREIGN_KEY_CONSTRAINT".to_string()),
@@ -122,6 +140,8 @@ impl VirtualTable for SysForeignKeys {
                         ),
                         Value::Bit(false),
                         Value::Bit(!fk.enabled),
+                        Value::Bit(false),
+                        Value::Bit(false),
                         Value::Bit(false),
                         Value::Int(referenced_object_id),
                         Value::Int(0),

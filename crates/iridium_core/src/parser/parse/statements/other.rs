@@ -278,6 +278,43 @@ pub(super) fn skip_exec_dynamic_tail(parser: &mut Parser) -> ParseResult<()> {
 }
 
 pub fn parse_exec_dispatch(parser: &mut Parser) -> ParseResult<Statement> {
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+        // EXECUTE AS { USER | LOGIN } = 'principal' [WITH NO REVERT | WITH COOKIE INTO @var]
+        match parser.peek() {
+            Some(Token::Keyword(Keyword::User)) | Some(Token::Identifier(_)) => {
+                let _ = parser.next();
+            }
+            _ => {}
+        }
+        if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+            let _ = parser.next();
+        }
+        let principal = match parser.next() {
+            Some(Token::String(s)) | Some(Token::NString(s)) | Some(Token::Identifier(s)) => {
+                s.clone()
+            }
+            Some(Token::Keyword(k)) => k.as_ref().to_string(),
+            _ => return parser.backtrack(Expected::Description("principal name for EXECUTE AS")),
+        };
+        if parser.at_keyword(Keyword::With) {
+            let _ = parser.next();
+            while let Some(tok) = parser.peek() {
+                if matches!(tok, Token::Semicolon) {
+                    break;
+                }
+                if matches!(tok, Token::Keyword(Keyword::No | Keyword::Into))
+                    || matches!(tok, Token::Identifier(id) if id.eq_ignore_ascii_case("REVERT") || id.eq_ignore_ascii_case("COOKIE"))
+                    || matches!(tok, Token::Variable(_))
+                {
+                    let _ = parser.next();
+                } else {
+                    break;
+                }
+            }
+        }
+        return Ok(Statement::Session(SessionStatement::ExecuteAs(principal)));
+    }
     match parser.peek() {
         Some(Token::LParen) => {
             let _ = parser.next();

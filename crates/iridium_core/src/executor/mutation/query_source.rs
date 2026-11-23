@@ -206,6 +206,7 @@ pub(crate) fn build_from_node(
             pivot: None,
             unpivot: None,
             hints: Vec::new(),
+            system_time: None,
         })
     })?;
 

@@ -117,6 +117,8 @@ pub enum SessionStatement {
     SetOption(SetOptionStmt),
     SetIdentityInsert(Box<SetIdentityInsertStmt>),
     SetContextInfo(Expr),
+    ExecuteAs(String),
+    Revert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

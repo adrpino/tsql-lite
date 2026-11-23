@@ -327,8 +327,35 @@ impl VirtualTable for SysPeriods {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let mut rows = Vec::new();
+        for cfg in catalog.get_all_temporal_configs() {
+            if let Some(table) = catalog.get_tables().iter().find(|t| t.id == cfg.table_id) {
+                let start_col_id = table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(&cfg.start_col))
+                    .map(|i| (i + 1) as i32)
+                    .unwrap_or(0);
+                let end_col_id = table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(&cfg.end_col))
+                    .map(|i| (i + 1) as i32)
+                    .unwrap_or(0);
+                rows.push(StoredRow {
+                    values: vec![
+                        Value::VarChar("SYSTEM_TIME".to_string()),
+                        Value::Int(1),
+                        Value::Int(cfg.table_id as i32),
+                        Value::Int(start_col_id),
+                        Value::Int(end_col_id),
+                    ],
+                    deleted: false,
+                });
+            }
+        }
+        rows
     }
 }
 
@@ -844,8 +871,9 @@ impl VirtualTable for SysSqlExpressionDependencies {
         )
     }
 
-    fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        Vec::new()
+    fn rows(&self, catalog: &dyn Catalog, ctx: &ExecutionContext) -> Vec<StoredRow> {
+        let db_name = ctx.metadata.database.as_deref().unwrap_or("master");
+        super::super::dependencies::build_expression_dependency_rows(catalog, db_name)
     }
 }
 

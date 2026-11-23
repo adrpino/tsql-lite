@@ -43,6 +43,14 @@ impl<'a> MutationExecutor<'a> {
 
         let (table, joined_rows) = match resolved_direct {
             Ok((table, resolved_name)) => {
+                crate::executor::security::check_object_permission(
+                    self.catalog,
+                    ctx,
+                    "UPDATE",
+                    table.schema_or_dbo(),
+                    &table.name,
+                    table.id as i32,
+                )?;
                 let query = build_mutation_query(
                     stmt.from.as_ref(),
                     &stmt.table,
@@ -56,7 +64,10 @@ impl<'a> MutationExecutor<'a> {
                     storage: self.storage,
                     clock: self.clock,
                 };
-                let joined_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                let prev_target = ctx.session.extras.mutation_target_id.replace(table.id);
+                let joined_res = query_executor.execute_to_joined_rows(query, ctx);
+                ctx.session.extras.mutation_target_id = prev_target;
+                let joined_rows = joined_res?;
                 (table, joined_rows)
             }
             Err(orig_err) => {
@@ -217,8 +228,22 @@ impl<'a> MutationExecutor<'a> {
         let has_outgoing_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
         let has_checks =
             !table.check_constraints.is_empty() || table.columns.iter().any(|c| c.check.is_some());
+        crate::executor::security::check_object_permission(
+            self.catalog,
+            ctx,
+            "UPDATE",
+            table.schema_or_dbo(),
+            &table.name,
+            table_id as i32,
+        )?;
+        let has_unique_index = self
+            .catalog
+            .get_indexes()
+            .iter()
+            .any(|i| i.table_id == table_id && i.is_unique);
         let has_unique = table.columns.iter().any(|c| c.unique)
-            || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
+            || table.columns.iter().filter(|c| c.primary_key).count() >= 2
+            || has_unique_index;
         let table_indexes: Vec<u32> = self
             .catalog
             .get_indexes()
@@ -276,8 +301,28 @@ impl<'a> MutationExecutor<'a> {
                 }
                 if has_unique {
                     enforce_unique_on_update(&table, self.storage, table_id, &new_row, idx)?;
+                    if has_unique_index {
+                        super::validation::enforce_unique_indexes_on_write(
+                            &table,
+                            self.catalog,
+                            self.storage,
+                            table_id,
+                            &new_row,
+                            Some(idx),
+                            ctx,
+                            self.clock,
+                        )?;
+                    }
                 }
 
+                crate::executor::temporal::archive_old_row_on_update(
+                    &table,
+                    stored_row,
+                    &mut new_row,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
                 self.storage.update_row(table_id, idx, new_row.clone())?;
 
                 if !table_indexes.is_empty() {

@@ -1,6 +1,7 @@
 mod change_tracking;
 mod constraints;
 mod database_principals;
+pub(crate) mod dependencies;
 mod dm_db;
 mod dm_os;
 mod fulltext_indexes;

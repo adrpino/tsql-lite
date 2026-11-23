@@ -313,3 +313,93 @@ pub(crate) fn execute_sp_releaseapplock(
         ..Default::default()
     })
 }
+
+pub(crate) fn execute_sp_xml_preparedocument(
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    exec: &mut ScriptExecutor<'_>,
+) -> Result<QueryResult, DbError> {
+    if stmt.args.len() < 2 {
+        return Err(DbError::Execution(
+            "sp_xml_preparedocument requires at least 2 arguments: @hdoc OUTPUT, @xmltext".into(),
+        ));
+    }
+    let mut handle_var: Option<String> = None;
+    let mut xml_text: Option<String> = None;
+    for (idx, arg) in stmt.args.iter().enumerate() {
+        if let Some(ref pname) = arg.name {
+            let p = pname.trim_start_matches('@');
+            if p.eq_ignore_ascii_case("hdoc") {
+                if let crate::ast::Expr::Identifier(var) = &arg.expr {
+                    handle_var = Some(var.clone());
+                }
+            } else if p.eq_ignore_ascii_case("xmltext") {
+                let v = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+                xml_text = Some(v.to_string_value());
+            }
+        } else if idx == 0 {
+            if let crate::ast::Expr::Identifier(var) = &arg.expr {
+                handle_var = Some(var.clone());
+            }
+        } else if idx == 1 {
+            let v = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+            xml_text = Some(v.to_string_value());
+        }
+    }
+    let xml = xml_text.ok_or_else(|| {
+        DbError::Execution("sp_xml_preparedocument: @xmltext argument is required".into())
+    })?;
+    crate::executor::query::binder::openxml::validate_xml_document(&xml)?;
+
+    let handle = ctx.session.extras.next_xml_handle;
+    ctx.session.extras.next_xml_handle = handle.saturating_add(1);
+    ctx.session.extras.xml_documents.insert(handle, xml);
+
+    if let Some(var_name) = handle_var {
+        let existing_key = ctx
+            .session
+            .variables
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(&var_name))
+            .cloned()
+            .unwrap_or(var_name);
+        ctx.session.variables.insert(
+            existing_key,
+            (crate::types::DataType::Int, Value::Int(handle)),
+        );
+    }
+    Ok(QueryResult {
+        return_status: Some(0),
+        is_procedure: true,
+        ..Default::default()
+    })
+}
+
+pub(crate) fn execute_sp_xml_removedocument(
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    exec: &mut ScriptExecutor<'_>,
+) -> Result<QueryResult, DbError> {
+    if stmt.args.is_empty() {
+        return Err(DbError::Execution(
+            "sp_xml_removedocument requires @hdoc argument".into(),
+        ));
+    }
+    let val = eval_expr(
+        &stmt.args[0].expr,
+        &[],
+        ctx,
+        exec.catalog,
+        exec.storage,
+        exec.clock,
+    )?;
+    let handle = val.to_integer_i64().ok_or_else(|| {
+        DbError::Execution("sp_xml_removedocument: @hdoc must be an integer".into())
+    })? as i32;
+    ctx.session.extras.xml_documents.remove(&handle);
+    Ok(QueryResult {
+        return_status: Some(0),
+        is_procedure: true,
+        ..Default::default()
+    })
+}

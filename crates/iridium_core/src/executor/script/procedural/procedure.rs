@@ -154,6 +154,14 @@ impl<'a> ScriptExecutor<'a> {
                 schema, stmt.name.name
             )));
         };
+        crate::executor::security::check_object_permission(
+            self.catalog,
+            ctx,
+            "EXECUTE",
+            &routine_schema,
+            &routine_name,
+            object_id,
+        )?;
         ctx.push_module(ModuleFrame {
             object_id,
             schema: routine_schema.clone(),

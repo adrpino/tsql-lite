@@ -311,3 +311,72 @@ pub(crate) fn enforce_foreign_keys_on_insert(
     }
     Ok(())
 }
+
+pub(crate) fn validate_foreign_key_on_rows(
+    table: &TableDef,
+    fk: &crate::catalog::ForeignKeyDef,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+) -> Result<(), DbError> {
+    let ref_schema = fk.referenced_table.schema_or_dbo();
+    let ref_name = &fk.referenced_table.name;
+    let ref_table = catalog.find_table(ref_schema, ref_name).ok_or_else(|| {
+        DbError::Execution(format!(
+            "referenced table '{}.{}' not found",
+            ref_schema, ref_name
+        ))
+    })?;
+    let ref_rows: Vec<StoredRow> = storage
+        .scan_rows(ref_table.id)?
+        .filter_map(|r| match r {
+            Ok(row) if !row.deleted => Some(Ok(row)),
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect::<Result<Vec<_>, DbError>>()?;
+
+    let mut col_indices = Vec::with_capacity(fk.columns.len());
+    for col_name in &fk.columns {
+        let idx = table
+            .columns
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(col_name))
+            .ok_or_else(|| DbError::column_not_found(col_name))?;
+        col_indices.push(idx);
+    }
+    let mut ref_col_indices = Vec::with_capacity(fk.referenced_columns.len());
+    for ref_col_name in &fk.referenced_columns {
+        let idx = ref_table
+            .columns
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(ref_col_name))
+            .ok_or_else(|| DbError::column_not_found(ref_col_name))?;
+        ref_col_indices.push(idx);
+    }
+
+    for row in storage.scan_rows(table.id)? {
+        let row = row?;
+        if row.deleted {
+            continue;
+        }
+        if col_indices.iter().any(|&ci| row.values[ci].is_null()) {
+            continue;
+        }
+        let found = ref_rows.iter().any(|ref_row| {
+            col_indices
+                .iter()
+                .zip(ref_col_indices.iter())
+                .all(|(&ci, &rci)| {
+                    compare_values(&row.values[ci], &ref_row.values[rci])
+                        == std::cmp::Ordering::Equal
+                })
+        });
+        if !found {
+            return Err(DbError::Execution(format!(
+                "The ALTER TABLE statement conflicted with the FOREIGN KEY constraint \"{}\". The conflict occurred in database \"master\", table \"{}.{}\", column '{}'.",
+                fk.name, ref_schema, ref_name, fk.referenced_columns[0]
+            )));
+        }
+    }
+    Ok(())
+}

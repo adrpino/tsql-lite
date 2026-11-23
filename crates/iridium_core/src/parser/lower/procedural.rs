@@ -472,6 +472,12 @@ pub fn lower_session(session: ast::SessionStatement) -> Result<executor_ast::Sta
         ast::SessionStatement::SetContextInfo(expr) => Ok(executor_ast::Statement::Session(
             executor_ast::statements::SessionStatement::SetContextInfo(lower_expr(expr)?),
         )),
+        ast::SessionStatement::ExecuteAs(principal) => Ok(executor_ast::Statement::Session(
+            executor_ast::statements::SessionStatement::ExecuteAs(principal),
+        )),
+        ast::SessionStatement::Revert => Ok(executor_ast::Statement::Session(
+            executor_ast::statements::SessionStatement::Revert,
+        )),
     }
 }
 

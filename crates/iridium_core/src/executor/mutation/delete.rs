@@ -40,6 +40,14 @@ impl<'a> MutationExecutor<'a> {
 
         let (table, joined_rows) = match resolved_direct {
             Ok((table, resolved_name)) => {
+                crate::executor::security::check_object_permission(
+                    self.catalog,
+                    ctx,
+                    "DELETE",
+                    table.schema_or_dbo(),
+                    &table.name,
+                    table.id as i32,
+                )?;
                 let query = build_mutation_query(
                     stmt.from.as_ref(),
                     &stmt.table,
@@ -53,7 +61,10 @@ impl<'a> MutationExecutor<'a> {
                     storage: self.storage,
                     clock: self.clock,
                 };
-                let joined_rows = query_executor.execute_to_joined_rows(query, ctx)?;
+                let prev_target = ctx.session.extras.mutation_target_id.replace(table.id);
+                let joined_res = query_executor.execute_to_joined_rows(query, ctx);
+                ctx.session.extras.mutation_target_id = prev_target;
+                let joined_rows = joined_res?;
                 (table, joined_rows)
             }
             Err(orig_err) => {
@@ -196,6 +207,13 @@ impl<'a> MutationExecutor<'a> {
                 if has_incoming_fks {
                     enforce_foreign_keys_on_delete(&table, self.catalog, self.storage, stored_row)?;
                 }
+                crate::executor::temporal::archive_old_row_on_delete(
+                    &table,
+                    stored_row,
+                    self.catalog,
+                    self.storage,
+                    self.clock,
+                )?;
                 if collect_rows {
                     deleted_rows_for_output.push(stored_row.clone());
                 }

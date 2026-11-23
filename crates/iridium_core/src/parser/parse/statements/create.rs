@@ -3,10 +3,80 @@ use crate::parser::error::{Expected, ParseResult};
 use crate::parser::state::Parser;
 use crate::parser::token::Keyword;
 
+pub(crate) fn parse_system_versioning_options(
+    parser: &mut Parser,
+) -> ParseResult<Option<(bool, Option<Vec<String>>)>> {
+    parser.expect_lparen()?;
+    let mut sv: Option<(bool, Option<Vec<String>>)> = None;
+    let mut depth = 1usize;
+    while depth > 0 {
+        match parser.peek() {
+            Some(Token::Identifier(id))
+                if id.eq_ignore_ascii_case("SYSTEM_VERSIONING") && depth == 1 =>
+            {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                    let _ = parser.next();
+                }
+                let enabled = match parser.next() {
+                    Some(Token::Keyword(Keyword::On)) => true,
+                    Some(Token::Keyword(Keyword::Off)) => false,
+                    Some(Token::Identifier(s)) => s.eq_ignore_ascii_case("ON"),
+                    _ => true,
+                };
+                let mut history_table = None;
+                if matches!(parser.peek(), Some(Token::LParen)) {
+                    let _ = parser.next();
+                    let mut inner_depth = 1usize;
+                    while inner_depth > 0 {
+                        match parser.peek() {
+                            Some(Token::Identifier(k))
+                                if k.eq_ignore_ascii_case("HISTORY_TABLE") && inner_depth == 1 =>
+                            {
+                                let _ = parser.next();
+                                if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                                    let _ = parser.next();
+                                }
+                                history_table = Some(super::parse_multipart_name(parser)?);
+                            }
+                            Some(Token::LParen) => {
+                                let _ = parser.next();
+                                inner_depth += 1;
+                            }
+                            Some(Token::RParen) => {
+                                let _ = parser.next();
+                                inner_depth -= 1;
+                            }
+                            Some(_) => {
+                                let _ = parser.next();
+                            }
+                            None => break,
+                        }
+                    }
+                }
+                sv = Some((enabled, history_table));
+            }
+            Some(Token::LParen) => {
+                let _ = parser.next();
+                depth += 1;
+            }
+            Some(Token::RParen) => {
+                let _ = parser.next();
+                depth -= 1;
+            }
+            Some(_) => {
+                let _ = parser.next();
+            }
+            None => break,
+        }
+    }
+    Ok(sv)
+}
+
 pub fn parse_create_table(parser: &mut Parser) -> ParseResult<CreateStmt> {
     let name = super::parse_multipart_name(parser)?;
     parser.expect_lparen()?;
-    let (columns, constraints) = super::ddl::parse_table_body(parser)?;
+    let (columns, mut constraints) = super::ddl::parse_table_body(parser)?;
     parser.expect_rparen()?;
     // Optional storage / table options clauses in any order:
     // ON [PRIMARY] / ON [scheme](col) / TEXTIMAGE_ON [PRIMARY] / FILESTREAM_ON [fg] / WITH (...)
@@ -34,15 +104,11 @@ pub fn parse_create_table(parser: &mut Parser) -> ParseResult<CreateStmt> {
             let saved = parser.save();
             let _ = parser.next();
             if matches!(parser.peek(), Some(Token::LParen)) {
-                let _ = parser.next();
-                let mut depth = 1usize;
-                while depth > 0 {
-                    match parser.next() {
-                        Some(Token::LParen) => depth += 1,
-                        Some(Token::RParen) => depth -= 1,
-                        None => break,
-                        _ => {}
-                    }
+                if let Some((enabled, history_table)) = parse_system_versioning_options(parser)? {
+                    constraints.push(TableConstraint::SystemVersioning {
+                        enabled,
+                        history_table,
+                    });
                 }
                 continue;
             }

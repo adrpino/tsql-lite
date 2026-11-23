@@ -239,6 +239,8 @@ pub enum SessionStatement {
         on: bool,
     },
     SetContextInfo(Expr),
+    ExecuteAs(String),
+    Revert,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -478,15 +480,23 @@ pub enum AlterTableAction {
         data_type: DataType,
         nullable: Option<bool>,
     },
-    AddConstraint(TableConstraint),
+    AddConstraint {
+        constraint: TableConstraint,
+        with_check: Option<bool>,
+    },
     DropConstraint(String),
     CheckConstraint {
         check: bool,
+        with_check: Option<bool>,
         name: Option<String>,
     },
     ToggleTrigger {
         trigger_name: Option<Vec<String>>,
         enable: bool,
+    },
+    SetSystemVersioning {
+        enabled: bool,
+        history_table: Option<Vec<String>>,
     },
 }
 
@@ -518,6 +528,14 @@ pub enum TableConstraint {
         name: Option<String>,
         column: String,
         expr: Expr,
+    },
+    SystemTimePeriod {
+        start_col: String,
+        end_col: String,
+    },
+    SystemVersioning {
+        enabled: bool,
+        history_table: Option<Vec<String>>,
     },
 }
 
@@ -558,6 +576,7 @@ pub struct CreateIndexStmt {
     pub is_clustered: bool,
     pub columns: Vec<IndexColumn>,
     pub options: Vec<IndexOption>,
+    pub filter_predicate: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

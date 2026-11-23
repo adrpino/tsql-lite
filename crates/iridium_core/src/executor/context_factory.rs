@@ -29,6 +29,7 @@ pub(crate) fn from_session<'a, C, S>(
             handle_map: &mut session.cursors.handle_map,
             print_output: &mut session.diagnostics.print_output,
             bulk_load: &mut session.bulk_load,
+            extras: &mut session.extras,
             context_info: &mut session.context_info,
             session_context: &mut session.session_context,
             dirty_buffer,
@@ -79,6 +80,7 @@ pub(crate) fn from_session<'a, C, S>(
 pub(crate) fn legacy_new<'a>(
     variables: &'a mut Variables,
     bulk_load: &'a mut super::session::BulkLoadState,
+    extras: &'a mut super::session::SessionExtras,
     session_last_identity: &'a mut Option<i64>,
     scope_identity_stack: &'a mut Vec<Option<i64>>,
     temp_table_map: &'a mut HashMap<String, String>,
@@ -118,6 +120,7 @@ pub(crate) fn legacy_new<'a>(
             handle_map,
             print_output,
             bulk_load,
+            extras,
             context_info,
             session_context,
             dirty_buffer,

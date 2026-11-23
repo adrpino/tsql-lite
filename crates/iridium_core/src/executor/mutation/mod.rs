@@ -357,6 +357,16 @@ impl<'a> MutationExecutor<'a> {
 
             // Re-validate constraints on the target table
             validation::enforce_unique_on_insert(&table, self.storage, table.id, &stored_row)?;
+            validation::enforce_unique_indexes_on_write(
+                &table,
+                self.catalog,
+                self.storage,
+                table.id,
+                &stored_row,
+                None,
+                ctx,
+                self.clock,
+            )?;
             validation::enforce_foreign_keys_on_insert(
                 &table,
                 self.catalog,

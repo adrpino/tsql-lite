@@ -142,6 +142,16 @@ pub(super) fn bind_plain_table(
     let table = catalog
         .find_table_arc(schema, name)
         .ok_or_else(|| DbError::table_not_found(schema, name))?;
+    if ctx.session.extras.mutation_target_id != Some(table.id) {
+        crate::executor::security::check_object_permission(
+            catalog,
+            ctx,
+            "SELECT",
+            table.schema_or_dbo(),
+            &table.name,
+            table.id as i32,
+        )?;
+    }
 
     Ok(BoundTable {
         alias: tref.alias.clone().unwrap_or_else(|| table.name.clone()),

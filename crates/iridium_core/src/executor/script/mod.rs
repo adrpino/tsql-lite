@@ -326,6 +326,14 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
             SessionStatement::SetContextInfo(_) => Err(DbError::Execution(
                 "session option statements are handled at engine level".into(),
             )),
+            SessionStatement::ExecuteAs(principal) => {
+                crate::executor::security::execute_as(&principal, self.catalog, ctx)?;
+                Ok(StmtOutcome::Ok(None))
+            }
+            SessionStatement::Revert => {
+                crate::executor::security::revert(ctx)?;
+                Ok(StmtOutcome::Ok(None))
+            }
         }
     }
 

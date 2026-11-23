@@ -31,7 +31,7 @@ const IMPLEMENTED_WINDOW_FUNCTIONS: &[&str] = &[
     "PERCENTILE_DISC",
 ];
 
-const IMPLEMENTED_TVFS: &[&str] = &["OPENJSON", "STRING_SPLIT", "GENERATE_SERIES"];
+const IMPLEMENTED_TVFS: &[&str] = &["OPENJSON", "STRING_SPLIT", "GENERATE_SERIES", "OPENXML"];
 
 fn is_implemented_in_engine(section: &str, name: &str) -> bool {
     let upper = name.to_ascii_uppercase();

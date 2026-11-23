@@ -28,9 +28,12 @@ pub(crate) fn apply_table_constraint(
             col.default_constraint_name = Some(name);
         }
         TableConstraintSpec::Check { name, expr } => {
-            table
-                .check_constraints
-                .push(CheckConstraintDef { name, expr });
+            table.check_constraints.push(CheckConstraintDef {
+                name,
+                expr,
+                enabled: true,
+                is_not_trusted: false,
+            });
         }
         TableConstraintSpec::ForeignKey {
             name,
@@ -48,6 +51,7 @@ pub(crate) fn apply_table_constraint(
                 on_delete: on_delete.unwrap_or(crate::ast::ReferentialAction::NoAction),
                 on_update: on_update.unwrap_or(crate::ast::ReferentialAction::NoAction),
                 enabled: true,
+                is_not_trusted: false,
             });
         }
         TableConstraintSpec::PrimaryKey {
@@ -90,6 +94,8 @@ pub(crate) fn apply_table_constraint(
                 col.is_clustered = is_clustered;
             }
         }
+        TableConstraintSpec::SystemTimePeriod { .. }
+        | TableConstraintSpec::SystemVersioning { .. } => {}
     }
     Ok(())
 }
@@ -238,23 +244,86 @@ pub(crate) fn create_table(
                 .on_update
                 .unwrap_or(crate::ast::ReferentialAction::NoAction),
             enabled: true,
+            is_not_trusted: false,
         });
     }
 
+    let mut period_cols: Option<(String, String)> = None;
+    let mut sys_versioning: Option<(bool, Option<crate::ast::ObjectName>)> = None;
     for tc in stmt.table_constraints {
-        apply_table_constraint(&mut table, tc)?;
+        match tc {
+            TableConstraintSpec::SystemTimePeriod { start_col, end_col } => {
+                period_cols = Some((start_col, end_col));
+            }
+            TableConstraintSpec::SystemVersioning {
+                enabled,
+                history_table,
+            } => {
+                sys_versioning = Some((enabled, history_table));
+            }
+            other => apply_table_constraint(&mut table, other)?,
+        }
     }
 
     executor.catalog.register_table(table.clone());
     executor.storage.ensure_table(table_id)?;
 
+    if let Some((start_col, end_col)) = period_cols {
+        let (enabled, hist_obj) = sys_versioning.unwrap_or((false, None));
+        let (hist_schema, hist_name) = match hist_obj {
+            Some(obj) => (obj.schema_or_dbo().to_string(), obj.name),
+            None => (
+                schema_name.clone(),
+                format!("MSSQL_TemporalHistoryFor_{}", table_id),
+            ),
+        };
+        if enabled {
+            crate::executor::temporal::ensure_history_table(
+                executor.catalog,
+                executor.storage,
+                &table,
+                &hist_schema,
+                &hist_name,
+            )?;
+        }
+        executor
+            .catalog
+            .set_temporal_config(crate::catalog::TemporalTableConfig {
+                table_id,
+                start_col,
+                end_col,
+                history_schema: hist_schema,
+                history_table: hist_name,
+                system_versioning: enabled,
+            });
+    }
+
+    let pk_cols: Vec<&crate::catalog::ColumnDef> =
+        table.columns.iter().filter(|c| c.primary_key).collect();
+    if !pk_cols.is_empty() {
+        let index_name = if pk_cols.len() == 1 {
+            format!("PK__{}__{}", table.name, pk_cols[0].name)
+        } else {
+            format!("PK__{}", table.name)
+        };
+        let col_names: Vec<String> = pk_cols.iter().map(|c| c.name.clone()).collect();
+        let is_clustered = pk_cols.iter().any(|c| c.is_clustered);
+        executor
+            .catalog
+            .create_index_with_options(
+                "dbo",
+                &index_name,
+                &table.schema_name,
+                &table.name,
+                &col_names,
+                is_clustered,
+                true,
+            )
+            .map_err(|e| DbError::Execution(format!("Failed to create constraint index: {}", e)))?;
+    }
     for col in &table.columns {
-        if col.primary_key || (col.unique && col.is_clustered) {
-            let index_name = if col.primary_key {
-                format!("PK__{}__{}", table.name, col.name)
-            } else {
-                format!("UQ__{}__{}", table.name, col.name)
-            };
+        if !col.primary_key && col.unique && col.is_clustered {
+            let index_name = format!("UQ__{}__{}", table.name, col.name);
             executor
                 .catalog
                 .create_index_with_options(
@@ -264,7 +333,7 @@ pub(crate) fn create_table(
                     &table.name,
                     std::slice::from_ref(&col.name),
                     col.is_clustered,
-                    col.unique || col.primary_key,
+                    true,
                 )
                 .map_err(|e| {
                     DbError::Execution(format!("Failed to create constraint index: {}", e))
@@ -430,7 +499,7 @@ pub(crate) fn create_index(
     let table_schema = stmt.table.schema_or_dbo().to_string();
 
     let col_names: Vec<String> = stmt.columns.iter().map(|c| c.name.clone()).collect();
-    executor.catalog.create_index_with_options(
+    executor.catalog.create_index_with_filter(
         &index_schema,
         &stmt.name.name,
         &table_schema,
@@ -438,6 +507,7 @@ pub(crate) fn create_index(
         &col_names,
         stmt.is_clustered,
         stmt.is_unique,
+        stmt.filter_predicate,
     )?;
 
     if let (Some(index_def_id), Some(table)) = (
@@ -525,14 +595,31 @@ pub(crate) fn alter_table(
                 col.nullable = n;
             }
         }
-        AlterTableAction::AddConstraint(constraint) => {
+        AlterTableAction::AddConstraint {
+            constraint,
+            with_check,
+        } => {
             let table_mut = executor
                 .catalog
                 .find_table_mut(&schema_name, &stmt.table.name)
                 .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?;
+            let prev_chk_len = table_mut.check_constraints.len();
+            let prev_fk_len = table_mut.foreign_keys.len();
             apply_table_constraint(table_mut, constraint)?;
+            if with_check == Some(false) {
+                for chk in &mut table_mut.check_constraints[prev_chk_len..] {
+                    chk.is_not_trusted = true;
+                }
+                for fk in &mut table_mut.foreign_keys[prev_fk_len..] {
+                    fk.is_not_trusted = true;
+                }
+            }
         }
-        AlterTableAction::CheckConstraint { check, name } => {
+        AlterTableAction::CheckConstraint {
+            check,
+            with_check,
+            name,
+        } => {
             let table_mut = executor
                 .catalog
                 .find_table_mut(&schema_name, &stmt.table.name)
@@ -543,6 +630,24 @@ pub(crate) fn alter_table(
                     .is_none_or(|n| fk.name.eq_ignore_ascii_case(n))
                 {
                     fk.enabled = check;
+                    if !check {
+                        fk.is_not_trusted = true;
+                    } else if with_check == Some(true) {
+                        fk.is_not_trusted = false;
+                    }
+                }
+            }
+            for chk in &mut table_mut.check_constraints {
+                if name
+                    .as_ref()
+                    .is_none_or(|n| chk.name.eq_ignore_ascii_case(n))
+                {
+                    chk.enabled = check;
+                    if !check {
+                        chk.is_not_trusted = true;
+                    } else if with_check == Some(true) {
+                        chk.is_not_trusted = false;
+                    }
                 }
             }
         }
@@ -561,6 +666,33 @@ pub(crate) fn alter_table(
                 &stmt.table.name,
                 enable,
             )?;
+        }
+        AlterTableAction::SetSystemVersioning {
+            enabled,
+            history_table,
+        } => {
+            let table_snapshot = executor
+                .catalog
+                .find_table(&schema_name, &stmt.table.name)
+                .ok_or_else(|| DbError::table_not_found(&schema_name, &stmt.table.name))?
+                .clone();
+            if let Some(mut cfg) = executor.catalog.get_temporal_config(table_id).cloned() {
+                cfg.system_versioning = enabled;
+                if let Some(hist) = history_table {
+                    cfg.history_schema = hist.schema_or_dbo().to_string();
+                    cfg.history_table = hist.name;
+                }
+                if enabled {
+                    crate::executor::temporal::ensure_history_table(
+                        executor.catalog,
+                        executor.storage,
+                        &table_snapshot,
+                        &cfg.history_schema,
+                        &cfg.history_table,
+                    )?;
+                }
+                executor.catalog.set_temporal_config(cfg);
+            }
         }
         AlterTableAction::DropConstraint(constraint_name) => {
             let table_mut = executor

@@ -1,3 +1,4 @@
+pub(crate) mod openxml;
 mod tvf;
 mod values;
 mod views;
@@ -49,6 +50,11 @@ pub(crate) fn bind_table(
             ctx.frame.depth -= 1;
             return res;
         }
+    }
+    if let Some(ref st) = tref.system_time {
+        return crate::executor::temporal::bind_temporal_table(
+            &tref, st, catalog, storage, clock, ctx,
+        );
     }
     values::bind_plain_table(tref, catalog, ctx)
 }

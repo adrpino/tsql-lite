@@ -95,8 +95,16 @@ impl VirtualTable for SysIndexes {
                         Value::Bit(false),
                         Value::Bit(true), // allow_row_locks
                         Value::Bit(true), // allow_page_locks
-                        Value::Bit(false),
-                        Value::Null,
+                        Value::Bit(idx.filter_predicate.is_some()),
+                        idx.filter_predicate
+                            .as_ref()
+                            .map(|expr| {
+                                Value::NVarChar(format!(
+                                    "({})",
+                                    crate::executor::tooling::formatting::format_expr(expr)
+                                ))
+                            })
+                            .unwrap_or(Value::Null),
                         Value::Bit(false), // is_ms_shipped
                         Value::Bit(false), // is_published
                     ],

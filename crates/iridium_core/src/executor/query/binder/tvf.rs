@@ -37,6 +37,10 @@ pub(super) fn bind_builtin_tvf(
         return bind_openjson(catalog, storage, clock, tref, ctx, name);
     }
 
+    if upper.starts_with("OPENXML(") {
+        return super::openxml::bind_openxml(catalog, storage, clock, tref, ctx, name);
+    }
+
     if upper.starts_with("FN_MY_PERMISSIONS(") || upper == "FN_MY_PERMISSIONS()" {
         return bind_fn_my_permissions(tref);
     }

@@ -114,6 +114,10 @@ pub fn lower_ddl(ddl: ast::DdlStatement) -> Result<executor_ast::Statement, DbEr
                             }
                         })
                         .collect(),
+                    filter_predicate: stmt
+                        .filter_predicate
+                        .map(|e| lower_expr(*e).map(Box::new))
+                        .transpose()?,
                 },
             )
         }
@@ -540,17 +544,29 @@ pub fn lower_alter_action(
                 nullable,
             },
         ),
-        ast::AlterTableAction::AddConstraint(c) => Ok(
-            executor_ast::statements::ddl::AlterTableAction::AddConstraint(lower_table_constraint(
-                c,
-            )?),
+        ast::AlterTableAction::AddConstraint {
+            constraint,
+            with_check,
+        } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::AddConstraint {
+                constraint: lower_table_constraint(constraint)?,
+                with_check,
+            },
         ),
         ast::AlterTableAction::DropConstraint(c) => {
             Ok(executor_ast::statements::ddl::AlterTableAction::DropConstraint(c))
         }
-        ast::AlterTableAction::CheckConstraint { check, name } => {
-            Ok(executor_ast::statements::ddl::AlterTableAction::CheckConstraint { check, name })
-        }
+        ast::AlterTableAction::CheckConstraint {
+            check,
+            with_check,
+            name,
+        } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::CheckConstraint {
+                check,
+                with_check,
+                name,
+            },
+        ),
         ast::AlterTableAction::ToggleTrigger {
             trigger_name,
             enable,
@@ -558,6 +574,15 @@ pub fn lower_alter_action(
             executor_ast::statements::ddl::AlterTableAction::ToggleTrigger {
                 trigger_name: trigger_name.map(lower_object_name),
                 enable,
+            },
+        ),
+        ast::AlterTableAction::SetSystemVersioning {
+            enabled,
+            history_table,
+        } => Ok(
+            executor_ast::statements::ddl::AlterTableAction::SetSystemVersioning {
+                enabled,
+                history_table: history_table.map(lower_object_name),
             },
         ),
     }
@@ -615,6 +640,21 @@ pub fn lower_table_constraint(
                 name: name.unwrap_or_default(),
                 column,
                 expr: lower_expr(expr)?,
+            },
+        ),
+        ast::TableConstraint::SystemTimePeriod { start_col, end_col } => Ok(
+            executor_ast::statements::ddl::TableConstraintSpec::SystemTimePeriod {
+                start_col,
+                end_col,
+            },
+        ),
+        ast::TableConstraint::SystemVersioning {
+            enabled,
+            history_table,
+        } => Ok(
+            executor_ast::statements::ddl::TableConstraintSpec::SystemVersioning {
+                enabled,
+                history_table: history_table.map(lower_object_name),
             },
         ),
     }

@@ -49,6 +49,8 @@ const SYSTEM_PROCEDURES: &[&str] = &[
     "sp_updateextendedproperty",
     "sp_dropextendedproperty",
     "sp_tableoption",
+    "sp_xml_preparedocument",
+    "sp_xml_removedocument",
 ];
 
 pub(crate) fn is_system_procedure(name: &str) -> bool {
@@ -151,6 +153,10 @@ pub(crate) fn execute_system_procedure(
         execute_sp_getapplock(stmt, ctx, exec)?
     } else if name.eq_ignore_ascii_case("sp_releaseapplock") {
         execute_sp_releaseapplock(stmt, ctx, exec)?
+    } else if name.eq_ignore_ascii_case("sp_xml_preparedocument") {
+        execute_sp_xml_preparedocument(stmt, ctx, exec)?
+    } else if name.eq_ignore_ascii_case("sp_xml_removedocument") {
+        execute_sp_xml_removedocument(stmt, ctx, exec)?
     } else {
         return Err(DbError::Execution(format!(
             "unknown system procedure '{}'",

@@ -181,6 +181,32 @@ impl DiagnosticsState {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SessionExtras {
+    pub(crate) impersonation_stack: Vec<String>,
+    pub(crate) xml_documents: HashMap<i32, String>,
+    pub(crate) next_xml_handle: i32,
+    pub(crate) mutation_target_id: Option<u32>,
+}
+
+impl SessionExtras {
+    pub fn new() -> Self {
+        Self {
+            impersonation_stack: Vec::new(),
+            xml_documents: HashMap::new(),
+            next_xml_handle: 1,
+            mutation_target_id: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.impersonation_stack.clear();
+        self.xml_documents.clear();
+        self.next_xml_handle = 1;
+        self.mutation_target_id = None;
+    }
+}
+
 pub struct SessionRuntime<C, S> {
     pub(crate) clock: Box<dyn Clock>,
     pub(crate) tx_manager: TransactionManager<C, S, SessionSnapshot>,
@@ -201,6 +227,7 @@ pub struct SessionRuntime<C, S> {
     pub(crate) context_info: Vec<u8>,
     pub(crate) session_context: HashMap<String, (Value, bool)>,
     pub(crate) bulk_load: BulkLoadState,
+    pub(crate) extras: SessionExtras,
 }
 
 impl<C, S> SessionRuntime<C, S>
@@ -229,6 +256,7 @@ where
             context_info: vec![0u8; 128],
             session_context: HashMap::new(),
             bulk_load: BulkLoadState::new(),
+            extras: SessionExtras::new(),
         }
     }
 
@@ -250,6 +278,7 @@ where
         self.context_info = vec![0u8; 128];
         self.session_context.clear();
         self.bulk_load.reset();
+        self.extras.reset();
     }
 }
 

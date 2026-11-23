@@ -6,14 +6,27 @@ use crate::parser::token::Keyword;
 use super::common::parse_comma_list;
 use super::parse_expr;
 
-pub(crate) fn parse_window_over(
-    parser: &mut Parser,
-    name: String,
-    args: Vec<Expr>,
-    ignore_nulls: bool,
-) -> ParseResult<Expr> {
-    parser.expect_keyword(Keyword::Over)?;
+type WindowSpecParts = (
+    Option<String>,
+    Vec<Expr>,
+    Vec<OrderByExpr>,
+    Option<WindowFrame>,
+);
+
+fn parse_window_spec_parens(parser: &mut Parser) -> ParseResult<WindowSpecParts> {
     parser.expect_lparen()?;
+
+    let mut base_window = None;
+    if let Some(Token::Identifier(id)) = parser.peek() {
+        let upper = id.to_ascii_uppercase();
+        if !matches!(
+            upper.as_str(),
+            "PARTITION" | "ORDER" | "ROWS" | "RANGE" | "GROUPS"
+        ) {
+            base_window = Some(id.clone());
+            let _ = parser.next();
+        }
+    }
 
     let mut partition_by = Vec::new();
     if parser.at_keyword(Keyword::Partition) {
@@ -85,6 +98,27 @@ pub(crate) fn parse_window_over(
     }
 
     parser.expect_rparen()?;
+    Ok((base_window, partition_by, order_by, frame))
+}
+
+pub(crate) fn parse_window_over(
+    parser: &mut Parser,
+    name: String,
+    args: Vec<Expr>,
+    ignore_nulls: bool,
+) -> ParseResult<Expr> {
+    parser.expect_keyword(Keyword::Over)?;
+    let (base_window, partition_by, order_by, frame) =
+        if matches!(parser.peek(), Some(Token::LParen)) {
+            parse_window_spec_parens(parser)?
+        } else if let Some(Token::Identifier(win_name)) = parser.peek() {
+            let w = win_name.clone();
+            let _ = parser.next();
+            (Some(w), Vec::new(), Vec::new(), None)
+        } else {
+            return parser.backtrack(Expected::Description("window specification or window name"));
+        };
+
     Ok(Expr::WindowFunction(Box::new(WindowFunctionExpr {
         name,
         args,
@@ -92,7 +126,33 @@ pub(crate) fn parse_window_over(
         order_by,
         frame,
         ignore_nulls,
+        base_window,
     })))
+}
+
+pub(crate) fn parse_window_clause(parser: &mut Parser) -> ParseResult<Vec<NamedWindowDef>> {
+    let mut defs = Vec::new();
+    loop {
+        let name = match parser.next() {
+            Some(Token::Identifier(id)) => id.clone(),
+            _ => return parser.backtrack(Expected::Description("window name")),
+        };
+        parser.expect_keyword(Keyword::As)?;
+        let (base_window, partition_by, order_by, frame) = parse_window_spec_parens(parser)?;
+        defs.push(NamedWindowDef {
+            name,
+            base_window,
+            partition_by,
+            order_by,
+            frame,
+        });
+        if matches!(parser.peek(), Some(Token::Comma)) {
+            let _ = parser.next();
+        } else {
+            break;
+        }
+    }
+    Ok(defs)
 }
 
 fn parse_window_frame_bound(parser: &mut Parser) -> ParseResult<WindowFrameBound> {

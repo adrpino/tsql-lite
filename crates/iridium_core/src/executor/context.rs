@@ -38,6 +38,7 @@ pub struct SessionStateRefs<'a> {
     pub(crate) handle_map: &'a mut HashMap<i32, String>,
     pub(crate) print_output: &'a mut Vec<String>,
     pub(crate) bulk_load: &'a mut super::session::BulkLoadState,
+    pub(crate) extras: &'a mut super::session::SessionExtras,
     pub(crate) context_info: &'a mut Vec<u8>,
     pub(crate) session_context: &'a mut HashMap<String, (Value, bool)>,
     pub(crate) dirty_buffer:

@@ -780,6 +780,21 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
             }
             _ => parser.backtrack(Expected::Description("statement keyword")),
         },
+        Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("REVERT") => {
+            let _ = parser.next();
+            if parser.at_keyword(Keyword::With) {
+                let _ = parser.next();
+                if matches!(parser.peek(), Some(Token::Identifier(w)) if w.eq_ignore_ascii_case("COOKIE"))
+                {
+                    let _ = parser.next();
+                    if matches!(parser.peek(), Some(Token::Operator(op)) if op == "=") {
+                        let _ = parser.next();
+                        let _ = parse_expr(parser)?;
+                    }
+                }
+            }
+            Ok(Statement::Session(SessionStatement::Revert))
+        }
         Some(Token::Identifier(id))
             if id.eq_ignore_ascii_case("DISABLE") || id.eq_ignore_ascii_case("ENABLE") =>
         {

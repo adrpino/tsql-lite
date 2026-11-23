@@ -26,6 +26,7 @@ pub struct SelectExtra {
     pub for_xml: Option<ForXmlClause>,
     pub for_json: Option<ForJsonClause>,
     pub grouping_sets: Vec<Vec<Expr>>,
+    pub windows: Vec<crate::parser::ast::NamedWindowDef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

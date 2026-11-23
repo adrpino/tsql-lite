@@ -295,7 +295,7 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 | `OPENJSON` | ✅ | Default schema and explicit `WITH (...)` schema |
 | `STRING_SPLIT` | ✅ | Supports 2-arg and 3-arg `enable_ordinal` |
 | `GENERATE_SERIES` | ✅ | SQL Server 2022 (`start, stop [, step]`) |
-| `OPENXML` | ❌ | Legacy XML shredding TVF |
+| `OPENXML` | ✅ | Legacy XML shredding with `sp_xml_preparedocument`/`sp_xml_removedocument` |
 | `OPENROWSET` | ❌ | External data source TVF |
 | `OPENQUERY` | ❌ | Linked-server TVF |
 | `CHANGETABLE` | ❌ | Change Tracking TVF |
@@ -348,7 +348,7 @@ Implemented in `crates/iridium_core/src/executor/script/procedural/system_proced
 
 - **Dynamic execution & metadata inspection:** `sp_executesql`, `sp_describe_first_result_set`, `sp_describe_undeclared_parameters`, `sp_help`, `sp_helptext`, `sp_columns`, `sp_tables`, `sp_helpindex`, `sp_helpconstraint`, `sp_rename`, `sp_refreshsqlmodule`, `sp_refreshview`, `sp_refresh_parameter_encryption`
 - **Extended properties & table options (persisted in catalog):** `sp_addextendedproperty`, `sp_updateextendedproperty`, `sp_dropextendedproperty`, `sp_tableoption`
-- **Session & application locks:** `sp_set_session_context`, `sp_getapplock`, `sp_releaseapplock`
+- **Session, XML & application locks:** `sp_set_session_context`, `sp_getapplock`, `sp_releaseapplock`, `sp_xml_preparedocument`, `sp_xml_removedocument`
 - **Database, security & server probes:** `sp_who`, `sp_databases`, `sp_helpdb`, `sp_server_info`, `sp_monitor`, `sp_helpuser`, `sp_helprole`, `sp_helprolemember`, `sp_helpsrvrole`, `sp_helpsrvrolemember`, `sp_helpfile`, `sp_helpfilegroup`, `sp_msgetversion`, `sp_MSIsContainedAGSession`, `xp_instance_regread`, `xp_msver`, `xp_qv`
 - **Cursor RPCs (`iridium_server` TDS layer):** `sp_prepexec`, `sp_cursoropen`, `sp_cursorfetch`, `sp_cursorclose`
 - **Out of scope for embedded engine:** SQL Server Agent (`sp_add_job`, etc.), Replication (`sp_addpublication`, etc.), Database Mail, Service Broker, and Availability Groups (`sp_add_ag_*`).

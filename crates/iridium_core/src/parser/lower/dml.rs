@@ -113,9 +113,124 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
     }
 }
 
+fn resolve_window_def(
+    name: &str,
+    windows: &[ast::NamedWindowDef],
+    depth: usize,
+) -> Result<
+    (
+        Vec<ast::Expr>,
+        Vec<ast::OrderByExpr>,
+        Option<ast::WindowFrame>,
+    ),
+    DbError,
+> {
+    if depth > 16 {
+        return Err(DbError::Execution(format!(
+            "Circular WINDOW reference involving '{}'",
+            name
+        )));
+    }
+    let def = windows
+        .iter()
+        .find(|w| w.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| DbError::Execution(format!("Window name '{}' is not defined", name)))?;
+    let (mut part, mut ord, mut frame) = if let Some(base) = &def.base_window {
+        resolve_window_def(base, windows, depth + 1)?
+    } else {
+        (Vec::new(), Vec::new(), None)
+    };
+    if !def.partition_by.is_empty() {
+        part = def.partition_by.clone();
+    }
+    if !def.order_by.is_empty() {
+        ord = def.order_by.clone();
+    }
+    if def.frame.is_some() {
+        frame = def.frame.clone();
+    }
+    Ok((part, ord, frame))
+}
+
+fn resolve_named_windows_in_expr(
+    expr: &mut ast::Expr,
+    windows: &[ast::NamedWindowDef],
+) -> Result<(), DbError> {
+    match expr {
+        ast::Expr::WindowFunction(wf) => {
+            if let Some(base_name) = wf.base_window.take() {
+                let (part, ord, frame) = resolve_window_def(&base_name, windows, 0)?;
+                if wf.partition_by.is_empty() {
+                    wf.partition_by = part;
+                }
+                if wf.order_by.is_empty() {
+                    wf.order_by = ord;
+                }
+                if wf.frame.is_none() {
+                    wf.frame = frame;
+                }
+            }
+            for a in &mut wf.args {
+                resolve_named_windows_in_expr(a, windows)?;
+            }
+        }
+        ast::Expr::Binary { left, right, .. } => {
+            resolve_named_windows_in_expr(left, windows)?;
+            resolve_named_windows_in_expr(right, windows)?;
+        }
+        ast::Expr::Unary { expr, .. }
+        | ast::Expr::IsNull(expr)
+        | ast::Expr::IsNotNull(expr)
+        | ast::Expr::Cast { expr, .. }
+        | ast::Expr::TryCast { expr, .. }
+        | ast::Expr::Convert { expr, .. }
+        | ast::Expr::TryConvert { expr, .. } => resolve_named_windows_in_expr(expr, windows)?,
+        ast::Expr::FunctionCall { args, .. } => {
+            for a in args {
+                resolve_named_windows_in_expr(a, windows)?;
+            }
+        }
+        ast::Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            if let Some(op) = operand {
+                resolve_named_windows_in_expr(op, windows)?;
+            }
+            for wc in when_clauses {
+                resolve_named_windows_in_expr(&mut wc.condition, windows)?;
+                resolve_named_windows_in_expr(&mut wc.result, windows)?;
+            }
+            if let Some(e) = else_result {
+                resolve_named_windows_in_expr(e, windows)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn lower_select(
-    s: ast::SelectStmt,
+    mut s: ast::SelectStmt,
 ) -> Result<executor_ast::statements::query::SelectStmt, DbError> {
+    let named_windows = s
+        .extra
+        .as_ref()
+        .map(|ex| ex.windows.clone())
+        .unwrap_or_default();
+    if !named_windows.is_empty()
+        || s.projection
+            .iter()
+            .any(|i| matches!(i.expr, ast::Expr::WindowFunction(ref w) if w.base_window.is_some()))
+    {
+        for item in &mut s.projection {
+            resolve_named_windows_in_expr(&mut item.expr, &named_windows)?;
+        }
+        for ob in &mut s.order_by {
+            resolve_named_windows_in_expr(&mut ob.expr, &named_windows)?;
+        }
+    }
     let from_clause = lower_select_from_clause(s.from, s.joins)?;
 
     Ok(executor_ast::statements::query::SelectStmt {
@@ -330,7 +445,32 @@ fn format_tvf_name(
     Ok(full_name)
 }
 
+fn lower_system_time(
+    st: Option<Box<ast::SystemTimeClause>>,
+) -> Result<Option<Box<executor_ast::common::SystemTimeClause>>, DbError> {
+    let Some(st) = st else {
+        return Ok(None);
+    };
+    let lowered = match *st {
+        ast::SystemTimeClause::AsOf(e) => {
+            executor_ast::common::SystemTimeClause::AsOf(lower_expr(e)?)
+        }
+        ast::SystemTimeClause::FromTo(s, e) => {
+            executor_ast::common::SystemTimeClause::FromTo(lower_expr(s)?, lower_expr(e)?)
+        }
+        ast::SystemTimeClause::Between(s, e) => {
+            executor_ast::common::SystemTimeClause::Between(lower_expr(s)?, lower_expr(e)?)
+        }
+        ast::SystemTimeClause::ContainedIn(s, e) => {
+            executor_ast::common::SystemTimeClause::ContainedIn(lower_expr(s)?, lower_expr(e)?)
+        }
+        ast::SystemTimeClause::All => executor_ast::common::SystemTimeClause::All,
+    };
+    Ok(Some(Box::new(lowered)))
+}
+
 fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::TableRef, DbError> {
+    let system_time = lower_system_time(tr.system_time)?;
     let alias = tr.alias;
     let hints = tr.hints;
     let pivot = tr.pivot.map(|p| {
@@ -423,6 +563,7 @@ fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::Table
                 pivot,
                 unpivot,
                 hints: Vec::new(),
+                system_time: None,
             });
         }
         ast::TableFactor::JoinedGroup { .. } => {
@@ -438,6 +579,7 @@ fn lower_table_ref_flat(tr: ast::TableRef) -> Result<executor_ast::common::Table
         pivot,
         unpivot,
         hints,
+        system_time,
     })
 }
 
@@ -527,6 +669,7 @@ pub fn lower_table_ref_recursive(
         })
     });
 
+    let system_time = lower_system_time(tr.system_time)?;
     match tr.factor {
         ast::TableFactor::Named(name) => Ok((
             executor_ast::common::TableRef {
@@ -535,6 +678,7 @@ pub fn lower_table_ref_recursive(
                 pivot,
                 unpivot,
                 hints,
+                system_time,
             },
             Vec::new(),
         )),
@@ -547,6 +691,7 @@ pub fn lower_table_ref_recursive(
                     pivot,
                     unpivot,
                     hints,
+                    system_time: None,
                 },
                 Vec::new(),
             ))
@@ -564,6 +709,7 @@ pub fn lower_table_ref_recursive(
                 pivot,
                 unpivot,
                 hints,
+                system_time: None,
             },
             Vec::new(),
         )),
@@ -576,6 +722,7 @@ pub fn lower_table_ref_recursive(
                 pivot,
                 unpivot,
                 hints,
+                system_time: None,
             },
             Vec::new(),
         )),
@@ -633,6 +780,7 @@ pub fn lower_table_ref_recursive(
                     pivot,
                     unpivot,
                     hints: Vec::new(),
+                    system_time: None,
                 },
                 Vec::new(),
             ))

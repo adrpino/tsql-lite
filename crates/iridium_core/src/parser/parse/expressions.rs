@@ -19,6 +19,7 @@ pub use data_types::parse_data_type;
 pub use primary::{
     parse_case, parse_cast, parse_convert, parse_primary, parse_try_cast, parse_try_convert,
 };
+pub(crate) use window::parse_window_clause;
 
 pub fn parse_expr(parser: &mut Parser) -> ParseResult<Expr> {
     pratt::parse_expr(parser)

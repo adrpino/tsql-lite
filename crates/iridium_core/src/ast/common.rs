@@ -40,6 +40,15 @@ impl TableFactor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SystemTimeClause {
+    AsOf(Expr),
+    FromTo(Expr, Expr),
+    Between(Expr, Expr),
+    ContainedIn(Expr, Expr),
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TableRef {
     pub factor: TableFactor,
     pub alias: Option<String>,
@@ -47,6 +56,8 @@ pub struct TableRef {
     pub unpivot: Option<Box<UnpivotSpec>>,
     #[serde(default)]
     pub hints: Vec<String>,
+    #[serde(default)]
+    pub system_time: Option<Box<SystemTimeClause>>,
 }
 
 impl TableRef {
@@ -61,6 +72,7 @@ impl TableRef {
             pivot: None,
             unpivot: None,
             hints: Vec::new(),
+            system_time: None,
         }
     }
 }

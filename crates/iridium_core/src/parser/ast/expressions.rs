@@ -125,6 +125,17 @@ pub struct WindowFunctionExpr {
     pub frame: Option<WindowFrame>,
     #[serde(default)]
     pub ignore_nulls: bool,
+    #[serde(default)]
+    pub base_window: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NamedWindowDef {
+    pub name: String,
+    pub base_window: Option<String>,
+    pub partition_by: Vec<Expr>,
+    pub order_by: Vec<OrderByExpr>,
+    pub frame: Option<WindowFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

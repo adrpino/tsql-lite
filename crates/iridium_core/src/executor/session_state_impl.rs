@@ -27,6 +27,7 @@ impl<'a> SessionStateRefs<'a> {
             handle_map: self.handle_map,
             print_output: self.print_output,
             bulk_load: self.bulk_load,
+            extras: self.extras,
             context_info: self.context_info,
             session_context: self.session_context,
             dirty_buffer: self.dirty_buffer.clone(),

@@ -96,6 +96,7 @@ where
     let mut ctx = ExecutionContext::new(
         variables,
         &mut session.bulk_load,
+        &mut session.extras,
         &mut identities.last_identity,
         &mut identities.scope_stack,
         &mut tables.temp_map,

@@ -271,6 +271,12 @@ impl<'a> MutationExecutor<'a> {
         final_values: &mut [Value],
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<(), DbError> {
+        crate::executor::temporal::fill_temporal_insert_values(
+            table,
+            final_values,
+            self.catalog,
+            self.clock,
+        );
         for (idx, col) in table.columns.iter().enumerate() {
             if col.computed_expr.is_some() {
                 continue;

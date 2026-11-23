@@ -59,7 +59,8 @@ impl<'a> ExecutionContext<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         variables: &'a mut Variables,
-        bulk_load: &'a mut crate::executor::session::BulkLoadState,
+        bulk_load: &'a mut session::BulkLoadState,
+        extras: &'a mut session::SessionExtras,
         session_last_identity: &'a mut Option<i64>,
         scope_identity_stack: &'a mut Vec<Option<i64>>,
         temp_table_map: &'a mut HashMap<String, String>,
@@ -86,6 +87,7 @@ impl<'a> ExecutionContext<'a> {
         context_factory::legacy_new(
             variables,
             bulk_load,
+            extras,
             session_last_identity,
             scope_identity_stack,
             temp_table_map,

@@ -21,6 +21,7 @@ fn wrap_parenthesized_set_op(inner: SelectStmt) -> SelectStmt {
             pivot: None,
             unpivot: None,
             hints: Vec::new(),
+            system_time: None,
         }),
         joins: Vec::new(),
         applies: Vec::new(),
@@ -400,6 +401,12 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         having = Some(crate::parser::parse::expressions::parse_expr(parser)?);
     }
 
+    let mut windows = Vec::new();
+    if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("WINDOW")) {
+        let _ = parser.next();
+        windows = crate::parser::parse::expressions::parse_window_clause(parser)?;
+    }
+
     let mut order_by = Vec::new();
     if let Some(Token::Keyword(Keyword::Order)) = parser.peek() {
         let _ = parser.next();
@@ -425,13 +432,14 @@ pub fn parse_single_select_body(parser: &mut Parser) -> ParseResult<SelectStmt> 
         }
     }
 
-    let extra = if grouping_sets.is_empty() {
+    let extra = if grouping_sets.is_empty() && windows.is_empty() {
         None
     } else {
         Some(Box::new(SelectExtra {
             for_xml: None,
             for_json: None,
             grouping_sets,
+            windows,
         }))
     };
 
@@ -643,8 +651,67 @@ fn parse_group_by_items(parser: &mut Parser) -> ParseResult<(Vec<Expr>, Vec<Vec<
     Ok((all_exprs, grouping_sets))
 }
 
+fn parse_optional_for_system_time(
+    parser: &mut Parser,
+) -> ParseResult<Option<Box<SystemTimeClause>>> {
+    if !parser.at_keyword(Keyword::For) {
+        return Ok(None);
+    }
+    let saved = parser.save();
+    let _ = parser.next(); // FOR
+    if !matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SYSTEM_TIME"))
+    {
+        parser.restore(saved);
+        return Ok(None);
+    }
+    let _ = parser.next(); // SYSTEM_TIME
+    if parser.at_keyword(Keyword::As) {
+        let _ = parser.next();
+        parser.expect_keyword(Keyword::Of)?;
+        let expr = crate::parser::parse::expressions::parse_expr(parser)?;
+        return Ok(Some(Box::new(SystemTimeClause::AsOf(expr))));
+    }
+    if parser.at_keyword(Keyword::From) {
+        let _ = parser.next();
+        let start = crate::parser::parse::expressions::parse_expr(parser)?;
+        if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("TO")) {
+            let _ = parser.next();
+        } else {
+            return parser.backtrack(Expected::Description("TO in FOR SYSTEM_TIME FROM ... TO"));
+        }
+        let end = crate::parser::parse::expressions::parse_expr(parser)?;
+        return Ok(Some(Box::new(SystemTimeClause::FromTo(start, end))));
+    }
+    if parser.at_keyword(Keyword::Between) {
+        let _ = parser.next();
+        // Parse bounds carefully without letting `BETWEEN ... AND ...` consume `AND` as a binary logical op
+        let start = crate::parser::parse::expressions::parse_primary(parser)?;
+        parser.expect_keyword(Keyword::And)?;
+        let end = crate::parser::parse::expressions::parse_primary(parser)?;
+        return Ok(Some(Box::new(SystemTimeClause::Between(start, end))));
+    }
+    if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CONTAINED"))
+    {
+        let _ = parser.next();
+        parser.expect_keyword(Keyword::In)?;
+        parser.expect_lparen()?;
+        let start = crate::parser::parse::expressions::parse_expr(parser)?;
+        parser.expect_comma()?;
+        let end = crate::parser::parse::expressions::parse_expr(parser)?;
+        parser.expect_rparen()?;
+        return Ok(Some(Box::new(SystemTimeClause::ContainedIn(start, end))));
+    }
+    if parser.at_keyword(Keyword::All) {
+        let _ = parser.next();
+        return Ok(Some(Box::new(SystemTimeClause::All)));
+    }
+    parser.backtrack(Expected::Description(
+        "AS OF, FROM ... TO, BETWEEN ... AND, CONTAINED IN, or ALL",
+    ))
+}
+
 pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
-    let (factor, alias, hints) = match parser.peek() {
+    let (factor, alias, hints, system_time) = match parser.peek() {
         Some(Token::LParen) => {
             let _ = parser.next();
             if parser.at_keyword(Keyword::Values) {
@@ -676,6 +743,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     TableFactor::Values { rows, columns },
                     Some(alias),
                     Vec::new(),
+                    None,
                 )
             } else if starts_with_select_inside_parens(parser) {
                 let mut subquery = Box::new(parse_select(parser)?);
@@ -699,7 +767,12 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                         item.alias = Some(col_alias);
                     }
                 }
-                (TableFactor::Derived(subquery), Some(alias), Vec::new())
+                (
+                    TableFactor::Derived(subquery),
+                    Some(alias),
+                    Vec::new(),
+                    None,
+                )
             } else {
                 let base = parse_table_ref(parser)?;
                 let mut joins = Vec::new();
@@ -718,6 +791,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     },
                     alias,
                     Vec::new(),
+                    None,
                 )
             }
         }
@@ -808,9 +882,14 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     pivot: None,
                     unpivot: None,
                     hints: Vec::new(),
+                    system_time: None,
                 });
             }
+            let mut system_time = parse_optional_for_system_time(parser)?;
             let mut alias = parse_optional_alias(parser);
+            if system_time.is_none() {
+                system_time = parse_optional_for_system_time(parser)?;
+            }
             let mut hints = Vec::new();
             if let Some(Token::Keyword(Keyword::With)) = parser.peek() {
                 let saved = parser.save();
@@ -938,7 +1017,12 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                     parser.expect_rparen()?;
                 }
             }
-            (TableFactor::Named(parse_object_name(name)), alias, hints)
+            (
+                TableFactor::Named(parse_object_name(name)),
+                alias,
+                hints,
+                system_time,
+            )
         }
         _ => return parser.backtrack(Expected::Description("table reference")),
     };
@@ -949,6 +1033,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
         pivot: None,
         unpivot: None,
         hints,
+        system_time,
     };
 
     loop {
@@ -1089,6 +1174,7 @@ pub fn parse_join_clause(parser: &mut Parser) -> ParseResult<Option<JoinClause>>
                 pivot: None,
                 unpivot: None,
                 hints: Vec::new(),
+                system_time: None,
             };
         }
         parser.expect_keyword(Keyword::On)?;
@@ -1134,7 +1220,10 @@ fn parse_optional_alias(parser: &mut Parser) -> Option<String> {
         Some(Token::Identifier(alias))
             if !crate::parser::parse::expressions::is_stop_keyword(alias)
                 && !(alias.eq_ignore_ascii_case("OPTION")
-                    && matches!(parser.peek_at(1), Some(Token::LParen))) =>
+                    && matches!(parser.peek_at(1), Some(Token::LParen)))
+                && !(alias.eq_ignore_ascii_case("WINDOW")
+                    && matches!(parser.peek_at(1), Some(Token::Identifier(_)))
+                    && matches!(parser.peek_at(2), Some(Token::Keyword(Keyword::As)))) =>
         {
             let alias = alias.clone();
             let _ = parser.next();
@@ -1348,6 +1437,7 @@ pub(crate) fn parse_joins_and_applies(
                         pivot: None,
                         unpivot: None,
                         hints: Vec::new(),
+                        system_time: None,
                     },
                 });
             }

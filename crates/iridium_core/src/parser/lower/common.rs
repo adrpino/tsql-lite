@@ -174,6 +174,7 @@ pub fn lower_expr(parser_expr: ast::Expr) -> Result<executor_ast::expressions::E
                 order_by,
                 frame,
                 ignore_nulls,
+                base_window: _,
             } = *wf;
             Ok(executor_ast::expressions::Expr::WindowFunction(Box::new(
                 executor_ast::expressions::WindowFunctionExpr {

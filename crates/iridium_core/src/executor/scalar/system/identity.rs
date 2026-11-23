@@ -32,13 +32,14 @@ pub(crate) fn eval_suser_id(args: &[Expr], _ctx: &ExecutionContext) -> Result<Va
     Ok(Value::Int(1))
 }
 
-pub(crate) fn eval_user_name(args: &[Expr], _ctx: &ExecutionContext) -> Result<Value, DbError> {
+pub(crate) fn eval_user_name(args: &[Expr], ctx: &ExecutionContext) -> Result<Value, DbError> {
     if args.len() > 1 {
         return Err(DbError::Execution(
             "USER_NAME expects 0 or 1 arguments".into(),
         ));
     }
-    Ok(Value::NVarChar("dbo".to_string()))
+    let user = crate::executor::security::effective_user(ctx).unwrap_or("dbo");
+    Ok(Value::NVarChar(user.to_string()))
 }
 
 pub(crate) fn eval_user_id(args: &[Expr], _ctx: &ExecutionContext) -> Result<Value, DbError> {
@@ -193,12 +194,8 @@ pub(crate) fn eval_current_user(args: &[Expr], ctx: &ExecutionContext) -> Result
             "CURRENT_USER expects no arguments".into(),
         ));
     }
-    Ok(Value::NVarChar(
-        ctx.metadata
-            .user
-            .clone()
-            .unwrap_or_else(|| "dbo".to_string()),
-    ))
+    let user = crate::executor::security::effective_user(ctx).unwrap_or("dbo");
+    Ok(Value::NVarChar(user.to_string()))
 }
 
 pub(crate) fn eval_is_srvrolemember(

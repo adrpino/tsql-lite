@@ -42,6 +42,8 @@ pub struct ForeignKeyDef {
     pub on_update: crate::ast::ReferentialAction,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub is_not_trusted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +95,10 @@ pub struct ColumnDef {
 pub struct CheckConstraintDef {
     pub name: String,
     pub expr: Expr,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub is_not_trusted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +110,18 @@ pub struct IndexDef {
     pub column_ids: Vec<u32>,
     pub is_unique: bool,
     pub is_clustered: bool,
+    #[serde(default)]
+    pub filter_predicate: Option<Box<Expr>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalTableConfig {
+    pub table_id: u32,
+    pub start_col: String,
+    pub end_col: String,
+    pub history_schema: String,
+    pub history_table: String,
+    pub system_versioning: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +383,29 @@ pub trait IndexRegistry {
         columns: &[String],
         is_clustered: bool,
         is_unique: bool,
+    ) -> Result<(), DbError> {
+        self.create_index_with_filter(
+            schema,
+            name,
+            table_schema,
+            table_name,
+            columns,
+            is_clustered,
+            is_unique,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn create_index_with_filter(
+        &mut self,
+        schema: &str,
+        name: &str,
+        table_schema: &str,
+        table_name: &str,
+        columns: &[String],
+        is_clustered: bool,
+        is_unique: bool,
+        filter_predicate: Option<Box<Expr>>,
     ) -> Result<(), DbError>;
     fn drop_index(
         &mut self,
@@ -511,6 +552,13 @@ pub trait Catalog:
         &[]
     }
     fn get_filegroups(&self) -> &[FilegroupDef] {
+        &[]
+    }
+    fn get_temporal_config(&self, _table_id: u32) -> Option<&TemporalTableConfig> {
+        None
+    }
+    fn set_temporal_config(&mut self, _cfg: TemporalTableConfig) {}
+    fn get_all_temporal_configs(&self) -> &[TemporalTableConfig] {
         &[]
     }
     fn filegroup_data_space_id(&self, _name: &str) -> i32 {
@@ -678,6 +726,8 @@ pub struct CatalogImpl {
     filegroups: Arc<Vec<FilegroupDef>>,
     #[serde(default, with = "arc_serde")]
     table_large_value_out_of_row: Arc<Vec<u32>>,
+    #[serde(default, with = "arc_serde")]
+    temporal_tables: Arc<Vec<TemporalTableConfig>>,
     #[serde(with = "atomic_u32_serde")]
     next_schema_id: Arc<AtomicU32>,
     #[serde(with = "atomic_u32_serde")]
@@ -851,6 +901,7 @@ impl Default for CatalogImpl {
             partition_schemes: Arc::new(Vec::new()),
             filegroups: Arc::new(Vec::new()),
             table_large_value_out_of_row: Arc::new(Vec::new()),
+            temporal_tables: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
             next_table_id: Arc::new(AtomicU32::new(1234567890)),
             next_column_id: Arc::new(AtomicU32::new(1)),
@@ -1011,6 +1062,20 @@ impl Catalog for CatalogImpl {
     }
     fn get_filegroups(&self) -> &[FilegroupDef] {
         &self.filegroups
+    }
+    fn get_temporal_config(&self, table_id: u32) -> Option<&TemporalTableConfig> {
+        self.temporal_tables.iter().find(|t| t.table_id == table_id)
+    }
+    fn set_temporal_config(&mut self, cfg: TemporalTableConfig) {
+        let list = Arc::make_mut(&mut self.temporal_tables);
+        if let Some(existing) = list.iter_mut().find(|t| t.table_id == cfg.table_id) {
+            *existing = cfg;
+        } else {
+            list.push(cfg);
+        }
+    }
+    fn get_all_temporal_configs(&self) -> &[TemporalTableConfig] {
+        &self.temporal_tables
     }
     fn filegroup_data_space_id(&self, name: &str) -> i32 {
         CatalogImpl::filegroup_data_space_id(self, name)

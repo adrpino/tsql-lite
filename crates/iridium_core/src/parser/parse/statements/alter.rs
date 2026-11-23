@@ -62,13 +62,17 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         let _ = parser.next();
         let table = super::parse_multipart_name(parser)?;
         // Optional WITH CHECK / WITH NOCHECK prefix before ADD, CHECK, or NOCHECK
+        let mut with_check: Option<bool> = None;
         if parser.at_keyword(Keyword::With) {
             let saved = parser.save();
             let _ = parser.next();
-            if parser.at_keyword(Keyword::Check)
-                || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"))
+            if parser.at_keyword(Keyword::Check) {
+                let _ = parser.next();
+                with_check = Some(true);
+            } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("NOCHECK"))
             {
                 let _ = parser.next();
+                with_check = Some(false);
             } else {
                 parser.restore(saved);
             }
@@ -90,7 +94,11 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             };
             return Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
                 table,
-                action: AlterTableAction::CheckConstraint { check, name },
+                action: AlterTableAction::CheckConstraint {
+                    check,
+                    with_check,
+                    name,
+                },
             })));
         }
         if parser.at_keyword(Keyword::Add) {
@@ -99,7 +107,10 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                 if p.at_keyword(Keyword::Constraint) {
                     let _ = p.next();
                     let constraint = super::ddl::parse_alter_table_add_constraint(p)?;
-                    Ok(AlterTableAction::AddConstraint(constraint))
+                    Ok(AlterTableAction::AddConstraint {
+                        constraint,
+                        with_check,
+                    })
                 } else if p.at_keyword(Keyword::Primary)
                     || p.at_keyword(Keyword::Unique)
                     || p.at_keyword(Keyword::Foreign)
@@ -107,7 +118,10 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     || p.at_keyword(Keyword::Default)
                 {
                     let constraint = super::ddl::parse_table_constraint(p)?;
-                    Ok(AlterTableAction::AddConstraint(constraint))
+                    Ok(AlterTableAction::AddConstraint {
+                        constraint,
+                        with_check,
+                    })
                 } else {
                     let col = super::ddl::parse_column_def(p)?;
                     Ok(AlterTableAction::AddColumn(col))
@@ -233,19 +247,21 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             // Standard SQL Server table option clauses:
             // ALTER TABLE [t] SET (SYSTEM_VERSIONING = ON/OFF (...), LOCK_ESCALATION = ...)
             let _ = parser.next();
-            parser.expect_lparen()?;
-            let mut depth = 1usize;
-            while depth > 0 {
-                match parser.next() {
-                    Some(Token::LParen) => depth += 1,
-                    Some(Token::RParen) => depth -= 1,
-                    Some(_) => {}
-                    None => return parser.backtrack(Expected::Description(")")),
-                }
+            if let Some((enabled, history_table)) =
+                super::create::parse_system_versioning_options(parser)?
+            {
+                Ok(Statement::Ddl(Box::new(DdlStatement::AlterTable {
+                    table,
+                    action: AlterTableAction::SetSystemVersioning {
+                        enabled,
+                        history_table,
+                    },
+                })))
+            } else {
+                Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                    Vec::new(),
+                )))
             }
-            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
-                Vec::new(),
-            )))
         } else if matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SWITCH"))
         {
             // ALTER TABLE [src] SWITCH [PARTITION n] TO [dst] [PARTITION m] [WITH (...)]

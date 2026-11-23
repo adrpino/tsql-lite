@@ -116,6 +116,8 @@ pub struct CreateIndexStmt {
     pub is_clustered: bool,
     pub columns: Vec<IndexColumnSpec>,
     pub options: Vec<IndexOptionSpec>,
+    #[serde(default)]
+    pub filter_predicate: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,15 +179,25 @@ pub enum AlterTableAction {
         data_type: DataTypeSpec,
         nullable: Option<bool>,
     },
-    AddConstraint(TableConstraintSpec),
+    AddConstraint {
+        constraint: TableConstraintSpec,
+        #[serde(default)]
+        with_check: Option<bool>,
+    },
     DropConstraint(String),
     CheckConstraint {
         check: bool,
+        #[serde(default)]
+        with_check: Option<bool>,
         name: Option<String>,
     },
     ToggleTrigger {
         trigger_name: Option<ObjectName>,
         enable: bool,
+    },
+    SetSystemVersioning {
+        enabled: bool,
+        history_table: Option<ObjectName>,
     },
 }
 
@@ -291,5 +303,13 @@ pub enum TableConstraintSpec {
         name: String,
         columns: Vec<IndexColumnSpec>,
         is_clustered: bool,
+    },
+    SystemTimePeriod {
+        start_col: String,
+        end_col: String,
+    },
+    SystemVersioning {
+        enabled: bool,
+        history_table: Option<ObjectName>,
     },
 }

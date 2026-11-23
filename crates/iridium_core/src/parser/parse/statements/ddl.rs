@@ -312,7 +312,22 @@ pub fn parse_table_body(
                 let _ = parser.next(); // SYSTEM_TIME
             }
             if matches!(parser.peek(), Some(Token::LParen)) {
-                skip_balanced_parens(parser)?;
+                let _ = parser.next();
+                let start_col = match parser.next() {
+                    Some(Token::Identifier(id)) => id.clone(),
+                    Some(Token::Keyword(k)) => k.as_ref().to_string(),
+                    _ => return parser.backtrack(Expected::Description("period start column")),
+                };
+                if matches!(parser.peek(), Some(Token::Comma)) {
+                    let _ = parser.next();
+                }
+                let end_col = match parser.next() {
+                    Some(Token::Identifier(id)) => id.clone(),
+                    Some(Token::Keyword(k)) => k.as_ref().to_string(),
+                    _ => return parser.backtrack(Expected::Description("period end column")),
+                };
+                parser.expect_rparen()?;
+                constraints.push(TableConstraint::SystemTimePeriod { start_col, end_col });
             }
         } else {
             let mut is_constraint = false;
@@ -623,10 +638,14 @@ pub fn parse_create_index(
     }
 
     // Optional filtered index WHERE <predicate>
-    if parser.at_keyword(Keyword::Where) {
+    let filter_predicate = if parser.at_keyword(Keyword::Where) {
         let _ = parser.next();
-        let _ = crate::parser::parse::expressions::parse_expr(parser)?;
-    }
+        Some(Box::new(crate::parser::parse::expressions::parse_expr(
+            parser,
+        )?))
+    } else {
+        None
+    };
 
     let mut options = Vec::new();
     if parser.at_keyword(Keyword::With) {
@@ -654,6 +673,7 @@ pub fn parse_create_index(
         is_clustered,
         columns,
         options,
+        filter_predicate,
     })
 }
 

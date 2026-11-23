@@ -65,6 +65,7 @@ impl IndexRegistry for CatalogImpl {
             column_ids,
             is_unique: false,
             is_clustered: false,
+            filter_predicate: None,
         });
         let new_idx = indexes.len() - 1;
         Arc::make_mut(&mut self.index_map)
@@ -72,7 +73,7 @@ impl IndexRegistry for CatalogImpl {
         Ok(())
     }
 
-    fn create_index_with_options(
+    fn create_index_with_filter(
         &mut self,
         schema: &str,
         name: &str,
@@ -81,6 +82,7 @@ impl IndexRegistry for CatalogImpl {
         columns: &[String],
         is_clustered: bool,
         is_unique: bool,
+        filter_predicate: Option<Box<Expr>>,
     ) -> Result<(), DbError> {
         let index_schema_id = self
             .get_schema_id(schema)
@@ -128,6 +130,7 @@ impl IndexRegistry for CatalogImpl {
             column_ids,
             is_unique,
             is_clustered,
+            filter_predicate,
         });
         let new_idx = indexes.len() - 1;
         Arc::make_mut(&mut self.index_map)

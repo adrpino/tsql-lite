@@ -158,8 +158,22 @@ impl<'a> MutationExecutor<'a> {
             Vec::new()
         };
 
+        crate::executor::security::check_object_permission(
+            self.catalog,
+            ctx,
+            "INSERT",
+            table.schema_or_dbo(),
+            &table.name,
+            table_id as i32,
+        )?;
+        let has_unique_index = self
+            .catalog
+            .get_indexes()
+            .iter()
+            .any(|i| i.table_id == table_id && i.is_unique);
         let has_unique = table.columns.iter().any(|c| c.unique)
-            || table.columns.iter().filter(|c| c.primary_key).count() >= 2;
+            || table.columns.iter().filter(|c| c.primary_key).count() >= 2
+            || has_unique_index;
         let has_fks = table.foreign_keys.iter().any(|fk| fk.enabled);
         let has_checks =
             !table.check_constraints.is_empty() || table.columns.iter().any(|c| c.check.is_some());
@@ -189,6 +203,18 @@ impl<'a> MutationExecutor<'a> {
                     table_id,
                     &row,
                 )?;
+                if has_unique_index {
+                    crate::executor::mutation::validation::enforce_unique_indexes_on_write(
+                        table,
+                        self.catalog,
+                        self.storage,
+                        table_id,
+                        &row,
+                        None,
+                        ctx,
+                        self.clock,
+                    )?;
+                }
             }
             if has_fks {
                 crate::executor::mutation::validation::enforce_foreign_keys_on_insert(

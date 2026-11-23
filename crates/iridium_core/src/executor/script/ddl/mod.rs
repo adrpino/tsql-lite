@@ -51,6 +51,27 @@ impl<'a> ScriptExecutor<'a> {
             }
             DdlStatement::CreateIndex(mut stmt) => {
                 temp_table::resolve_table_name_for_mutation(&mut stmt.table, ctx);
+                if stmt.is_unique {
+                    let table_schema = stmt.table.schema_or_dbo().to_string();
+                    if let Some(table) = self
+                        .catalog
+                        .find_table(&table_schema, &stmt.table.name)
+                        .cloned()
+                    {
+                        let col_names: Vec<String> =
+                            stmt.columns.iter().map(|c| c.name.clone()).collect();
+                        crate::executor::mutation::validation::validate_existing_rows_for_unique_index(
+                            &table,
+                            &stmt.name.name,
+                            &col_names,
+                            &stmt.filter_predicate,
+                            self.catalog,
+                            self.storage,
+                            ctx,
+                            self.clock,
+                        )?;
+                    }
+                }
                 self.schema(ctx).create_index(stmt)?;
                 Ok(None)
             }
@@ -199,6 +220,88 @@ impl<'a> ScriptExecutor<'a> {
             .find_table(schema, table_name)
             .ok_or_else(|| DbError::table_not_found(schema, table_name))?
             .clone();
+
+        // Retroactive validation for WITH CHECK CHECK CONSTRAINT and [WITH CHECK] ADD CONSTRAINT
+        match &stmt.action {
+            crate::ast::AlterTableAction::CheckConstraint {
+                check: true,
+                with_check: Some(true),
+                name,
+            } => {
+                for chk in &table.check_constraints {
+                    if name
+                        .as_ref()
+                        .is_none_or(|n| chk.name.eq_ignore_ascii_case(n))
+                    {
+                        crate::executor::mutation::validation::validate_check_constraint_on_rows(
+                            &table,
+                            &chk.name,
+                            &chk.expr,
+                            ctx,
+                            self.catalog,
+                            self.storage,
+                            self.clock,
+                        )?;
+                    }
+                }
+                for fk in &table.foreign_keys {
+                    if name
+                        .as_ref()
+                        .is_none_or(|n| fk.name.eq_ignore_ascii_case(n))
+                    {
+                        crate::executor::mutation::validation::validate_foreign_key_on_rows(
+                            &table,
+                            fk,
+                            self.catalog,
+                            self.storage,
+                        )?;
+                    }
+                }
+            }
+            crate::ast::AlterTableAction::AddConstraint {
+                constraint,
+                with_check,
+            } if *with_check != Some(false) => match constraint {
+                crate::ast::TableConstraintSpec::Check { name, expr } => {
+                    crate::executor::mutation::validation::validate_check_constraint_on_rows(
+                        &table,
+                        name,
+                        expr,
+                        ctx,
+                        self.catalog,
+                        self.storage,
+                        self.clock,
+                    )?;
+                }
+                crate::ast::TableConstraintSpec::ForeignKey {
+                    name,
+                    columns,
+                    referenced_table,
+                    referenced_columns,
+                    on_delete,
+                    on_update,
+                } => {
+                    let fk = crate::catalog::ForeignKeyDef {
+                        name: name.clone(),
+                        columns: columns.clone(),
+                        referenced_table: referenced_table.clone(),
+                        referenced_columns: referenced_columns.clone(),
+                        on_delete: on_delete.unwrap_or(crate::ast::ReferentialAction::NoAction),
+                        on_update: on_update.unwrap_or(crate::ast::ReferentialAction::NoAction),
+                        enabled: true,
+                        is_not_trusted: false,
+                    };
+                    crate::executor::mutation::validation::validate_foreign_key_on_rows(
+                        &table,
+                        &fk,
+                        self.catalog,
+                        self.storage,
+                    )?;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
 
         self.schema(ctx).alter_table(stmt)?;
 

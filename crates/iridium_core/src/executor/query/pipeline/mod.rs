@@ -1,4 +1,4 @@
-mod analysis;
+pub(crate) mod analysis;
 mod distinct;
 pub mod iterator;
 mod order;

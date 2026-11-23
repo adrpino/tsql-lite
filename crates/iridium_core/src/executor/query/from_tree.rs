@@ -30,9 +30,31 @@ impl FromEval {
         storage: &dyn Storage,
         clock: &dyn Clock,
     ) -> Result<Vec<JoinedRow>, DbError> {
-        let mut rows = Vec::new();
+        self.materialize_limited(None, ctx, catalog, storage, clock)
+    }
+
+    pub fn materialize_limited(
+        &mut self,
+        limit: Option<usize>,
+        ctx: &mut ExecutionContext,
+        catalog: &dyn Catalog,
+        storage: &dyn Storage,
+        clock: &dyn Clock,
+    ) -> Result<Vec<JoinedRow>, DbError> {
+        if limit == Some(0) {
+            return Ok(Vec::new());
+        }
+        let mut rows = match limit {
+            Some(n) => Vec::with_capacity(n.min(1024)),
+            None => Vec::new(),
+        };
         while let Some(row) = self.iter.next_row(ctx, catalog, storage, clock)? {
             rows.push(row);
+            if let Some(cap) = limit {
+                if rows.len() >= cap {
+                    break;
+                }
+            }
         }
         Ok(rows)
     }
@@ -43,8 +65,19 @@ pub(crate) fn execute_from_clause(
     node: FromNode,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
+    execute_from_clause_with_predicate(executor, node, None, ctx)
+}
+
+pub(crate) fn execute_from_clause_with_predicate(
+    executor: &QueryExecutor<'_>,
+    node: FromNode,
+    predicate: Option<&crate::ast::Expr>,
+    ctx: &mut ExecutionContext,
+) -> Result<FromEval, DbError> {
     match node {
-        FromNode::Table(table_ref) => execute_table_ref(executor, table_ref, ctx),
+        FromNode::Table(table_ref) => {
+            execute_table_ref_with_predicate(executor, table_ref, predicate, ctx)
+        }
         FromNode::Aliased { source, alias } => {
             let source_eval = execute_from_clause(executor, *source, ctx)?;
             apply_from_alias(executor, source_eval, &alias, ctx)
@@ -61,10 +94,10 @@ pub(crate) fn execute_from_clause(
             let mut shape = left_eval.shape.clone();
             shape.extend(right_eval.shape.clone());
 
-            // Try Hash Join for equi-joins
+            // Try Hash Join for pure or mixed equi-joins (with residual ON predicates).
             if let Some(on_expr) = &on {
-                if let Some((left_keys, right_keys)) =
-                    crate::executor::joins::find_equi_join_conditions(
+                if let Some((left_keys, right_keys, residual_on)) =
+                    crate::executor::joins::split_equi_join_conditions(
                         on_expr,
                         &left_eval.shape,
                         &right_eval.shape,
@@ -76,6 +109,7 @@ pub(crate) fn execute_from_clause(
                             right: right_eval.iter,
                             left_keys,
                             right_keys,
+                            residual_on,
                             join_type,
                             left_shape: left_eval.shape,
                             right_shape: right_eval.shape,
@@ -88,6 +122,7 @@ pub(crate) fn execute_from_clause(
                             current_left: None,
                             current_matches: Vec::new(),
                             current_match_idx: 0,
+                            matched_current_left: false,
                             finishing_right: false,
                             finishing_idx: 0,
                         }),
@@ -158,9 +193,10 @@ pub(crate) fn enforce_query_governor_cost_limit(
     Ok(())
 }
 
-fn execute_table_ref(
+fn execute_table_ref_with_predicate(
     executor: &QueryExecutor<'_>,
     table_ref: crate::ast::TableRef,
+    predicate: Option<&crate::ast::Expr>,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
     let bound = super::binding::bind_table(executor, executor.catalog, table_ref.clone(), ctx)?;
@@ -272,7 +308,11 @@ fn execute_table_ref(
         });
     }
 
-    let strategy = choose_scan_strategy(&bound, None, &[], executor.catalog);
+    let strategy = if executor.storage.as_index_storage().is_some() {
+        choose_scan_strategy(&bound, predicate, &[], executor.catalog)
+    } else {
+        crate::executor::physical::ScanStrategy::TableScan
+    };
 
     // Only use truly lazy TableScanIterator if it's a simple TableScan strategy
     // and we don't have complex PIVOT/UNPIVOT (which still materialize for now)
@@ -280,9 +320,31 @@ fn execute_table_ref(
         && table_ref.pivot.is_none()
         && table_ref.unpivot.is_none()
     {
+        let fast_filter = if ctx.options.ansi_nulls {
+            predicate.and_then(|pred| {
+                let (col_idx, op, rhs_expr) =
+                    super::scan::extract_fast_scan_predicate(pred, &bound)?;
+                let rhs_val = crate::executor::evaluator::eval_expr(
+                    &rhs_expr,
+                    &[],
+                    ctx,
+                    executor.catalog,
+                    executor.storage,
+                    executor.clock,
+                )
+                .ok()?;
+                if rhs_val.is_null() {
+                    return None;
+                }
+                Some((col_idx, op, rhs_val))
+            })
+        } else {
+            None
+        };
         let table_iter = TableScanIterator {
             bound: bound.clone(),
             next_index: 0,
+            fast_filter,
         };
 
         let shape = vec![ContextTable {
@@ -312,7 +374,7 @@ fn execute_table_ref(
     let scan = PhysicalScan {
         bound,
         strategy,
-        pushed_predicate: None,
+        pushed_predicate: predicate.cloned(),
     };
     let mut rows = execute_scan(
         &scan,

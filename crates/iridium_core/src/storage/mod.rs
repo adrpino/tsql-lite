@@ -44,6 +44,11 @@ pub trait Storage: std::fmt::Debug + Send + Sync {
         self.scan_rows(table_id)?.collect()
     }
 
+    /// Zero-copy slice access to all stored rows of `table_id` when backed by in-memory storage.
+    fn get_table_slice(&self, _table_id: u32) -> Option<&[StoredRow]> {
+        None
+    }
+
     fn insert_row(&mut self, table_id: u32, row: StoredRow) -> Result<(), DbError>;
     fn update_row(&mut self, table_id: u32, index: usize, row: StoredRow) -> Result<(), DbError>;
     fn delete_row(&mut self, table_id: u32, index: usize) -> Result<(), DbError>;
@@ -362,6 +367,10 @@ impl Storage for InMemoryStorage {
     }
     fn as_index_storage_mut(&mut self) -> Option<&mut dyn IndexStorage> {
         None
+    }
+
+    fn get_table_slice(&self, table_id: u32) -> Option<&[StoredRow]> {
+        self.get_table(table_id).map(|arc| arc.as_slice())
     }
 
     fn merge_workspace(&mut self, workspace: Self, base: &Self) {

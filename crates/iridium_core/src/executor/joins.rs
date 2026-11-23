@@ -93,6 +93,52 @@ pub(crate) fn get_expr_side(
     }
 }
 
+fn collect_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    if let Expr::Binary {
+        left,
+        op: BinaryOp::And,
+        right,
+    } = expr
+    {
+        collect_and_conjuncts(left, out);
+        collect_and_conjuncts(right, out);
+    } else {
+        out.push(expr);
+    }
+}
+
+/// Splits a `JOIN ... ON` predicate into hash-join equi-key pairs plus an optional residual
+/// predicate (`AND`-combined non-equi / single-side conjuncts). Returns `None` if no equi-join
+/// pair exists.
+pub(crate) fn split_equi_join_conditions(
+    on: &Expr,
+    left_shape: &[ContextTable],
+    right_shape: &[ContextTable],
+) -> Option<(Vec<Expr>, Vec<Expr>, Option<Expr>)> {
+    let mut conjuncts = Vec::new();
+    collect_and_conjuncts(on, &mut conjuncts);
+    let mut left_keys = Vec::new();
+    let mut right_keys = Vec::new();
+    let mut residuals: Vec<Expr> = Vec::new();
+    for c in conjuncts {
+        if let Some((lk, rk)) = find_equi_join_conditions(c, left_shape, right_shape) {
+            left_keys.extend(lk);
+            right_keys.extend(rk);
+        } else {
+            residuals.push(c.clone());
+        }
+    }
+    if left_keys.is_empty() {
+        return None;
+    }
+    let residual = residuals.into_iter().reduce(|a, b| Expr::Binary {
+        left: Box::new(a),
+        op: BinaryOp::And,
+        right: Box::new(b),
+    });
+    Some((left_keys, right_keys, residual))
+}
+
 pub(crate) fn find_equi_join_conditions(
     on: &Expr,
     left_shape: &[ContextTable],

@@ -157,6 +157,7 @@ pub struct HashJoinIterator {
     pub right: Box<dyn RowIterator>,
     pub left_keys: Vec<Expr>,
     pub right_keys: Vec<Expr>,
+    pub residual_on: Option<Expr>,
     pub join_type: JoinType,
     pub left_shape: Vec<ContextTable>,
     pub right_shape: Vec<ContextTable>,
@@ -173,6 +174,7 @@ pub struct HashJoinIterator {
     pub current_left: Option<JoinedRow>,
     pub current_matches: Vec<usize>,
     pub current_match_idx: usize,
+    pub matched_current_left: bool,
 
     // Post-probe state (for RIGHT/FULL OUTER)
     pub finishing_right: bool,
@@ -227,6 +229,10 @@ impl RowIterator for HashJoinIterator {
                         }
                     }
 
+                    self.matched_current_left = false;
+                    self.current_matches.clear();
+                    self.current_match_idx = 0;
+
                     let raw_key = eval_key(
                         &self.left_keys,
                         self.current_left.as_ref().unwrap(),
@@ -246,16 +252,12 @@ impl RowIterator for HashJoinIterator {
                         });
                         if same_family {
                             if let Some(indices) = self.hash_map.get(&norm_key) {
-                                self.current_matches = indices.clone();
-                                self.current_match_idx = 0;
-                            } else {
-                                self.current_matches = Vec::new();
+                                self.current_matches.extend_from_slice(indices);
                             }
                         } else if !self.right_raw_keys.is_empty() {
                             // Cross-family join (e.g. INT = NVARCHAR from STRING_SPLIT,
                             // FLOAT = INT, UUID = VARCHAR, DATETIME = VARCHAR): fall back
                             // to exact SQL equality so implicit coercions always match.
-                            let mut matched = Vec::new();
                             for (ri, rkey) in self.right_raw_keys.iter().enumerate() {
                                 if rkey.iter().any(|v| v.is_null()) {
                                     continue;
@@ -265,31 +267,31 @@ impl RowIterator for HashJoinIterator {
                                     .zip(rkey.iter())
                                     .all(|(lv, rv)| compare_values(lv, rv) == Ordering::Equal)
                                 {
-                                    matched.push(ri);
+                                    self.current_matches.push(ri);
                                 }
                             }
-                            self.current_matches = matched;
-                            self.current_match_idx = 0;
-                        } else {
-                            self.current_matches = Vec::new();
                         }
-                    } else {
-                        self.current_matches = Vec::new();
                     }
                 }
 
-                if self.current_match_idx < self.current_matches.len() {
+                while self.current_match_idx < self.current_matches.len() {
                     let ri = self.current_matches[self.current_match_idx];
                     self.current_match_idx += 1;
-                    self.right_matched[ri] = true;
                     let mut candidate = self.current_left.as_ref().unwrap().clone();
                     candidate.extend(self.right_materialized[ri].clone());
+                    if let Some(ref res_pred) = self.residual_on {
+                        if !eval_predicate(res_pred, &candidate, ctx, catalog, storage, clock)? {
+                            continue;
+                        }
+                    }
+                    self.right_matched[ri] = true;
+                    self.matched_current_left = true;
                     return Ok(Some(candidate));
                 }
 
                 // Exhausted matches for current_left
                 let left_row = self.current_left.take().unwrap();
-                if self.current_matches.is_empty()
+                if !self.matched_current_left
                     && (self.join_type == JoinType::Left || self.join_type == JoinType::Full)
                 {
                     let mut candidate = left_row;
@@ -317,10 +319,12 @@ impl RowIterator for HashJoinIterator {
     fn reset(&mut self) -> Result<(), DbError> {
         self.left.reset()?;
         self.current_left = None;
-        self.current_matches = Vec::new();
+        self.current_matches.clear();
         self.current_match_idx = 0;
+        self.matched_current_left = false;
         self.finishing_right = false;
         self.finishing_idx = 0;
+        self.right_matched.fill(false);
         // We don't need to rebuild the right side hash map.
         Ok(())
     }
@@ -329,6 +333,33 @@ impl RowIterator for HashJoinIterator {
 pub struct TableScanIterator {
     pub bound: BoundTable,
     pub next_index: usize,
+    /// Optional single-column `col <op> const` pre-filter evaluated directly against borrowed
+    /// `&StoredRow` slices before cloning or constructing `ContextTable`.
+    pub fast_filter: Option<(usize, crate::ast::BinaryOp, Value)>,
+}
+
+#[inline]
+fn fast_filter_matches(
+    stored: &crate::storage::StoredRow,
+    filter: &(usize, crate::ast::BinaryOp, Value),
+) -> bool {
+    let (col_idx, op, rhs) = filter;
+    let Some(lhs) = stored.values.get(*col_idx) else {
+        return false;
+    };
+    if lhs.is_null() || rhs.is_null() {
+        return false;
+    }
+    let ord = compare_values(lhs, rhs);
+    match op {
+        crate::ast::BinaryOp::Eq => ord == Ordering::Equal,
+        crate::ast::BinaryOp::NotEq => ord != Ordering::Equal,
+        crate::ast::BinaryOp::Gt => ord == Ordering::Greater,
+        crate::ast::BinaryOp::Gte => matches!(ord, Ordering::Greater | Ordering::Equal),
+        crate::ast::BinaryOp::Lt => ord == Ordering::Less,
+        crate::ast::BinaryOp::Lte => matches!(ord, Ordering::Less | Ordering::Equal),
+        _ => true,
+    }
 }
 
 impl RowIterator for TableScanIterator {
@@ -339,14 +370,61 @@ impl RowIterator for TableScanIterator {
         storage: &dyn Storage,
         clock: &dyn Clock,
     ) -> Result<Option<JoinedRow>, DbError> {
+        let has_rls = !catalog.get_security_policies().is_empty();
+        // Fast path: zero-copy slice iteration over InMemoryStorage (no per-row HashMap lookup
+        // and zero StoredRow clones for deleted or fast-filtered non-matching rows).
+        if let Some(slice) = storage.get_table_slice(self.bound.table.id) {
+            while self.next_index < slice.len() {
+                let idx = self.next_index;
+                self.next_index += 1;
+                let stored = &slice[idx];
+                if stored.deleted {
+                    continue;
+                }
+                if let Some(ref f) = self.fast_filter {
+                    if !fast_filter_matches(stored, f) {
+                        continue;
+                    }
+                }
+                if has_rls
+                    && !crate::executor::rls::row_passes_rls_filter(
+                        &self.bound.table,
+                        stored,
+                        ctx,
+                        catalog,
+                        storage,
+                        clock,
+                    )?
+                {
+                    continue;
+                }
+                return Ok(Some(vec![ContextTable {
+                    table: self.bound.table.clone(),
+                    alias: self.bound.alias.clone(),
+                    row: Some(stored.clone()),
+                    storage_index: Some(idx),
+                    source_aliases: Vec::new(),
+                }]));
+            }
+            return Ok(None);
+        }
+
         loop {
             let row = storage.get_row(self.bound.table.id, self.next_index)?;
             match row {
                 Some(stored) => {
                     let idx = self.next_index;
                     self.next_index += 1;
-                    if !stored.deleted
-                        && crate::executor::rls::row_passes_rls_filter(
+                    if stored.deleted {
+                        continue;
+                    }
+                    if let Some(ref f) = self.fast_filter {
+                        if !fast_filter_matches(&stored, f) {
+                            continue;
+                        }
+                    }
+                    if !has_rls
+                        || crate::executor::rls::row_passes_rls_filter(
                             &self.bound.table,
                             &stored,
                             ctx,

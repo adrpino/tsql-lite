@@ -1191,6 +1191,30 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                       SELECT @t100_cnt, @blk_ins, @blk_upd, @all_cnt, @pol_cnt, @pred_cnt;",
                 ordered: true,
             },
+            DiffStep::Query {
+                label: "residual_hash_join_left_right_full_outer_parity",
+                sql: "CREATE TABLE #JL (Id INT, Val INT);
+                      CREATE TABLE #JR (Id INT, IsActive BIT, MinVal INT, Name VARCHAR(20));
+                      INSERT INTO #JL VALUES (1, 100), (2, 10), (3, 50), (NULL, 99);
+                      INSERT INTO #JR VALUES
+                          (1, 1, 50, 'r1_ok'),
+                          (1, 0, 50, 'r1_off'),
+                          (2, 1, 50, 'r2_low'),
+                          (4, 1, 10, 'r4_only'),
+                          (NULL, 1, 0, 'r_null');
+                      SELECT 'L' AS Side, l.Id, r.Name
+                      FROM #JL l
+                      LEFT JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal
+                      UNION ALL
+                      SELECT 'R' AS Side, l.Id, r.Name
+                      FROM #JL l
+                      RIGHT JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal
+                      UNION ALL
+                      SELECT 'F' AS Side, l.Id, r.Name
+                      FROM #JL l
+                      FULL OUTER JOIN #JR r ON l.Id = r.Id AND r.IsActive = 1 AND l.Val >= r.MinVal;",
+                ordered: false,
+            },
         ],
     }
 }

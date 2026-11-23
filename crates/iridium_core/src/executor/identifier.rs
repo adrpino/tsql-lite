@@ -4,6 +4,46 @@ use crate::types::Value;
 use super::context::ExecutionContext;
 use super::model::ContextTable;
 
+#[inline]
+fn find_column_in_scope(
+    scope: &[ContextTable],
+    name: &str,
+    is_identity_col: bool,
+) -> Result<Option<Value>, DbError> {
+    let mut found: Option<(&ContextTable, usize)> = None;
+    for binding in scope {
+        let col_idx = if is_identity_col {
+            binding
+                .table
+                .columns
+                .iter()
+                .position(|c| c.identity.is_some())
+        } else {
+            binding
+                .table
+                .columns
+                .iter()
+                .position(|c| c.name.eq_ignore_ascii_case(name))
+        };
+        if let Some(idx) = col_idx {
+            if found.is_some() {
+                return Err(DbError::invalid_identifier(format!(
+                    "ambiguous column '{}'",
+                    name
+                )));
+            }
+            found = Some((binding, idx));
+        }
+    }
+    Ok(found.map(|(binding, col_idx)| {
+        binding
+            .row
+            .as_ref()
+            .map(|r| r.values[col_idx].clone())
+            .unwrap_or(Value::Null)
+    }))
+}
+
 pub(crate) fn resolve_identifier(
     row: &[ContextTable],
     name: &str,
@@ -23,104 +63,25 @@ pub(crate) fn resolve_identifier(
         }
     }
 
-    let is_identity_col = name.eq_ignore_ascii_case("IDENTITYCOL");
+    let is_identity_col = name.len() == 11 && name.eq_ignore_ascii_case("IDENTITYCOL");
 
-    let mut matches: Vec<(usize, Value)> = Vec::new();
-    for (binding_idx, binding) in row.iter().enumerate() {
-        let col_idx = if is_identity_col {
-            binding
-                .table
-                .columns
-                .iter()
-                .position(|c| c.identity.is_some())
-        } else {
-            binding
-                .table
-                .columns
-                .iter()
-                .position(|c| c.name.eq_ignore_ascii_case(name))
-        };
+    if let Some(val) = find_column_in_scope(row, name, is_identity_col)? {
+        return Ok(val);
+    }
 
-        if let Some(col_idx) = col_idx {
-            let value = binding
-                .row
-                .as_ref()
-                .map(|r| r.values[col_idx].clone())
-                .unwrap_or(Value::Null);
-            matches.push((binding_idx, value));
+    for apply_row in ctx.row.apply_stack.iter().rev() {
+        if let Some(val) = find_column_in_scope(apply_row, name, is_identity_col)? {
+            return Ok(val);
         }
     }
 
-    if matches.is_empty() {
-        for apply_row in ctx.row.apply_stack.iter().rev() {
-            for binding in apply_row.iter() {
-                let col_idx = if is_identity_col {
-                    binding
-                        .table
-                        .columns
-                        .iter()
-                        .position(|c| c.identity.is_some())
-                } else {
-                    binding
-                        .table
-                        .columns
-                        .iter()
-                        .position(|c| c.name.eq_ignore_ascii_case(name))
-                };
-                if let Some(col_idx) = col_idx {
-                    let value = binding
-                        .row
-                        .as_ref()
-                        .map(|r| r.values[col_idx].clone())
-                        .unwrap_or(Value::Null);
-                    matches.push((0, value));
-                }
-            }
-            if !matches.is_empty() {
-                break;
-            }
+    for outer_row in ctx.row.outer_stack.iter().rev() {
+        if let Some(val) = find_column_in_scope(outer_row, name, is_identity_col)? {
+            return Ok(val);
         }
     }
 
-    if matches.is_empty() {
-        for outer_row in ctx.row.outer_stack.iter().rev() {
-            for binding in outer_row.iter() {
-                let col_idx = if is_identity_col {
-                    binding
-                        .table
-                        .columns
-                        .iter()
-                        .position(|c| c.identity.is_some())
-                } else {
-                    binding
-                        .table
-                        .columns
-                        .iter()
-                        .position(|c| c.name.eq_ignore_ascii_case(name))
-                };
-                if let Some(col_idx) = col_idx {
-                    let value = binding
-                        .row
-                        .as_ref()
-                        .map(|r| r.values[col_idx].clone())
-                        .unwrap_or(Value::Null);
-                    matches.push((0, value));
-                }
-            }
-            if !matches.is_empty() {
-                break;
-            }
-        }
-    }
-
-    match matches.len() {
-        0 => Err(DbError::column_not_found(name)),
-        1 => Ok(matches[0].1.clone()),
-        _ => Err(DbError::invalid_identifier(format!(
-            "ambiguous column '{}'",
-            name
-        ))),
-    }
+    Err(DbError::column_not_found(name))
 }
 
 pub(crate) fn resolve_qualified_identifier(

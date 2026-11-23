@@ -100,6 +100,7 @@ pub(crate) fn execute_from_stage(
                             right: right_eval.iter,
                             left_keys,
                             right_keys,
+                            residual_on: None,
                             join_type: JoinType::Inner,
                             left_shape: left_eval.shape,
                             right_shape: right_eval.shape,
@@ -112,6 +113,7 @@ pub(crate) fn execute_from_stage(
                             current_left: None,
                             current_matches: Vec::new(),
                             current_match_idx: 0,
+                            matched_current_left: false,
                             finishing_right: false,
                             finishing_idx: 0,
                         }),
@@ -132,7 +134,13 @@ pub(crate) fn execute_from_stage(
                 });
             }
         }
-        from_tree::execute_from_clause(executor, from_clause, ctx)
+        let single_table_pred =
+            if query.applies.is_empty() && matches!(from_clause, FromNode::Table(_)) {
+                query.filter.selection.as_ref()
+            } else {
+                None
+            };
+        from_tree::execute_from_clause_with_predicate(executor, from_clause, single_table_pred, ctx)
     } else {
         Ok(FromEval {
             iter: Box::new(from_tree::ScanIterator::new(vec![vec![]])),

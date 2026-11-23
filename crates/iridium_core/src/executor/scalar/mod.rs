@@ -37,7 +37,19 @@ pub(crate) fn eval_function(
     storage: &dyn Storage,
     clock: &dyn Clock,
 ) -> Result<Value, DbError> {
-    if is_aggregate_function(name) {
+    let mut stack_buf = [0u8; 64];
+    let owned_upper: String;
+    let upper_str: &str = if name.is_ascii() && name.len() <= stack_buf.len() {
+        for (dst, &b) in stack_buf.iter_mut().zip(name.as_bytes()) {
+            *dst = b.to_ascii_uppercase();
+        }
+        std::str::from_utf8(&stack_buf[..name.len()]).unwrap()
+    } else {
+        owned_upper = normalize_identifier(name);
+        owned_upper.as_str()
+    };
+
+    if is_aggregate_function(upper_str) {
         if let Some(group) = ctx.current_group().clone() {
             let effective = if let Some(ob) = within_group.filter(|v| !v.is_empty()) {
                 super::aggregates::sort_group_for_within_group(
@@ -47,7 +59,7 @@ pub(crate) fn eval_function(
                 group
             };
             if let Some(res) = dispatch_aggregate(
-                name,
+                upper_str,
                 args,
                 within_group,
                 &effective,
@@ -60,9 +72,6 @@ pub(crate) fn eval_function(
             }
         }
     }
-
-    let upper = normalize_identifier(name);
-    let upper_str = upper.as_str();
 
     // Check built-in functions first
     if let Some(handler) = lookup_builtin_handler(upper_str) {

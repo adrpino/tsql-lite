@@ -858,7 +858,15 @@ fn remove_xml_elements_by_tag(xml: &str, tag: &str) -> String {
 }
 
 fn unescape_xml_entities(s: &str) -> String {
-    s.replace("&lt;", "<")
+    s.replace("&#x0D;", "\r")
+        .replace("&#x0d;", "\r")
+        .replace("&#13;", "\r")
+        .replace("&#x0A;", "\n")
+        .replace("&#x0a;", "\n")
+        .replace("&#10;", "\n")
+        .replace("&#x09;", "\t")
+        .replace("&#9;", "\t")
+        .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")

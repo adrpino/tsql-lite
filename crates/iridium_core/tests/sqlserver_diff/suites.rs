@@ -1115,6 +1115,11 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                         STUFF((SELECT N', ' + ItemName
                                FROM dbo.XmlItems
                                ORDER BY ItemId
+                               FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, N''),
+                        STUFF((SELECT CHAR(13) + CHAR(10) + ItemName
+                               FROM dbo.XmlItems
+                               WHERE ItemId IN (10, 20)
+                               ORDER BY ItemId
                                FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, N'');",
                 ordered: true,
             },

@@ -67,6 +67,41 @@ pub struct UserDatabaseDef {
     pub name: String,
     pub compatibility_level: u8,
     pub recovery_model: String,
+    #[serde(default)]
+    pub user_access: u8,
+    #[serde(default)]
+    pub is_read_only: bool,
+    #[serde(default)]
+    pub read_committed_snapshot: bool,
+    #[serde(default)]
+    pub allow_snapshot_isolation: bool,
+    #[serde(default)]
+    pub source_database_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseRuntimeOptions {
+    pub user_access: u8,
+    pub is_read_only: bool,
+    pub read_committed_snapshot: bool,
+    pub allow_snapshot_isolation: bool,
+    pub source_database_id: Option<i32>,
+    pub recovery_model: String,
+    pub compatibility_level: u8,
+}
+
+impl Default for DatabaseRuntimeOptions {
+    fn default() -> Self {
+        Self {
+            user_access: 0,
+            is_read_only: false,
+            read_committed_snapshot: false,
+            allow_snapshot_isolation: false,
+            source_database_id: None,
+            recovery_model: "FULL".to_string(),
+            compatibility_level: 160,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

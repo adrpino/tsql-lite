@@ -441,3 +441,181 @@ pub(crate) fn execute_sp_xml_removedocument(
         ..Default::default()
     })
 }
+
+fn quote_bracket_ident(ident: &str) -> String {
+    format!("[{}]", ident.replace(']', "]]"))
+}
+
+fn exec_dynamic_batch(
+    exec: &mut ScriptExecutor<'_>,
+    ctx: &mut ExecutionContext<'_>,
+    sql: &str,
+) -> Result<Option<QueryResult>, DbError> {
+    let stmts = crate::parse_batch(sql)?;
+    let mut last_result = None;
+    for s in stmts {
+        match exec.execute(s, ctx)? {
+            crate::error::StmtOutcome::Ok(Some(res)) => last_result = Some(res),
+            crate::error::StmtOutcome::Ok(None) => {}
+            crate::error::StmtOutcome::Return(_) => break,
+            _ => {}
+        }
+    }
+    Ok(last_result)
+}
+
+pub(crate) fn execute_sp_msforeachtable(
+    stmt: &ExecProcedureStmt,
+    ctx: &mut ExecutionContext<'_>,
+    exec: &mut ScriptExecutor<'_>,
+) -> Result<QueryResult, DbError> {
+    let mut command1: Option<String> = None;
+    let mut replacechar: Option<String> = None;
+    let mut command2: Option<String> = None;
+    let mut command3: Option<String> = None;
+    let mut whereand: Option<String> = None;
+    let mut precommand: Option<String> = None;
+    let mut postcommand: Option<String> = None;
+
+    for (idx, arg) in stmt.args.iter().enumerate() {
+        let val = eval_expr(&arg.expr, &[], ctx, exec.catalog, exec.storage, exec.clock)?;
+        let str_opt = if val.is_null() {
+            None
+        } else {
+            Some(val.to_string_value())
+        };
+        if let Some(ref raw_name) = arg.name {
+            match raw_name.trim().to_ascii_lowercase().as_str() {
+                "@command1" => command1 = str_opt,
+                "@replacechar" => replacechar = str_opt,
+                "@command2" => command2 = str_opt,
+                "@command3" => command3 = str_opt,
+                "@whereand" => whereand = str_opt,
+                "@precommand" => precommand = str_opt,
+                "@postcommand" => postcommand = str_opt,
+                _ => {}
+            }
+        } else {
+            match idx {
+                0 => command1 = str_opt,
+                1 => replacechar = str_opt,
+                2 => command2 = str_opt,
+                3 => command3 = str_opt,
+                4 => whereand = str_opt,
+                5 => precommand = str_opt,
+                6 => postcommand = str_opt,
+                _ => {}
+            }
+        }
+    }
+
+    let cmd1 = command1.ok_or_else(|| {
+        DbError::Execution("sp_MSforeachtable: @command1 parameter is required".into())
+    })?;
+    let placeholder = replacechar
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("?");
+
+    if let Some(ref pre) = precommand {
+        if !pre.trim().is_empty() {
+            let _ = exec_dynamic_batch(exec, ctx, pre)?;
+        }
+    }
+
+    let tables: Vec<(String, String)> = if let Some(ref extra_where) = whereand {
+        if extra_where.trim().is_empty() {
+            collect_user_tables_for_db(exec, ctx)
+        } else {
+            let filter_sql = format!(
+                "SELECT SCHEMA_NAME(o.schema_id) AS SchemaName, o.name AS TableName \
+                 FROM sys.objects o \
+                 WHERE o.type = 'U' {} \
+                 ORDER BY SCHEMA_NAME(o.schema_id), o.name;",
+                extra_where
+            );
+            let res = exec_dynamic_batch(exec, ctx, &filter_sql)?;
+            let mut out = Vec::new();
+            if let Some(qr) = res {
+                for row in qr.rows {
+                    if row.len() >= 2 {
+                        let schema = row[0].to_string_value();
+                        let name = row[1].to_string_value();
+                        if !is_internal_temp_table_name(&name) {
+                            out.push((schema, name));
+                        }
+                    }
+                }
+            }
+            out
+        }
+    } else {
+        collect_user_tables_for_db(exec, ctx)
+    };
+
+    let mut last_result = QueryResult::default();
+    for (schema, name) in tables {
+        let qualified = format!(
+            "{}.{}",
+            quote_bracket_ident(&schema),
+            quote_bracket_ident(&name)
+        );
+        for template in [Some(&cmd1), command2.as_ref(), command3.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if template.trim().is_empty() {
+                continue;
+            }
+            let rendered = template.replace(placeholder, &qualified);
+            if let Some(res) = exec_dynamic_batch(exec, ctx, &rendered)? {
+                last_result = res;
+            }
+        }
+    }
+
+    if let Some(ref post) = postcommand {
+        if !post.trim().is_empty() {
+            if let Some(res) = exec_dynamic_batch(exec, ctx, post)? {
+                last_result = res;
+            }
+        }
+    }
+
+    last_result.return_status = Some(0);
+    last_result.is_procedure = true;
+    Ok(last_result)
+}
+
+fn is_internal_temp_table_name(name: &str) -> bool {
+    name.starts_with('#')
+        || name.starts_with("__temp_")
+        || name.starts_with("__var_")
+        || name.starts_with("__tvp_")
+}
+
+fn collect_user_tables_for_db(
+    exec: &ScriptExecutor<'_>,
+    ctx: &ExecutionContext<'_>,
+) -> Vec<(String, String)> {
+    let active_db = ctx.metadata.database.as_deref().unwrap_or("master");
+    let mut tables: Vec<(String, String)> = exec
+        .catalog
+        .get_tables()
+        .iter()
+        .filter(|t| {
+            crate::executor::database_catalog::schema_belongs_to_db(
+                &t.schema_name,
+                active_db,
+                exec.catalog,
+            ) && !is_internal_temp_table_name(&t.name)
+        })
+        .map(|t| {
+            let schema =
+                crate::executor::database_catalog::display_schema_name(&t.schema_name).to_string();
+            (schema, t.name.clone())
+        })
+        .collect();
+    tables.sort();
+    tables
+}

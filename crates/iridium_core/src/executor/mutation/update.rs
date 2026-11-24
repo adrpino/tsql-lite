@@ -398,6 +398,14 @@ impl<'a> MutationExecutor<'a> {
             rowcount_limit,
             &mut updated_indices,
             |stored_row, idx, joined_row| {
+                if let Some(ref rt) = ctx.session.extras.row_locks {
+                    rt.acquire_write_row_lock_and_check_snapshot(
+                        table_id,
+                        &table.schema_name,
+                        &table.name,
+                        idx,
+                    )?;
+                }
                 let mut new_row = stored_row.clone();
                 apply_assignments(
                     &table,
@@ -468,7 +476,8 @@ impl<'a> MutationExecutor<'a> {
                     }
                 }
 
-                self.push_dirty_update(ctx, &table.name, idx, &new_row);
+                let dirty_key = format!("{}\x02{}", table.schema_name, table.name);
+                self.push_dirty_update(ctx, &dirty_key, idx, &new_row);
 
                 if collect_rows {
                     inserted_rows_for_output.push(new_row);

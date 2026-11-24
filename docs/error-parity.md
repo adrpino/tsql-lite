@@ -27,14 +27,26 @@ This is what backs supported `THROW` and `RAISERROR` flows when the engine raise
 | Area | Current behavior | Parity level | Notes |
 |---|---|---|---|
 | Parse errors | Mapped to SQL Server-style syntax error codes | Partial | `DbError::Parse` currently maps to `102`, but not all parser wording and states match SQL Server exactly. |
-| Missing object / schema / trigger / view | Mapped to `208` | Good | Common "invalid object name" cases are covered. |
-| Missing column | Mapped to `207` | Good | Both qualified and unqualified column misses use the SQL Server-style code. |
+| Missing object / schema / trigger / view | Mapped to `208` | Good | Verified 1:1 against SQL Server 2022 (`ExpectErrCode`). |
+| Missing column | Mapped to `207` | Good | Both qualified and unqualified column misses verified 1:1 against SQL Server 2022. |
 | Database missing | Mapped to `911` | Good | Useful for common connection / catalog checks. |
-| Duplicate table / trigger / view / type / schema | Mapped to `2714` | Good | SQL Server-style duplicate object handling. |
+| Duplicate table / trigger / view / type / schema | Mapped to `2714` | Good | Verified 1:1 against SQL Server 2022. |
 | Duplicate column | Mapped to `2705` | Good | Common table definition error. |
+| Primary key / unique constraint violation | Mapped to `2627` | Good | Verified 1:1 against SQL Server 2022 (`SqlException.Number` & `ERROR_NUMBER()`). |
+| Unique index violation | Mapped to `2601` | Good | Distinguished from `2627` (PK/UQ constraints); verified 1:1 against SQL Server 2022 & over TDS. |
+| `CREATE UNIQUE INDEX` duplicate key | Mapped to `1505` | Good | Matches SQL Server index creation duplicate error. |
+| Foreign key / `CHECK` constraint violation | Mapped to `547` | Good | Verified 1:1 against SQL Server 2022. |
+| `NOT NULL` constraint violation | Mapped to `515` | Good | Verified 1:1 against SQL Server 2022. |
+| String / binary truncation (SQL Server 2019+) | Mapped to `2628` | Good | Matches SQL Server 2019+/2022 compat 150/160 truncation error; verified 1:1 against SQL Server 2022 & over TDS. |
+| Lock timeout / `NOWAIT` | Mapped to `1222` | Good | Emitted on `SET LOCK_TIMEOUT` expiry and `WITH (NOWAIT)` without dooming active tx when `XACT_ABORT OFF`; verified in 2-session SQL Server 2022 oracle. |
 | Deadlock victim | Mapped to `1205` | Good | Matches the SQL Server deadlock victim code. |
-| Divide by zero | Mapped to `8134` | Good | Common arithmetic error parity. |
-| Conversion failure | Mapped to `245` | Good | Covers many coercion failures, but not every conversion edge case. |
+| Snapshot isolation update conflict | Mapped to `3960` | Good | Immediately aborts and rolls back snapshot transaction; verified in 2-session SQL Server 2022 oracle. |
+| Snapshot isolation not allowed in database | Mapped to `3952` | Good | Verified in live SQL Server 2022 oracle when `ALLOW_SNAPSHOT_ISOLATION` is `OFF`. |
+| Read-only database write (incl. snapshots) | Mapped to `3906` | Good | Enforced on `READ_ONLY` databases and `CREATE DATABASE ... AS SNAPSHOT OF`. |
+| Database currently in use on `DROP DATABASE` | Mapped to `3702` | Good | Enforced when sibling sessions remain attached without `SINGLE_USER WITH ROLLBACK IMMEDIATE`; verified over TDS. |
+| Arithmetic overflow | Mapped to `220` | Good | Common arithmetic overflow parity. |
+| Divide by zero | Mapped to `8134` | Good | Verified 1:1 against SQL Server 2022. |
+| Conversion failure | Mapped to `245` | Good | Verified 1:1 against SQL Server 2022. |
 | Cursor not declared | Mapped to `16916` | Good | Cursor-specific error parity exists for the supported path. |
 | Generic semantic errors | Collapsed to `50000` | Partial | Many distinct SQL Server semantic errors are not modeled individually. |
 | Generic execution errors | Collapsed to `50000` | Partial | Broad execution failures share one bucket. |
@@ -63,6 +75,8 @@ If a failure does not have a good SQL Server match yet:
 ## Related Files
 
 - [`crates/iridium_core/src/error.rs`](../crates/iridium_core/src/error.rs)
+- [`crates/iridium_core/tests/sqlserver_differential.rs`](../crates/iridium_core/tests/sqlserver_differential.rs) (`error_number_parity_sql2019`, `table_locking_hints_multi_session_parity`, `snapshot_isolation_mvcc_and_3960_parity`, `snapshot_isolation_disallowed_3952_parity`)
+- [`crates/iridium_server/tests/test_db_lifecycle_teardown.rs`](../crates/iridium_server/tests/test_db_lifecycle_teardown.rs)
 - [`crates/iridium_core/tests/try_catch_test.rs`](../crates/iridium_core/tests/try_catch_test.rs)
 - [`crates/iridium_core/tests/procedural_edge_cases.rs`](../crates/iridium_core/tests/procedural_edge_cases.rs)
 - [`crates/iridium_core/tests/sqlserver_comparison.rs`](../crates/iridium_core/tests/sqlserver_comparison.rs)

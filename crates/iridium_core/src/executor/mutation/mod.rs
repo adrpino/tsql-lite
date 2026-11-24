@@ -384,7 +384,8 @@ impl<'a> MutationExecutor<'a> {
             )?;
 
             self.storage.insert_row(table.id, stored_row.clone())?;
-            self.push_dirty_insert(ctx, &table.name, &stored_row);
+            let dirty_key = format!("{}\x02{}", table.schema_name, table.name);
+            self.push_dirty_insert(ctx, &dirty_key, &stored_row);
         }
 
         Ok(())

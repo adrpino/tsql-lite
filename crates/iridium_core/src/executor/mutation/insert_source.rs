@@ -255,7 +255,8 @@ impl<'a> MutationExecutor<'a> {
             }
 
             if has_dirty {
-                self.push_dirty_insert(ctx, &table.name, &row);
+                let dirty_key = format!("{}\x02{}", table.schema_name, table.name);
+            self.push_dirty_insert(ctx, &dirty_key, &row);
             }
             if collect_rows {
                 inserted_rows_for_output.push(row);

@@ -8,6 +8,21 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 #[derive(Debug, Clone)]
+pub struct BatchError {
+    pub code: Option<i32>,
+    pub message: String,
+}
+
+impl std::fmt::Display for BatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.code {
+            Some(c) => write!(f, "[code {}] {}", c, self.message),
+            None => write!(f, "{}", self.message),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum DiffStep {
     /// Execute statement(s) on both engines; both must succeed.
     ExecOk {
@@ -19,12 +34,61 @@ pub enum DiffStep {
         label: &'static str,
         sql: &'static str,
     },
+    /// Execute statement(s) on both engines; both must error with the same SQL Server error number.
+    ExpectErrCode {
+        label: &'static str,
+        sql: &'static str,
+        expected_code: Option<i32>,
+    },
     /// Execute query on both engines; both must succeed with matching rows.
     Query {
         label: &'static str,
         sql: &'static str,
         ordered: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionSlot {
+    A,
+    B,
+}
+
+#[derive(Debug, Clone)]
+pub enum MultiSessionStep {
+    ExecOk {
+        session: SessionSlot,
+        label: &'static str,
+        sql: &'static str,
+    },
+    ExpectErr {
+        session: SessionSlot,
+        label: &'static str,
+        sql: &'static str,
+    },
+    ExpectErrCode {
+        session: SessionSlot,
+        label: &'static str,
+        sql: &'static str,
+        expected_code: Option<i32>,
+    },
+    Query {
+        session: SessionSlot,
+        label: &'static str,
+        sql: &'static str,
+        ordered: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct MultiSessionDiffSuite {
+    pub name: &'static str,
+    pub category: &'static str,
+    pub min_sql_version: u32,
+    /// Batches executed against master before sessions enter the database (`{db}` is replaced).
+    pub db_options_batches: &'static [&'static str],
+    pub setup_batches: &'static [&'static str],
+    pub steps: &'static [MultiSessionStep],
 }
 
 #[derive(Debug, Clone)]
@@ -317,9 +381,18 @@ pub fn rows_match(
     }
 }
 
-pub fn run_iridium_batch(engine: &Engine, sql: &str) -> Result<Vec<Vec<DiffValue>>, String> {
-    let stmts = parse_batch(sql).map_err(|e| e.to_string())?;
-    let res: Option<QueryResult> = engine.execute_batch(stmts).map_err(|e| e.to_string())?;
+pub fn run_iridium_batch_detailed(
+    engine: &Engine,
+    sql: &str,
+) -> Result<Vec<Vec<DiffValue>>, BatchError> {
+    let stmts = parse_batch(sql).map_err(|e| BatchError {
+        code: Some(e.number()),
+        message: e.to_string(),
+    })?;
+    let res: Option<QueryResult> = engine.execute_batch(stmts).map_err(|e| BatchError {
+        code: Some(e.number()),
+        message: e.to_string(),
+    })?;
     Ok(res
         .map(|qr| {
             qr.rows
@@ -328,6 +401,31 @@ pub fn run_iridium_batch(engine: &Engine, sql: &str) -> Result<Vec<Vec<DiffValue
                 .collect()
         })
         .unwrap_or_default())
+}
+
+pub fn run_iridium_session_batch_detailed(
+    engine: &Engine,
+    session_id: iridium_core::SessionId,
+    sql: &str,
+) -> Result<Vec<Vec<DiffValue>>, BatchError> {
+    let res: Option<QueryResult> = engine
+        .execute_session_batch_sql(session_id, sql)
+        .map_err(|e| BatchError {
+            code: Some(e.number()),
+            message: e.to_string(),
+        })?;
+    Ok(res
+        .map(|qr| {
+            qr.rows
+                .iter()
+                .map(|row| row.iter().map(DiffValue::from_iridium).collect())
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+pub fn run_iridium_batch(engine: &Engine, sql: &str) -> Result<Vec<Vec<DiffValue>>, String> {
+    run_iridium_batch_detailed(engine, sql).map_err(|e| e.to_string())
 }
 
 pub struct LiveSqlServerConfig {
@@ -369,12 +467,29 @@ pub async fn connect_sqlserver(
         .map_err(|e| format!("TDS login failed: {}", e))
 }
 
-pub async fn run_sqlserver_batch(
+fn tiberius_err_to_batch_err(e: tiberius::error::Error) -> BatchError {
+    let code = match &e {
+        tiberius::error::Error::Server(tok) => Some(tok.code() as i32),
+        _ => None,
+    };
+    BatchError {
+        code,
+        message: e.to_string(),
+    }
+}
+
+pub async fn run_sqlserver_batch_detailed(
     client: &mut Client<Compat<TcpStream>>,
     sql: &str,
-) -> Result<Vec<Vec<DiffValue>>, String> {
-    let stream = client.simple_query(sql).await.map_err(|e| e.to_string())?;
-    let all_sets = stream.into_results().await.map_err(|e| e.to_string())?;
+) -> Result<Vec<Vec<DiffValue>>, BatchError> {
+    let stream = client
+        .simple_query(sql)
+        .await
+        .map_err(tiberius_err_to_batch_err)?;
+    let all_sets = stream
+        .into_results()
+        .await
+        .map_err(tiberius_err_to_batch_err)?;
     let last_set = all_sets.into_iter().last().unwrap_or_default();
     Ok(last_set
         .into_iter()
@@ -384,6 +499,15 @@ pub async fn run_sqlserver_batch(
                 .collect()
         })
         .collect())
+}
+
+pub async fn run_sqlserver_batch(
+    client: &mut Client<Compat<TcpStream>>,
+    sql: &str,
+) -> Result<Vec<Vec<DiffValue>>, String> {
+    run_sqlserver_batch_detailed(client, sql)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn detect_sqlserver_major_version(
@@ -522,6 +646,45 @@ pub async fn run_differential_suite(
                             )),
                         }
                     }
+                    DiffStep::ExpectErrCode {
+                        label,
+                        sql,
+                        expected_code,
+                    } => {
+                        let s_res = run_sqlserver_batch_detailed(&mut client, sql).await;
+                        let i_res = run_iridium_batch_detailed(&engine, sql);
+                        match (s_res, i_res) {
+                            (Err(se), Err(ie)) => {
+                                let codes_match = match (se.code, ie.code) {
+                                    (Some(sc), Some(ic)) => {
+                                        sc == ic
+                                            && expected_code.map(|exp| sc == exp).unwrap_or(true)
+                                    }
+                                    _ => false,
+                                };
+                                if codes_match {
+                                    passed += 1;
+                                } else {
+                                    failures.push(format!(
+                                        "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | Iridium {:?} ({})",
+                                        label, expected_code, se.code, se.message, ie.code, ie.message
+                                    ));
+                                }
+                            }
+                            (Ok(_), Err(ie)) => failures.push(format!(
+                                "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                                label, ie
+                            )),
+                            (Err(se), Ok(_)) => failures.push(format!(
+                                "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                                label, se
+                            )),
+                            (Ok(_), Ok(_)) => failures.push(format!(
+                                "[{}] BOTH succeeded (expected error {:?})",
+                                label, expected_code
+                            )),
+                        }
+                    }
                     DiffStep::Query {
                         label,
                         sql,
@@ -568,6 +731,311 @@ pub async fn run_differential_suite(
         &mut client,
         &format!(
             "USE master; ALTER DATABASE [{}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{}];",
+            db_name, db_name
+        ),
+    )
+    .await;
+
+    SuiteRunReport {
+        suite_name: suite.name,
+        category: suite.category,
+        skipped_reason: None,
+        passed,
+        failures,
+    }
+}
+
+pub async fn run_multi_session_differential_suite(
+    cfg: &LiveSqlServerConfig,
+    sql_major_version: u32,
+    suite: &MultiSessionDiffSuite,
+) -> SuiteRunReport {
+    if sql_major_version < suite.min_sql_version {
+        return SuiteRunReport {
+            suite_name: suite.name,
+            category: suite.category,
+            skipped_reason: Some(format!(
+                "requires SQL Server major >= {} (connected: {})",
+                suite.min_sql_version, sql_major_version
+            )),
+            passed: 0,
+            failures: Vec::new(),
+        };
+    }
+
+    let mut client_a = match connect_sqlserver(cfg).await {
+        Ok(c) => c,
+        Err(e) => {
+            return SuiteRunReport {
+                suite_name: suite.name,
+                category: suite.category,
+                skipped_reason: None,
+                passed: 0,
+                failures: vec![format!("connect session A failed: {}", e)],
+            }
+        }
+    };
+    let mut client_b = match connect_sqlserver(cfg).await {
+        Ok(c) => c,
+        Err(e) => {
+            return SuiteRunReport {
+                suite_name: suite.name,
+                category: suite.category,
+                skipped_reason: None,
+                passed: 0,
+                failures: vec![format!("connect session B failed: {}", e)],
+            }
+        }
+    };
+
+    let db_name = format!(
+        "IridiumDiffMS_{}_{}",
+        std::process::id(),
+        DB_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let create_sql = format!("CREATE DATABASE [{}];", db_name);
+    if let Err(e) = run_sqlserver_batch(&mut client_a, &create_sql).await {
+        return SuiteRunReport {
+            suite_name: suite.name,
+            category: suite.category,
+            skipped_reason: None,
+            passed: 0,
+            failures: vec![format!("CREATE DATABASE failed on SQL Server: {}", e)],
+        };
+    }
+
+    let mut passed = 0usize;
+    let mut failures = Vec::new();
+    let engine = Engine::new();
+    let sid_a = engine.create_session();
+    let sid_b = engine.create_session();
+
+    let mut setup_ok = true;
+    if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_a, &create_sql) {
+        failures.push(format!("CREATE DATABASE failed on Iridium: {}", e));
+        setup_ok = false;
+    }
+
+    if setup_ok {
+        for (i, raw_opt) in suite.db_options_batches.iter().enumerate() {
+            let opt_sql = raw_opt.replace("{db}", &db_name);
+            let s_res = run_sqlserver_batch_detailed(&mut client_a, &opt_sql).await;
+            let i_res = run_iridium_session_batch_detailed(&engine, sid_a, &opt_sql);
+            if let Err(e) = s_res {
+                failures.push(format!("db_options[{}] SQL Server error: {}", i, e));
+                setup_ok = false;
+                break;
+            }
+            if let Err(e) = i_res {
+                failures.push(format!("db_options[{}] Iridium error: {}", i, e));
+                setup_ok = false;
+                break;
+            }
+        }
+    }
+
+    let use_sql = format!("USE [{}];", db_name);
+    if setup_ok {
+        if let Err(e) = run_sqlserver_batch(&mut client_a, &use_sql).await {
+            failures.push(format!("USE {} on SQL Server A failed: {}", db_name, e));
+            setup_ok = false;
+        }
+        if let Err(e) = run_sqlserver_batch(&mut client_b, &use_sql).await {
+            failures.push(format!("USE {} on SQL Server B failed: {}", db_name, e));
+            setup_ok = false;
+        }
+        if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_a, &use_sql) {
+            failures.push(format!("USE {} on Iridium A failed: {}", db_name, e));
+            setup_ok = false;
+        }
+        if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_b, &use_sql) {
+            failures.push(format!("USE {} on Iridium B failed: {}", db_name, e));
+            setup_ok = false;
+        }
+    }
+
+    if setup_ok {
+        for (i, batch) in suite.setup_batches.iter().enumerate() {
+            let s_res = run_sqlserver_batch_detailed(&mut client_a, batch).await;
+            let i_res = run_iridium_session_batch_detailed(&engine, sid_a, batch);
+            if let Err(e) = s_res {
+                failures.push(format!("setup[{}] SQL Server error: {}", i, e));
+                setup_ok = false;
+                break;
+            }
+            if let Err(e) = i_res {
+                failures.push(format!("setup[{}] Iridium error: {}", i, e));
+                setup_ok = false;
+                break;
+            }
+        }
+    }
+
+    if setup_ok {
+        for step in suite.steps {
+            match step {
+                MultiSessionStep::ExecOk {
+                    session,
+                    label,
+                    sql,
+                } => {
+                    let s_res = match session {
+                        SessionSlot::A => run_sqlserver_batch_detailed(&mut client_a, sql).await,
+                        SessionSlot::B => run_sqlserver_batch_detailed(&mut client_b, sql).await,
+                    };
+                    let sid = match session {
+                        SessionSlot::A => sid_a,
+                        SessionSlot::B => sid_b,
+                    };
+                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    match (s_res, i_res) {
+                        (Ok(_), Ok(_)) => passed += 1,
+                        (Err(se), Ok(_)) => failures.push(format!(
+                            "[{}] SQL Server FAILED ({}) while Iridium succeeded",
+                            label, se
+                        )),
+                        (Ok(_), Err(ie)) => failures.push(format!(
+                            "[{}] Iridium FAILED ({}) while SQL Server succeeded",
+                            label, ie
+                        )),
+                        (Err(se), Err(ie)) => failures.push(format!(
+                            "[{}] BOTH failed (expected OK) — SQL Server: {} | Iridium: {}",
+                            label, se, ie
+                        )),
+                    }
+                }
+                MultiSessionStep::ExpectErr {
+                    session,
+                    label,
+                    sql,
+                } => {
+                    let s_res = match session {
+                        SessionSlot::A => run_sqlserver_batch_detailed(&mut client_a, sql).await,
+                        SessionSlot::B => run_sqlserver_batch_detailed(&mut client_b, sql).await,
+                    };
+                    let sid = match session {
+                        SessionSlot::A => sid_a,
+                        SessionSlot::B => sid_b,
+                    };
+                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    match (s_res, i_res) {
+                        (Err(_), Err(_)) => passed += 1,
+                        (Ok(_), Err(ie)) => failures.push(format!(
+                            "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                            label, ie
+                        )),
+                        (Err(se), Ok(_)) => failures.push(format!(
+                            "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                            label, se
+                        )),
+                        (Ok(_), Ok(_)) => failures.push(format!(
+                            "[{}] BOTH succeeded (expected both to error)",
+                            label
+                        )),
+                    }
+                }
+                MultiSessionStep::ExpectErrCode {
+                    session,
+                    label,
+                    sql,
+                    expected_code,
+                } => {
+                    let s_res = match session {
+                        SessionSlot::A => run_sqlserver_batch_detailed(&mut client_a, sql).await,
+                        SessionSlot::B => run_sqlserver_batch_detailed(&mut client_b, sql).await,
+                    };
+                    let sid = match session {
+                        SessionSlot::A => sid_a,
+                        SessionSlot::B => sid_b,
+                    };
+                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    match (s_res, i_res) {
+                        (Err(se), Err(ie)) => {
+                            let codes_match = match (se.code, ie.code) {
+                                (Some(sc), Some(ic)) => {
+                                    sc == ic && expected_code.map(|exp| sc == exp).unwrap_or(true)
+                                }
+                                _ => false,
+                            };
+                            if codes_match {
+                                passed += 1;
+                            } else {
+                                failures.push(format!(
+                                    "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | Iridium {:?} ({})",
+                                    label, expected_code, se.code, se.message, ie.code, ie.message
+                                ));
+                            }
+                        }
+                        (Ok(_), Err(ie)) => failures.push(format!(
+                            "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                            label, ie
+                        )),
+                        (Err(se), Ok(_)) => failures.push(format!(
+                            "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                            label, se
+                        )),
+                        (Ok(_), Ok(_)) => failures.push(format!(
+                            "[{}] BOTH succeeded (expected error {:?})",
+                            label, expected_code
+                        )),
+                    }
+                }
+                MultiSessionStep::Query {
+                    session,
+                    label,
+                    sql,
+                    ordered,
+                } => {
+                    let s_res = match session {
+                        SessionSlot::A => run_sqlserver_batch_detailed(&mut client_a, sql).await,
+                        SessionSlot::B => run_sqlserver_batch_detailed(&mut client_b, sql).await,
+                    };
+                    let sid = match session {
+                        SessionSlot::A => sid_a,
+                        SessionSlot::B => sid_b,
+                    };
+                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    match (s_res, i_res) {
+                        (Ok(s_rows), Ok(i_rows)) => {
+                            if rows_match(&s_rows, &i_rows, *ordered) {
+                                passed += 1;
+                            } else {
+                                failures.push(format!(
+                                    "[{}] RESULT MISMATCH:\n  SQL Server ({} rows): {:?}\n  Iridium    ({} rows): {:?}",
+                                    label,
+                                    s_rows.len(),
+                                    s_rows,
+                                    i_rows.len(),
+                                    i_rows
+                                ));
+                            }
+                        }
+                        (Err(se), Ok(i_rows)) => failures.push(format!(
+                            "[{}] SQL Server ERROR ({}) while Iridium returned {:?}",
+                            label, se, i_rows
+                        )),
+                        (Ok(s_rows), Err(ie)) => failures.push(format!(
+                            "[{}] Iridium ERROR ({}) while SQL Server returned {:?}",
+                            label, ie, s_rows
+                        )),
+                        (Err(se), Err(ie)) => failures.push(format!(
+                            "[{}] BOTH errored on Query — SQL Server: {} | Iridium: {}",
+                            label, se, ie
+                        )),
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = engine.close_session(sid_a);
+    let _ = engine.close_session(sid_b);
+    let _ = run_sqlserver_batch(&mut client_b, "IF @@TRANCOUNT > 0 ROLLBACK; USE master;").await;
+    drop(client_b);
+    let _ = run_sqlserver_batch(
+        &mut client_a,
+        &format!(
+            "IF @@TRANCOUNT > 0 ROLLBACK; USE master; ALTER DATABASE [{}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{}];",
             db_name, db_name
         ),
     )

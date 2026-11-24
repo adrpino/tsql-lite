@@ -257,4 +257,30 @@ where
     pub fn close_session(&self, session_id: SessionId) -> Result<(), DbError> {
         self.db.session_manager().close_session(session_id)
     }
+
+    /// Creates a fast, fully isolated writable clone of `source_db` named `target_db`,
+    /// duplicating all schemas, tables, rows, indexes, views, routines, triggers, sequences,
+    /// and database options. Ideal for parallel per-test E2E database isolation.
+    pub fn clone_database(&self, source_db: &str, target_db: &str) -> Result<(), DbError> {
+        let sql = format!(
+            "CREATE DATABASE [{}] AS CLONE OF [{}];",
+            target_db.replace(']', "]]"),
+            source_db.replace(']', "]]")
+        );
+        self.db
+            .execute_session_batch_sql(self.default_session, &sql)?;
+        Ok(())
+    }
+
+    /// Creates a read-only database snapshot of `source_db` named `target_db`.
+    pub fn create_database_snapshot(&self, source_db: &str, target_db: &str) -> Result<(), DbError> {
+        let sql = format!(
+            "CREATE DATABASE [{}] AS SNAPSHOT OF [{}];",
+            target_db.replace(']', "]]"),
+            source_db.replace(']', "]]")
+        );
+        self.db
+            .execute_session_batch_sql(self.default_session, &sql)?;
+        Ok(())
+    }
 }

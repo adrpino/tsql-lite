@@ -43,6 +43,13 @@ impl VirtualTable for SysDatabases {
                 ("is_in_standby", DataType::Bit, false),
                 ("is_distributor", DataType::Bit, false),
                 ("is_cleanly_shutdown", DataType::Bit, false),
+                ("snapshot_isolation_state", DataType::TinyInt, false),
+                (
+                    "snapshot_isolation_state_desc",
+                    DataType::VarChar { max_len: 60 },
+                    false,
+                ),
+                ("is_read_committed_snapshot_on", DataType::Bit, false),
                 ("catalog_collation_type", DataType::TinyInt, false),
                 (
                     "catalog_collation_type_desc",
@@ -63,39 +70,56 @@ impl VirtualTable for SysDatabases {
         );
         all_databases(catalog)
             .into_iter()
-            .map(|db| StoredRow {
-                values: vec![
-                    Value::Int(db.id),
-                    Value::VarChar(db.name.clone()),
-                    Value::Null,
-                    Value::VarBinary(vec![0x01]),
-                    created.clone(),
-                    Value::TinyInt(db.compatibility_level),
-                    Value::VarChar("SQL_Latin1_General_CP1_CI_AS".to_string()),
-                    Value::TinyInt(0),
-                    Value::VarChar("ONLINE".to_string()),
-                    Value::TinyInt(0),
-                    Value::TinyInt(0),
-                    Value::VarChar("MULTI_USER".to_string()),
-                    Value::Bit(false),
-                    Value::Bit(false),
-                    Value::Bit(false),
-                    Value::TinyInt(match db.recovery_model.as_str() {
-                        "SIMPLE" => 3,
-                        "BULK_LOGGED" => 2,
-                        _ => 1,
-                    }),
-                    Value::VarChar(db.recovery_model.clone()),
-                    Value::Bit(false),
-                    Value::Bit(false),
-                    Value::Bit(false),
-                    Value::Bit(false),
-                    Value::Bit(db.name.eq_ignore_ascii_case("master")),
-                    Value::TinyInt(0),
-                    Value::VarChar("DATABASE_DEFAULT".to_string()),
-                    Value::Bit(false),
-                ],
-                deleted: false,
+            .map(|db| {
+                let user_access_desc = match db.user_access {
+                    1 => "SINGLE_USER",
+                    2 => "RESTRICTED_USER",
+                    _ => "MULTI_USER",
+                };
+                StoredRow {
+                    values: vec![
+                        Value::Int(db.id),
+                        Value::VarChar(db.name.clone()),
+                        db.source_database_id.map(Value::Int).unwrap_or(Value::Null),
+                        Value::VarBinary(vec![0x01]),
+                        created.clone(),
+                        Value::TinyInt(db.compatibility_level),
+                        Value::VarChar("SQL_Latin1_General_CP1_CI_AS".to_string()),
+                        Value::TinyInt(0),
+                        Value::VarChar("ONLINE".to_string()),
+                        Value::TinyInt(0),
+                        Value::TinyInt(db.user_access),
+                        Value::VarChar(user_access_desc.to_string()),
+                        Value::Bit(db.is_read_only),
+                        Value::Bit(false),
+                        Value::Bit(false),
+                        Value::TinyInt(match db.recovery_model.as_str() {
+                            "SIMPLE" => 3,
+                            "BULK_LOGGED" => 2,
+                            _ => 1,
+                        }),
+                        Value::VarChar(db.recovery_model.clone()),
+                        Value::Bit(false),
+                        Value::Bit(false),
+                        Value::Bit(false),
+                        Value::Bit(false),
+                        Value::Bit(db.name.eq_ignore_ascii_case("master")),
+                        Value::TinyInt(if db.allow_snapshot_isolation { 1 } else { 0 }),
+                        Value::VarChar(
+                            if db.allow_snapshot_isolation {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                            .to_string(),
+                        ),
+                        Value::Bit(db.read_committed_snapshot),
+                        Value::TinyInt(0),
+                        Value::VarChar("DATABASE_DEFAULT".to_string()),
+                        Value::Bit(false),
+                    ],
+                    deleted: false,
+                }
             })
             .collect()
     }

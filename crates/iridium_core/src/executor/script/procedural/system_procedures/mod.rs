@@ -53,6 +53,7 @@ const SYSTEM_PROCEDURES: &[&str] = &[
     "sp_tableoption",
     "sp_xml_preparedocument",
     "sp_xml_removedocument",
+    "sp_msforeachtable",
 ];
 
 pub(crate) fn is_system_procedure(name: &str) -> bool {
@@ -163,6 +164,8 @@ pub(crate) fn execute_system_procedure(
         execute_sp_xml_preparedocument(stmt, ctx, exec)?
     } else if name.eq_ignore_ascii_case("sp_xml_removedocument") {
         execute_sp_xml_removedocument(stmt, ctx, exec)?
+    } else if name.eq_ignore_ascii_case("sp_msforeachtable") {
+        execute_sp_msforeachtable(stmt, ctx, exec)?
     } else {
         return Err(DbError::Execution(format!(
             "unknown system procedure '{}'",

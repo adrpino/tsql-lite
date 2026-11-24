@@ -259,10 +259,83 @@ fn parse_statement_inner(parser: &mut Parser) -> ParseResult<Statement> {
                         Some(Token::Keyword(k)) => k.as_sql().to_string(),
                         _ => return parser.backtrack(Expected::Description("database name")),
                     };
-                    statements::alter::skip_ddl_tail(parser);
+                    let mut clone_from: Option<String> = None;
+                    let mut as_snapshot = false;
+                    // Scan tail for optional `AS CLONE OF <src>` or `AS SNAPSHOT OF <src>`
+                    // (including SQL Server file specs `ON ( NAME = ..., FILENAME = ... ) AS SNAPSHOT OF <src>`).
+                    while let Some(tok) = parser.peek() {
+                        if matches!(tok, Token::Semicolon) {
+                            break;
+                        }
+                        if matches!(
+                            tok,
+                            Token::Keyword(
+                                Keyword::Create
+                                    | Keyword::Alter
+                                    | Keyword::Drop
+                                    | Keyword::Select
+                                    | Keyword::Insert
+                                    | Keyword::Update
+                                    | Keyword::Delete
+                                    | Keyword::Use
+                                    | Keyword::Declare
+                                    | Keyword::Set
+                                    | Keyword::Exec
+                                    | Keyword::Execute
+                                    | Keyword::Begin
+                                    | Keyword::End
+                                    | Keyword::If
+                                    | Keyword::Go
+                            )
+                        ) {
+                            break;
+                        }
+                        if matches!(tok, Token::Keyword(Keyword::As)) {
+                            let _ = parser.next();
+                            let kind_is_snapshot = match parser.peek() {
+                                Some(Token::Keyword(Keyword::Snapshot)) => {
+                                    let _ = parser.next();
+                                    Some(true)
+                                }
+                                Some(Token::Identifier(id))
+                                    if id.eq_ignore_ascii_case("SNAPSHOT") =>
+                                {
+                                    let _ = parser.next();
+                                    Some(true)
+                                }
+                                Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("CLONE") => {
+                                    let _ = parser.next();
+                                    Some(false)
+                                }
+                                _ => None,
+                            };
+                            if let Some(is_snap) = kind_is_snapshot {
+                                if matches!(parser.peek(), Some(Token::Keyword(Keyword::Of)))
+                                    || matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("OF"))
+                                {
+                                    let _ = parser.next();
+                                }
+                                match parser.next() {
+                                    Some(Token::Identifier(src)) => {
+                                        clone_from = Some(src.clone());
+                                        as_snapshot = is_snap;
+                                    }
+                                    Some(Token::Keyword(k)) => {
+                                        clone_from = Some(k.as_sql().to_string());
+                                        as_snapshot = is_snap;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            continue;
+                        }
+                        let _ = parser.next();
+                    }
                     return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
                         Box::new(crate::ast::CatalogMetadataAction::CreateDatabase {
                             name: db_name,
+                            clone_from,
+                            as_snapshot,
                         }),
                     ))));
                 }

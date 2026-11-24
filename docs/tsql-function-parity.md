@@ -346,9 +346,9 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 
 Implemented in `crates/iridium_core/src/executor/script/procedural/system_procedures/`:
 
-- **Dynamic execution & metadata inspection:** `sp_executesql`, `sp_describe_first_result_set`, `sp_describe_undeclared_parameters`, `sp_help`, `sp_helptext`, `sp_columns`, `sp_tables`, `sp_helpindex`, `sp_helpconstraint`, `sp_rename`, `sp_refreshsqlmodule`, `sp_refreshview`, `sp_refresh_parameter_encryption`
+- **Dynamic execution & metadata inspection:** `sp_executesql`, `sp_MSforeachtable`, `sp_describe_first_result_set`, `sp_describe_undeclared_parameters`, `sp_help`, `sp_helptext`, `sp_columns`, `sp_tables`, `sp_helpindex`, `sp_helpconstraint`, `sp_rename`, `sp_refreshsqlmodule`, `sp_refreshview`, `sp_refresh_parameter_encryption`
 - **Extended properties & table options (persisted in catalog):** `sp_addextendedproperty`, `sp_updateextendedproperty`, `sp_dropextendedproperty`, `sp_tableoption`
 - **Session, XML & application locks:** `sp_set_session_context`, `sp_getapplock`, `sp_releaseapplock`, `sp_xml_preparedocument`, `sp_xml_removedocument`
 - **Database, security & server probes:** `sp_who`, `sp_databases`, `sp_helpdb`, `sp_server_info`, `sp_monitor`, `sp_helpuser`, `sp_helprole`, `sp_helprolemember`, `sp_helpsrvrole`, `sp_helpsrvrolemember`, `sp_helpfile`, `sp_helpfilegroup`, `sp_msgetversion`, `sp_MSIsContainedAGSession`, `xp_instance_regread`, `xp_msver`, `xp_qv`
-- **Cursor RPCs (`iridium_server` TDS layer):** `sp_prepexec`, `sp_cursoropen`, `sp_cursorfetch`, `sp_cursorclose`
+- **Prepared-statement & cursor RPCs (`iridium_server` TDS layer):** `sp_prepare`, `sp_prepexec`, `sp_execute`, `sp_unprepare`, `sp_cursoropen`, `sp_cursorprepare`, `sp_cursorexecute`, `sp_cursorprepexec`, `sp_cursorfetch`, `sp_cursoroption`, `sp_cursorclose`, `sp_cursorunprepare`, `sp_reset_connection`, `sp_pkeys`, `sp_sproc_columns`
 - **Out of scope for embedded engine:** SQL Server Agent (`sp_add_job`, etc.), Replication (`sp_addpublication`, etc.), Database Mail, Service Broker, and Availability Groups (`sp_add_ag_*`).

@@ -15,10 +15,10 @@ mod view_registry;
 use cow_registry::CowRegistry;
 pub use cow_registry::{CowRegistryIter, CowRegistryView};
 pub use metadata_registry::{
-    ColumnEncryptionKeyDef, ColumnEncryptionKeyValueDef, ColumnMasterKeyDef, FilegroupDef,
-    MaskedColumnDef, PartitionFunctionDef, PartitionSchemeDef, PermissionDef, PrincipalDef,
-    RoleMemberDef, SecurityBlockOp, SecurityPolicyDef, SecurityPredicateDef, SecurityPredicateKind,
-    UserDatabaseDef,
+    ColumnEncryptionKeyDef, ColumnEncryptionKeyValueDef, ColumnMasterKeyDef,
+    DatabaseRuntimeOptions, FilegroupDef, MaskedColumnDef, PartitionFunctionDef,
+    PartitionSchemeDef, PermissionDef, PrincipalDef, RoleMemberDef, SecurityBlockOp,
+    SecurityPolicyDef, SecurityPredicateDef, SecurityPredicateKind, UserDatabaseDef,
 };
 
 use crate::ast::Expr;
@@ -640,8 +640,26 @@ pub trait Catalog:
     fn get_user_databases(&self) -> &[UserDatabaseDef] {
         &[]
     }
+    fn get_database_options(&self, _db_name: &str) -> DatabaseRuntimeOptions {
+        DatabaseRuntimeOptions::default()
+    }
+    fn set_database_option(
+        &mut self,
+        _db_name: &str,
+        _opt: &crate::ast::DatabaseOptionChange,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
     fn create_database(&mut self, _name: String) -> Result<i32, DbError> {
         Ok(0)
+    }
+    fn clone_database(
+        &mut self,
+        _source_db: &str,
+        _target_db: String,
+        _as_snapshot: bool,
+    ) -> Result<Vec<(u32, u32)>, DbError> {
+        Ok(Vec::new())
     }
     fn drop_database(&mut self, _name: &str, _if_exists: bool) -> Result<Vec<u32>, DbError> {
         Ok(Vec::new())
@@ -813,6 +831,8 @@ pub struct CatalogImpl {
     #[serde(default, with = "arc_serde")]
     user_databases: Arc<Vec<UserDatabaseDef>>,
     #[serde(default, with = "arc_serde")]
+    builtin_db_options: Arc<Vec<UserDatabaseDef>>,
+    #[serde(default, with = "arc_serde")]
     security_policies: Arc<Vec<SecurityPolicyDef>>,
     #[serde(default, with = "arc_serde")]
     temporal_tables: Arc<Vec<TemporalTableConfig>>,
@@ -981,6 +1001,7 @@ impl Default for CatalogImpl {
             column_master_keys: Arc::new(Vec::new()),
             column_encryption_keys: Arc::new(Vec::new()),
             user_databases: Arc::new(Vec::new()),
+            builtin_db_options: Arc::new(Vec::new()),
             security_policies: Arc::new(Vec::new()),
             temporal_tables: Arc::new(Vec::new()),
             next_schema_id: Arc::new(AtomicU32::new(1)),
@@ -1362,6 +1383,117 @@ impl Catalog for CatalogImpl {
     fn get_user_databases(&self) -> &[UserDatabaseDef] {
         &self.user_databases
     }
+    fn get_database_options(&self, db_name: &str) -> DatabaseRuntimeOptions {
+        if let Some(udb) = self
+            .user_databases
+            .iter()
+            .find(|d| d.name.eq_ignore_ascii_case(db_name))
+        {
+            return DatabaseRuntimeOptions {
+                user_access: udb.user_access,
+                is_read_only: udb.is_read_only,
+                read_committed_snapshot: udb.read_committed_snapshot,
+                allow_snapshot_isolation: udb.allow_snapshot_isolation,
+                source_database_id: udb.source_database_id,
+                recovery_model: udb.recovery_model.clone(),
+                compatibility_level: udb.compatibility_level,
+            };
+        }
+        if let Some(bdb) = self
+            .builtin_db_options
+            .iter()
+            .find(|d| d.name.eq_ignore_ascii_case(db_name))
+        {
+            return DatabaseRuntimeOptions {
+                user_access: bdb.user_access,
+                is_read_only: bdb.is_read_only,
+                read_committed_snapshot: bdb.read_committed_snapshot,
+                allow_snapshot_isolation: bdb.allow_snapshot_isolation,
+                source_database_id: bdb.source_database_id,
+                recovery_model: bdb.recovery_model.clone(),
+                compatibility_level: bdb.compatibility_level,
+            };
+        }
+        if let Some(def) = crate::executor::database_catalog::builtin_databases()
+            .find(|d| d.name.eq_ignore_ascii_case(db_name))
+        {
+            return DatabaseRuntimeOptions {
+                user_access: 0,
+                is_read_only: false,
+                read_committed_snapshot: false,
+                allow_snapshot_isolation: false,
+                source_database_id: None,
+                recovery_model: def.recovery_model.to_string(),
+                compatibility_level: def.compatibility_level,
+            };
+        }
+        DatabaseRuntimeOptions::default()
+    }
+    fn set_database_option(
+        &mut self,
+        db_name: &str,
+        opt: &crate::ast::DatabaseOptionChange,
+    ) -> Result<(), DbError> {
+        let apply_opt = |db: &mut UserDatabaseDef, opt: &crate::ast::DatabaseOptionChange| {
+            match opt {
+                crate::ast::DatabaseOptionChange::UserAccess(v) => db.user_access = *v,
+                crate::ast::DatabaseOptionChange::ReadOnly(v) => db.is_read_only = *v,
+                crate::ast::DatabaseOptionChange::ReadCommittedSnapshot(v) => {
+                    db.read_committed_snapshot = *v
+                }
+                crate::ast::DatabaseOptionChange::AllowSnapshotIsolation(v) => {
+                    db.allow_snapshot_isolation = *v
+                }
+                crate::ast::DatabaseOptionChange::RecoveryModel(m) => db.recovery_model = m.clone(),
+                crate::ast::DatabaseOptionChange::CompatibilityLevel(lvl) => {
+                    db.compatibility_level = *lvl
+                }
+            }
+        };
+        if self
+            .user_databases
+            .iter()
+            .any(|d| d.name.eq_ignore_ascii_case(db_name))
+        {
+            let list = Arc::make_mut(&mut self.user_databases);
+            if let Some(db) = list
+                .iter_mut()
+                .find(|d| d.name.eq_ignore_ascii_case(db_name))
+            {
+                apply_opt(db, opt);
+            }
+            return Ok(());
+        }
+        if let Some(bdef) = crate::executor::database_catalog::builtin_databases()
+            .find(|d| d.name.eq_ignore_ascii_case(db_name))
+        {
+            let list = Arc::make_mut(&mut self.builtin_db_options);
+            if let Some(db) = list
+                .iter_mut()
+                .find(|d| d.name.eq_ignore_ascii_case(db_name))
+            {
+                apply_opt(db, opt);
+            } else {
+                let mut entry = UserDatabaseDef {
+                    id: bdef.id,
+                    name: bdef.name.to_string(),
+                    compatibility_level: bdef.compatibility_level,
+                    recovery_model: bdef.recovery_model.to_string(),
+                    user_access: 0,
+                    is_read_only: false,
+                    read_committed_snapshot: false,
+                    allow_snapshot_isolation: false,
+                    source_database_id: None,
+                };
+                apply_opt(&mut entry, opt);
+                list.push(entry);
+            }
+            return Ok(());
+        }
+        Err(DbError::DatabaseNotFound {
+            database: db_name.to_string(),
+        })
+    }
     fn create_database(&mut self, name: String) -> Result<i32, DbError> {
         if crate::executor::database_catalog::is_builtin_database(&name)
             || self
@@ -1381,11 +1513,217 @@ impl Catalog for CatalogImpl {
             name,
             compatibility_level: 160,
             recovery_model: "FULL".to_string(),
+            user_access: 0,
+            is_read_only: false,
+            read_committed_snapshot: false,
+            allow_snapshot_isolation: false,
+            source_database_id: None,
         });
         if self.get_schema_id(&dbo_key).is_none() {
             let _ = self.create_schema(&dbo_key);
         }
         Ok(next_id)
+    }
+    fn clone_database(
+        &mut self,
+        source_db: &str,
+        target_db: String,
+        as_snapshot: bool,
+    ) -> Result<Vec<(u32, u32)>, DbError> {
+        let source_id = crate::executor::database_catalog::database_id_for_name_in(self, source_db)
+            .ok_or_else(|| DbError::DatabaseNotFound {
+                database: source_db.to_string(),
+            })?;
+        let source_opts = self.get_database_options(source_db);
+        let new_db_id = self.create_database(target_db.clone())?;
+        if let Some(udb) = Arc::make_mut(&mut self.user_databases)
+            .iter_mut()
+            .find(|d| d.id == new_db_id)
+        {
+            udb.compatibility_level = source_opts.compatibility_level;
+            udb.recovery_model = source_opts.recovery_model;
+            udb.read_committed_snapshot = source_opts.read_committed_snapshot;
+            udb.allow_snapshot_isolation = source_opts.allow_snapshot_isolation;
+            udb.is_read_only = as_snapshot;
+            udb.source_database_id = if as_snapshot { Some(source_id) } else { None };
+        }
+
+        let source_is_user = crate::executor::database_catalog::is_user_database(self, source_db);
+        let belongs_to_source = |raw_schema: &str| -> bool {
+            let (owner_db, _) = crate::executor::database_catalog::split_db_schema(raw_schema);
+            if source_is_user {
+                matches!(owner_db, Some(d) if d.eq_ignore_ascii_case(source_db))
+            } else {
+                owner_db.is_none()
+            }
+        };
+        let remap_schema = |raw_schema: &str| -> String {
+            let display = crate::executor::database_catalog::display_schema_name(raw_schema);
+            crate::executor::database_catalog::db_schema_key(&target_db, display)
+        };
+
+        // 1. Clone schemas
+        let src_schemas: Vec<String> = self
+            .get_schemas()
+            .iter()
+            .filter(|s| belongs_to_source(&s.name))
+            .map(|s| s.name.clone())
+            .collect();
+        for sname in src_schemas {
+            let mapped = remap_schema(&sname);
+            if self.get_schema_id(&mapped).is_none() {
+                let _ = self.create_schema(&mapped);
+            }
+        }
+
+        // 2. Clone tables (skip internal temp/table-var tables) and record (old_id, new_id)
+        let src_tables: Vec<TableDef> = self
+            .get_tables()
+            .iter()
+            .filter(|t| {
+                belongs_to_source(&t.schema_name)
+                    && !t.name.starts_with('#')
+                    && !t.name.starts_with("__temp_")
+                    && !t.name.starts_with("__var_")
+                    && !t.name.starts_with("__tvp_")
+            })
+            .map(|t| t.as_ref().clone())
+            .collect();
+        let mut table_id_map: HashMap<u32, u32> = HashMap::new();
+        let mut table_pairs: Vec<(u32, u32)> = Vec::with_capacity(src_tables.len());
+        for mut tbl in src_tables {
+            let old_id = tbl.id;
+            let new_id = self.alloc_table_id();
+            let mapped_schema = remap_schema(&tbl.schema_name);
+            if self.get_schema_id(&mapped_schema).is_none() {
+                let _ = self.create_schema(&mapped_schema);
+            }
+            let mapped_schema_id = self.get_schema_id(&mapped_schema).unwrap_or(tbl.schema_id);
+            tbl.id = new_id;
+            tbl.schema_name = mapped_schema;
+            tbl.schema_id = mapped_schema_id;
+            for fk in &mut tbl.foreign_keys {
+                let ref_sch = fk.referenced_table.schema_or_dbo().to_string();
+                fk.referenced_table.schema = Some(remap_schema(&ref_sch));
+            }
+            self.register_table(tbl);
+            table_id_map.insert(old_id, new_id);
+            table_pairs.push((old_id, new_id));
+        }
+
+        // 3. Clone indexes for cloned tables
+        let src_indexes: Vec<IndexDef> = self
+            .get_indexes()
+            .iter()
+            .filter(|idx| table_id_map.contains_key(&idx.table_id))
+            .map(|idx| idx.as_ref().clone())
+            .collect();
+        for mut idx in src_indexes {
+            if let Some(&new_tid) = table_id_map.get(&idx.table_id) {
+                idx.id = self.alloc_index_id();
+                idx.table_id = new_tid;
+                self.register_index(idx);
+            }
+        }
+
+        let src_prefix = crate::executor::database_catalog::db_schema_prefix(source_db);
+        let tgt_prefix = crate::executor::database_catalog::db_schema_prefix(&target_db);
+        let remap_serde_prefixes = |val: &mut serde_json::Value| {
+            fn walk(v: &mut serde_json::Value, src_p: &str, tgt_p: &str) {
+                match v {
+                    serde_json::Value::String(s) => {
+                        if s.len() >= src_p.len()
+                            && s[..src_p.len()].eq_ignore_ascii_case(src_p)
+                        {
+                            *s = format!("{}{}", tgt_p, &s[src_p.len()..]);
+                        }
+                    }
+                    serde_json::Value::Array(arr) => {
+                        for item in arr {
+                            walk(item, src_p, tgt_p);
+                        }
+                    }
+                    serde_json::Value::Object(map) => {
+                        for item in map.values_mut() {
+                            walk(item, src_p, tgt_p);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if source_is_user {
+                walk(val, &src_prefix, &tgt_prefix);
+            }
+        };
+
+        // 4. Clone views (remapping internal DB schema prefixes inside AST)
+        let src_views: Vec<ViewDef> = self
+            .get_views()
+            .iter()
+            .filter(|v| belongs_to_source(&v.schema))
+            .map(|v| v.as_ref().clone())
+            .collect();
+        for mut v in src_views {
+            v.schema = remap_schema(&v.schema);
+            if let Ok(mut jv) = serde_json::to_value(&*v.query) {
+                remap_serde_prefixes(&mut jv);
+                if let Ok(remapped) = serde_json::from_value::<Statement>(jv) {
+                    v.query = Arc::new(remapped);
+                }
+            }
+            let _ = self.create_view(v);
+        }
+
+        // 5. Clone routines (remapping internal DB schema prefixes inside AST)
+        let src_routines: Vec<RoutineDef> = self
+            .get_routines()
+            .iter()
+            .filter(|r| belongs_to_source(&r.schema))
+            .map(|r| r.as_ref().clone())
+            .collect();
+        for mut r in src_routines {
+            r.schema = remap_schema(&r.schema);
+            if let Ok(mut jv) = serde_json::to_value(&r.kind) {
+                remap_serde_prefixes(&mut jv);
+                if let Ok(remapped) = serde_json::from_value::<RoutineKind>(jv) {
+                    r.kind = remapped;
+                }
+            }
+            let _ = self.create_routine(r);
+        }
+
+        // 6. Clone triggers (remapping internal DB schema prefixes inside AST)
+        let src_triggers: Vec<TriggerDef> = self
+            .get_triggers()
+            .iter()
+            .filter(|t| belongs_to_source(&t.schema))
+            .map(|t| t.as_ref().clone())
+            .collect();
+        for mut tr in src_triggers {
+            tr.schema = remap_schema(&tr.schema);
+            tr.table_schema = remap_schema(&tr.table_schema);
+            if let Ok(mut jv) = serde_json::to_value(&*tr.body) {
+                remap_serde_prefixes(&mut jv);
+                if let Ok(remapped) = serde_json::from_value::<Vec<Statement>>(jv) {
+                    tr.body = Arc::new(remapped);
+                }
+            }
+            let _ = self.create_trigger(tr);
+        }
+
+        // 7. Clone sequences
+        let src_seqs: Vec<SequenceDef> = self
+            .get_sequences()
+            .iter()
+            .filter(|s| belongs_to_source(&s.schema))
+            .cloned()
+            .collect();
+        for mut seq in src_seqs {
+            seq.schema = remap_schema(&seq.schema);
+            let _ = self.create_sequence(seq);
+        }
+
+        Ok(table_pairs)
     }
     fn drop_database(&mut self, name: &str, if_exists: bool) -> Result<Vec<u32>, DbError> {
         if crate::executor::database_catalog::is_builtin_database(name) {
@@ -1777,6 +2115,12 @@ impl Catalog for CatalogImpl {
             &mut self.user_databases,
             &workspace.user_databases,
             &base.user_databases,
+            |d| normalize_identifier(&d.name),
+        );
+        merge_arc_vec(
+            &mut self.builtin_db_options,
+            &workspace.builtin_db_options,
+            &base.builtin_db_options,
             |d| normalize_identifier(&d.name),
         );
         merge_arc_vec(

@@ -366,7 +366,7 @@ impl<'a> ScriptExecutor<'a> {
                 Ok(None)
             }
             DdlStatement::CatalogMetadata(action) => {
-                self.execute_catalog_metadata(*action)?;
+                self.execute_catalog_metadata(*action, ctx)?;
                 Ok(None)
             }
         }
@@ -667,6 +667,7 @@ impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_catalog_metadata(
         &mut self,
         action: crate::ast::CatalogMetadataAction,
+        ctx: &ExecutionContext,
     ) -> Result<(), DbError> {
         use crate::ast::CatalogMetadataAction;
         match action {
@@ -1018,8 +1019,86 @@ impl<'a> ScriptExecutor<'a> {
             CatalogMetadataAction::DropColumnEncryptionKey { name } => {
                 self.catalog.drop_column_encryption_key(&name)?;
             }
-            CatalogMetadataAction::CreateDatabase { name } => {
-                self.catalog.create_database(name)?;
+            CatalogMetadataAction::CreateDatabase {
+                name,
+                clone_from,
+                as_snapshot,
+            } => {
+                if let Some(src_db) = clone_from {
+                    let table_pairs = self.catalog.clone_database(&src_db, name, as_snapshot)?;
+                    for &(old_tid, new_tid) in &table_pairs {
+                        let rows: Vec<_> = self
+                            .storage
+                            .scan_rows(old_tid)?
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.storage.ensure_table(new_tid)?;
+                        self.storage.replace_table(new_tid, rows)?;
+                    }
+                    // Rebuild indexes on cloned tables if storage supports indexes
+                    let cloned_tids: std::collections::HashSet<u32> =
+                        table_pairs.iter().map(|(_, new_id)| *new_id).collect();
+                    let cloned_indexes: Vec<_> = self
+                        .catalog
+                        .get_indexes()
+                        .iter()
+                        .filter(|i| cloned_tids.contains(&i.table_id))
+                        .map(|i| i.as_ref().clone())
+                        .collect();
+                    for idx in cloned_indexes {
+                        let tbl_opt = self
+                            .catalog
+                            .get_tables()
+                            .iter()
+                            .find(|t| t.id == idx.table_id)
+                            .map(|t| t.as_ref().clone());
+                        if let Some(tbl) = tbl_opt {
+                            let rows: Vec<_> = self
+                                .storage
+                                .scan_rows(tbl.id)?
+                                .collect::<Result<Vec<_>, _>>()?;
+                            if let Some(idx_stor) = self.storage.as_index_storage_mut() {
+                                if let Some(first_col_id) = idx.column_ids.first().copied() {
+                                    if let Some(pos) =
+                                        tbl.columns.iter().position(|c| c.id == first_col_id)
+                                    {
+                                        idx_stor.register_index(
+                                            idx.id,
+                                            idx.column_ids.clone(),
+                                            idx.is_unique,
+                                            idx.is_clustered,
+                                        );
+                                        for (row_idx, row) in rows.iter().enumerate() {
+                                            if row.deleted {
+                                                continue;
+                                            }
+                                            let _ = idx_stor.insert_index_entry(
+                                                idx.id,
+                                                row.values[pos].clone(),
+                                                row_idx,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.catalog.create_database(name)?;
+                }
+            }
+            CatalogMetadataAction::AlterDatabase { name, options, .. } => {
+                let target_db = if name.eq_ignore_ascii_case("CURRENT") {
+                    ctx.metadata
+                        .database
+                        .as_deref()
+                        .unwrap_or("master")
+                        .to_string()
+                } else {
+                    name
+                };
+                for opt in &options {
+                    self.catalog.set_database_option(&target_db, opt)?;
+                }
             }
             CatalogMetadataAction::DropDatabase { name, if_exists } => {
                 let dropped_ids = self.catalog.drop_database(&name, if_exists)?;

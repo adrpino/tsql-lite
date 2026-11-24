@@ -29,6 +29,24 @@ pub(crate) fn execute_rows_to_result(
         order::apply_source_ordering(executor, query, &mut source_rows, ctx)?;
     }
 
+    if let Some(rt) = ctx.session.extras.row_locks.clone() {
+        let top_limit = compute_row_lock_top_limit(executor, query, &state, ctx);
+        source_rows = rt.apply_select_row_locking(source_rows, top_limit, |row| {
+            if let Some(ref pred) = query.filter.selection {
+                crate::executor::evaluator::eval_predicate(
+                    pred,
+                    row,
+                    ctx,
+                    executor.catalog,
+                    executor.storage,
+                    executor.clock,
+                )
+            } else {
+                Ok(true)
+            }
+        })?;
+    }
+
     let source_order_keys = if query.pagination.top.as_ref().is_some_and(|t| t.with_ties)
         && state.needs_pre_sort
         && !query.projection.distinct
@@ -81,4 +99,47 @@ pub(crate) fn execute_rows_to_result(
         rows: final_rows,
         ..Default::default()
     })
+}
+
+fn compute_row_lock_top_limit(
+    executor: &QueryExecutor<'_>,
+    query: &RelationalQuery,
+    state: &analysis::PipelineState,
+    ctx: &mut ExecutionContext,
+) -> Option<usize> {
+    if !query.filter.group_by.is_empty()
+        || !query.filter.grouping_sets.is_empty()
+        || query.filter.having.is_some()
+        || query.projection.distinct
+        || query.pagination.offset.is_some()
+        || query.pagination.fetch.is_some()
+        || state.has_aggregate
+        || state.has_window
+    {
+        return None;
+    }
+    let mut cap: Option<usize> = None;
+    if let Some(ref top) = query.pagination.top {
+        if !top.percent && !top.with_ties {
+            if let Ok(val) = crate::executor::evaluator::eval_expr(
+                &top.value,
+                &[],
+                ctx,
+                executor.catalog,
+                executor.storage,
+                executor.clock,
+            ) {
+                if let Some(n) = val.to_integer_i64() {
+                    if n >= 0 {
+                        cap = Some(n as usize);
+                    }
+                }
+            }
+        }
+    }
+    if ctx.options.rowcount > 0 {
+        let rc = ctx.options.rowcount as usize;
+        cap = Some(cap.map_or(rc, |c| c.min(rc)));
+    }
+    cap
 }

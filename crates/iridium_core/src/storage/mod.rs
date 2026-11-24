@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 pub type StorageRowStream<'a> = Box<dyn Iterator<Item = Result<StoredRow, DbError>> + 'a>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredRow {
     pub values: Vec<Value>,
     pub deleted: bool,
@@ -429,9 +429,37 @@ impl Storage for InMemoryStorage {
         if changed.is_empty() {
             return;
         }
+        // Perform 3-way row-level merge when both `self` (latest committed state) and `workspace`
+        // diverged from `base` on the same table (e.g., concurrent row-locked workers or snapshot
+        // transactions modifying disjoint rows of the same table).
+        let merged_changes: Vec<(u32, Option<Arc<Vec<StoredRow>>>)> = changed
+            .into_iter()
+            .map(|(tid, opt_ws)| {
+                let merged = match (opt_ws, self.get_table(tid), base.get_table(tid)) {
+                    (Some(ws_rows), Some(cur_rows), Some(base_rows))
+                        if !Arc::ptr_eq(cur_rows, base_rows)
+                            && ws_rows.len() >= base_rows.len() =>
+                    {
+                        let mut out = cur_rows.as_ref().clone();
+                        let common = base_rows.len().min(out.len()).min(ws_rows.len());
+                        for i in 0..common {
+                            if ws_rows[i] != base_rows[i] {
+                                out[i] = ws_rows[i].clone();
+                            }
+                        }
+                        if ws_rows.len() > base_rows.len() {
+                            out.extend_from_slice(&ws_rows[base_rows.len()..]);
+                        }
+                        Some(Arc::new(out))
+                    }
+                    (opt, _, _) => opt,
+                };
+                (tid, merged)
+            })
+            .collect();
         if self.is_unshared() {
             let map = Arc::make_mut(&mut self.base);
-            for (tid, opt_rows) in changed {
+            for (tid, opt_rows) in merged_changes {
                 match opt_rows {
                     Some(rows) => {
                         map.insert(tid, rows);
@@ -442,7 +470,7 @@ impl Storage for InMemoryStorage {
                 }
             }
         } else {
-            for (tid, opt_rows) in changed {
+            for (tid, opt_rows) in merged_changes {
                 match opt_rows {
                     Some(rows) => {
                         self.delta.insert(tid, Some(rows));

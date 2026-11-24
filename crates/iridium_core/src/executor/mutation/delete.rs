@@ -268,7 +268,15 @@ impl<'a> MutationExecutor<'a> {
             &target_alias,
             rowcount_limit,
             &mut deleted_indices,
-            |stored_row, _idx, _joined_row| {
+            |stored_row, idx, _joined_row| {
+                if let Some(ref rt) = ctx.session.extras.row_locks {
+                    rt.acquire_write_row_lock_and_check_snapshot(
+                        table_id,
+                        &table.schema_name,
+                        &table.name,
+                        idx,
+                    )?;
+                }
                 crate::executor::rls::enforce_rls_block_predicates(
                     &table,
                     std::slice::from_ref(stored_row),
@@ -326,7 +334,8 @@ impl<'a> MutationExecutor<'a> {
             }
 
             if has_dirty {
-                self.push_dirty_delete(ctx, &table.name, *idx);
+                let dirty_key = format!("{}\x02{}", table.schema_name, table.name);
+                self.push_dirty_delete(ctx, &dirty_key, *idx);
             }
         }
 

@@ -494,14 +494,21 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
         let saved = parser.save();
         let _ = parser.next();
         // Database name (or CURRENT, or SCOPED CONFIGURATION with no db name)
-        if !matches!(parser.peek(), Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCOPED"))
-            && matches!(
-                parser.peek(),
-                Some(Token::Identifier(_)) | Some(Token::Keyword(_))
-            )
-        {
-            let _ = parser.next();
-        }
+        let db_name: Option<String> = if !matches!(
+            parser.peek(),
+            Some(Token::Identifier(id)) if id.eq_ignore_ascii_case("SCOPED")
+        ) && matches!(
+            parser.peek(),
+            Some(Token::Identifier(_)) | Some(Token::Keyword(_))
+        ) {
+            match parser.next() {
+                Some(Token::Identifier(id)) => Some(id.clone()),
+                Some(Token::Keyword(k)) => Some(k.as_sql().to_string()),
+                _ => None,
+            }
+        } else {
+            None
+        };
         // Support storage clauses: ADD FILEGROUP / ADD FILE / MODIFY FILE / REMOVE FILE
         if parser.at_keyword(Keyword::Add) {
             let _ = parser.next();
@@ -522,6 +529,138 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
             Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
                 Vec::new(),
             )))
+        } else if parser.at_keyword(Keyword::Set) {
+            let _ = parser.next();
+            let mut options: Vec<crate::ast::DatabaseOptionChange> = Vec::new();
+            let mut rollback_immediate = false;
+            let mut tokens: Vec<String> = Vec::new();
+            while let Some(tok) = parser.peek() {
+                if matches!(tok, Token::Semicolon) {
+                    break;
+                }
+                if matches!(
+                    tok,
+                    Token::Keyword(
+                        Keyword::Create
+                            | Keyword::Alter
+                            | Keyword::Drop
+                            | Keyword::Select
+                            | Keyword::Insert
+                            | Keyword::Update
+                            | Keyword::Delete
+                            | Keyword::Use
+                            | Keyword::Declare
+                            | Keyword::Exec
+                            | Keyword::Execute
+                            | Keyword::Begin
+                            | Keyword::End
+                            | Keyword::If
+                            | Keyword::Go
+                    )
+                ) {
+                    break;
+                }
+                match parser.next() {
+                    Some(Token::Identifier(id)) => tokens.push(id.to_ascii_uppercase()),
+                    Some(Token::Keyword(k)) => tokens.push(k.as_sql().to_ascii_uppercase()),
+                    Some(Token::Number { raw, .. }) => tokens.push(raw.clone()),
+                    Some(Token::Operator(op)) => tokens.push(op.clone()),
+                    _ => {}
+                }
+            }
+            let mut i = 0;
+            while i < tokens.len() {
+                match tokens[i].as_str() {
+                    "SINGLE_USER" => {
+                        options.push(crate::ast::DatabaseOptionChange::UserAccess(1));
+                    }
+                    "MULTI_USER" => {
+                        options.push(crate::ast::DatabaseOptionChange::UserAccess(0));
+                    }
+                    "RESTRICTED_USER" => {
+                        options.push(crate::ast::DatabaseOptionChange::UserAccess(2));
+                    }
+                    "READ_ONLY" => {
+                        options.push(crate::ast::DatabaseOptionChange::ReadOnly(true));
+                    }
+                    "READ_WRITE" => {
+                        options.push(crate::ast::DatabaseOptionChange::ReadOnly(false));
+                    }
+                    "READ_COMMITTED_SNAPSHOT" => {
+                        if let Some(next) = tokens.get(i + 1) {
+                            if next == "ON" {
+                                options.push(
+                                    crate::ast::DatabaseOptionChange::ReadCommittedSnapshot(true),
+                                );
+                                i += 1;
+                            } else if next == "OFF" {
+                                options.push(
+                                    crate::ast::DatabaseOptionChange::ReadCommittedSnapshot(false),
+                                );
+                                i += 1;
+                            }
+                        }
+                    }
+                    "ALLOW_SNAPSHOT_ISOLATION" => {
+                        if let Some(next) = tokens.get(i + 1) {
+                            if next == "ON" {
+                                options.push(
+                                    crate::ast::DatabaseOptionChange::AllowSnapshotIsolation(true),
+                                );
+                                i += 1;
+                            } else if next == "OFF" {
+                                options.push(
+                                    crate::ast::DatabaseOptionChange::AllowSnapshotIsolation(false),
+                                );
+                                i += 1;
+                            }
+                        }
+                    }
+                    "RECOVERY" => {
+                        if let Some(next) = tokens.get(i + 1) {
+                            if matches!(next.as_str(), "FULL" | "SIMPLE" | "BULK_LOGGED") {
+                                options.push(crate::ast::DatabaseOptionChange::RecoveryModel(
+                                    next.clone(),
+                                ));
+                                i += 1;
+                            }
+                        }
+                    }
+                    "COMPATIBILITY_LEVEL" => {
+                        let val_idx = if tokens.get(i + 1).map(|s| s.as_str()) == Some("=") {
+                            i + 2
+                        } else {
+                            i + 1
+                        };
+                        if let Some(lvl) = tokens.get(val_idx).and_then(|s| s.parse::<u8>().ok()) {
+                            options.push(crate::ast::DatabaseOptionChange::CompatibilityLevel(lvl));
+                            i = val_idx;
+                        }
+                    }
+                    "ROLLBACK" => {
+                        if tokens.get(i + 1).map(|s| s.as_str()) == Some("IMMEDIATE") {
+                            rollback_immediate = true;
+                            i += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if let Some(target_db) = db_name {
+                if !options.is_empty() || rollback_immediate {
+                    return Ok(Statement::Ddl(Box::new(DdlStatement::CatalogMetadata(
+                        Box::new(crate::ast::CatalogMetadataAction::AlterDatabase {
+                            name: target_db,
+                            options,
+                            rollback_immediate,
+                        }),
+                    ))));
+                }
+            }
+            Ok(Statement::Procedural(ProceduralStatement::BeginEnd(
+                Vec::new(),
+            )))
         } else if matches!(
             parser.peek(),
             Some(Token::Identifier(id))
@@ -529,9 +668,8 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                     || id.eq_ignore_ascii_case("REMOVE")
                     || id.eq_ignore_ascii_case("SCOPED")
                     || id.eq_ignore_ascii_case("COLLATE")
-        ) || parser.at_keyword(Keyword::Set)
-        {
-            // Support ALTER DATABASE <db> SET ..., ALTER DATABASE <db> COLLATE ...,
+        ) {
+            // Support ALTER DATABASE <db> COLLATE ...,
             // ALTER DATABASE SCOPED CONFIGURATION SET ..., MODIFY/REMOVE FILE ...
             let _ = parser.next();
             if matches!(

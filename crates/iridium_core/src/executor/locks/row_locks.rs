@@ -149,4 +149,19 @@ impl RowLockManager {
 
         self.lock_counts.remove(&(session_id, normalized));
     }
+
+    pub fn session_holds_lock_on_table(&self, session_id: SessionId, table: &str) -> bool {
+        let normalized = normalize_identifier(table);
+        self.lock_counts
+            .get(&(session_id, normalized))
+            .copied()
+            .unwrap_or(0)
+            > 0
+    }
+
+    pub fn has_any_locks_for_other_session(&self, session_id: SessionId) -> bool {
+        self.lock_counts
+            .iter()
+            .any(|((sid, _), count)| *sid != session_id && *count > 0)
+    }
 }

@@ -527,18 +527,20 @@ where
     ) -> Self {
         let _ = storage.restore_from_checkpoint(checkpoint.storage_data);
         Self {
-            storage: parking_lot::RwLock::new(SharedStorage {
+            storage: std::sync::Arc::new(parking_lot::RwLock::new(SharedStorage {
                 catalog: checkpoint.catalog,
                 storage,
                 commit_ts: checkpoint.commit_ts,
                 table_versions: checkpoint.table_versions,
-            }),
-            table_locks: parking_lot::Mutex::new(super::super::locks::LockTable::new()),
+            })),
+            table_locks: std::sync::Arc::new(parking_lot::Mutex::new(
+                super::super::locks::LockTable::new(),
+            )),
             durability: parking_lot::Mutex::new(durability),
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
             sessions: dashmap::DashMap::new(),
-            deadlock_priorities: dashmap::DashMap::new(),
+            deadlock_priorities: std::sync::Arc::new(dashmap::DashMap::new()),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),
@@ -554,20 +556,22 @@ where
         table_versions: std::collections::HashMap<String, u64>,
     ) -> Self {
         Self {
-            storage: parking_lot::RwLock::new(SharedStorage {
+            storage: std::sync::Arc::new(parking_lot::RwLock::new(SharedStorage {
                 catalog,
                 storage,
                 commit_ts,
                 table_versions,
-            }),
-            table_locks: parking_lot::Mutex::new(super::super::locks::LockTable::new()),
+            })),
+            table_locks: std::sync::Arc::new(parking_lot::Mutex::new(
+                super::super::locks::LockTable::new(),
+            )),
             durability: parking_lot::Mutex::new(Box::new(
                 super::super::durability::NoopDurability::default(),
             )),
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
             sessions: dashmap::DashMap::new(),
-            deadlock_priorities: dashmap::DashMap::new(),
+            deadlock_priorities: std::sync::Arc::new(dashmap::DashMap::new()),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),

@@ -196,6 +196,9 @@ pub(crate) fn collect_write_tables(stmt: &Statement) -> HashSet<String> {
                     normalize_identifier(&s.name.name)
                 ));
             }
+            DdlStatement::CatalogMetadata(_) => {
+                out.insert("__CATALOG_META__".to_string());
+            }
             _ => {}
         },
         Statement::Procedural(crate::ast::ProceduralStatement::CreateProcedure(s)) => {

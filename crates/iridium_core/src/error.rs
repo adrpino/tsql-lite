@@ -209,6 +209,10 @@ impl DbError {
                     || lower.contains("reference constraint")
                 {
                     547
+                } else if lower.contains("create unique index") && lower.contains("duplicate key") {
+                    1505
+                } else if lower.contains("with unique index") {
+                    2601
                 } else if lower.contains("primary key")
                     || lower.contains("unique key")
                     || lower.contains("duplicate key")
@@ -224,9 +228,25 @@ impl DbError {
                 } else if lower.contains("arithmetic overflow") {
                     220
                 } else if lower.contains("would be truncated") {
-                    8152
+                    2628
                 } else if lower.contains("divide by zero") {
                     8134
+                } else if lower.contains("lock timeout")
+                    || lower.contains("lock request time out")
+                    || lower.contains("lock conflict (no-wait)")
+                {
+                    1222
+                } else if lower
+                    .contains("snapshot isolation transaction aborted due to update conflict")
+                {
+                    3960
+                } else if lower.contains("snapshot isolation transaction failed accessing database")
+                {
+                    3952
+                } else if lower.contains("because the database is read-only") {
+                    3906
+                } else if lower.contains("because it is currently in use") {
+                    3702
                 } else {
                     50000
                 }
@@ -520,5 +540,87 @@ impl<T> StmtOutcome<T> {
             StmtOutcome::Ok(v) => v,
             _ => default,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DbError;
+
+    #[test]
+    fn sql_server_error_numbers_match_expected_codes() {
+        assert_eq!(
+            DbError::Execution(
+                "Violation of PRIMARY KEY constraint. Cannot insert duplicate key.".into()
+            )
+            .number(),
+            2627
+        );
+        assert_eq!(
+            DbError::Execution(
+                "Violation of UNIQUE KEY constraint on column 'Code'. Cannot insert duplicate key."
+                    .into()
+            )
+            .number(),
+            2627
+        );
+        assert_eq!(
+            DbError::Execution(
+                "Cannot insert duplicate key row in object 'dbo.Users' with unique index 'UX_Users_Email'."
+                    .into()
+            )
+            .number(),
+            2601
+        );
+        assert_eq!(
+            DbError::Execution(
+                "The CREATE UNIQUE INDEX statement terminated because a duplicate key was found for the object name 'dbo.Users' and the index name 'UX_Users_Email'."
+                    .into()
+            )
+            .number(),
+            1505
+        );
+        assert_eq!(
+            DbError::Execution("FOREIGN KEY constraint violation".into()).number(),
+            547
+        );
+        assert_eq!(
+            DbError::Execution("CHECK constraint violation".into()).number(),
+            547
+        );
+        assert_eq!(
+            DbError::Execution("String or binary data would be truncated for column 'Name'".into())
+                .number(),
+            2628
+        );
+        assert_eq!(
+            DbError::Execution("lock timeout (200ms): Write lock on 'dbo.q' is blocked".into())
+                .number(),
+            1222
+        );
+        assert_eq!(
+            DbError::Execution("lock conflict (no-wait): Write lock on 'dbo.q' is blocked".into())
+                .number(),
+            1222
+        );
+        assert_eq!(
+            DbError::Execution(
+                "Snapshot isolation transaction aborted due to update conflict.".into()
+            )
+            .number(),
+            3960
+        );
+        assert_eq!(
+            DbError::Execution(
+                "Snapshot isolation transaction failed accessing database 'AppDb' because snapshot isolation is not allowed in this database."
+                    .into()
+            )
+            .number(),
+            3952
+        );
+        assert_eq!(DbError::Deadlock("victim".into()).number(), 1205);
+        assert_eq!(DbError::table_not_found("dbo", "Missing").number(), 208);
+        assert_eq!(DbError::column_not_found("MissingCol").number(), 207);
+        assert_eq!(DbError::DivideByZero.number(), 8134);
     }
 }

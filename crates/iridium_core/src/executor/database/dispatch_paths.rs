@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::ast::{DmlStatement, IsolationLevel, Statement};
 use crate::error::{DbError, StmtOutcome, StmtResult};
 use crate::types::{DataType, Value};
@@ -6,11 +9,13 @@ use super::super::clock::{Clock, SystemClock};
 use super::super::context::ExecutionContext;
 use super::super::dirty_buffer;
 use super::super::journal::Journal;
-use super::super::locks::{LockTable, SessionId, TxWorkspace};
+use super::super::locks::hints::{collect_and_validate_statement_hints, TableLockHints};
+use super::super::locks::row_runtime::RowLockRuntime;
+use super::super::locks::{AcquiredLock, LockResource, LockTable, SessionId, TxWorkspace};
 use super::super::result::QueryResult;
 use super::super::script::ScriptExecutor;
 use super::super::session::{SessionSnapshot, SharedState};
-use super::super::table_util::{collect_write_tables, is_transaction_statement};
+use super::super::table_util::{collect_read_tables, collect_write_tables, is_transaction_statement};
 use super::super::tooling::SessionOptions;
 use super::super::transaction::TransactionManager;
 use super::super::transaction_exec;
@@ -32,6 +37,140 @@ fn create_script_executor<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn build_row_lock_runtime<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+    active_db: &str,
+    isolation_level: IsolationLevel,
+    rcsi_enabled: bool,
+    allow_snapshot_isolation: bool,
+    in_transaction: bool,
+    savepoint_depth: usize,
+    session_options: &SessionOptions,
+    hints_by_table: HashMap<String, TableLockHints>,
+    workspace_slot: &Option<TxWorkspace<C, S>>,
+) -> RowLockRuntime
+where
+    C: EngineCatalog + 'static,
+    S: EngineStorage + 'static,
+{
+    let priorities = Arc::clone(&state.deadlock_priorities);
+    let priority_lookup: Arc<dyn Fn(SessionId) -> i32 + Send + Sync> =
+        Arc::new(move |sid| priorities.get(&sid).map(|p| *p).unwrap_or(0));
+
+    let snapshot_conflict_checker: Option<Arc<dyn Fn(u32, usize) -> bool + Send + Sync>> =
+        if isolation_level == IsolationLevel::Snapshot && allow_snapshot_isolation {
+            workspace_slot.as_ref().map(|ws| {
+                let base_storage = ws.base_storage.clone();
+                let shared_storage = Arc::clone(&state.storage);
+                let f: Arc<dyn Fn(u32, usize) -> bool + Send + Sync> =
+                    Arc::new(move |table_id: u32, row_idx: usize| {
+                        let base_row = base_storage
+                            .scan_rows(table_id)
+                            .ok()
+                            .and_then(|mut it| it.nth(row_idx))
+                            .and_then(|r| r.ok());
+                        let guard = shared_storage.read();
+                        let cur_row = guard
+                            .storage
+                            .scan_rows(table_id)
+                            .ok()
+                            .and_then(|mut it| it.nth(row_idx))
+                            .and_then(|r| r.ok());
+                        match (base_row, cur_row) {
+                            (Some(b), Some(c)) => b != c,
+                            (Some(_), None) => true,
+                            _ => false,
+                        }
+                    });
+                f
+            })
+        } else {
+            None
+        };
+
+    let shared_for_fetch = Arc::clone(&state.storage);
+    let committed_row_fetcher: Option<super::super::locks::row_runtime::CommittedRowFetcher> =
+        Some(Arc::new(move |table_id: u32, row_idx: usize| {
+            let guard = shared_for_fetch.read();
+            guard
+                .storage
+                .scan_rows(table_id)
+                .ok()
+                .and_then(|mut it| it.nth(row_idx))
+                .and_then(|r| r.ok())
+        }));
+
+    RowLockRuntime {
+        table_locks: Arc::clone(&state.table_locks),
+        session_id,
+        active_db: active_db.to_string(),
+        isolation_level,
+        rcsi_enabled,
+        allow_snapshot_isolation,
+        in_transaction,
+        savepoint_depth,
+        timeout_ms: session_options.lock_timeout_ms,
+        deadlock_priority: session_options.deadlock_priority,
+        priority_lookup,
+        hints_by_table,
+        acquired_locks: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        snapshot_conflict_checker,
+        committed_row_fetcher,
+    }
+}
+
+fn release_statement_row_locks(
+    table_locks: &parking_lot::Mutex<LockTable>,
+    session_id: SessionId,
+    locks: Vec<AcquiredLock>,
+) {
+    if locks.is_empty() {
+        return;
+    }
+    let mut guard = table_locks.lock();
+    for lock in locks {
+        if let LockResource::Row(t, ridx) = lock.resource {
+            guard.release_row_lock(session_id, &t, ridx, lock.mode);
+        }
+    }
+}
+
+fn all_read_tables_have_nolock(
+    stmt: &Statement,
+    active_db: &str,
+    hints_by_table: &HashMap<String, TableLockHints>,
+) -> bool {
+    if hints_by_table.is_empty() {
+        return false;
+    }
+    let read_tables = collect_read_tables(stmt);
+    if read_tables.is_empty() {
+        return false;
+    }
+    let db_prefix = active_db.to_ascii_lowercase();
+    read_tables.iter().all(|t| {
+        let key = format!("{}.{}", db_prefix, t);
+        hints_by_table.get(&key).is_some_and(|h| h.nolock)
+    })
+}
+
+fn active_db_isolation_flags<C, S>(state: &SharedState<C, S>, active_db: &str) -> (bool, bool, bool)
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    let guard = state.storage.read();
+    let opts = guard.catalog.get_database_options(active_db);
+    let is_user = super::super::database_catalog::is_user_database(&guard.catalog, active_db);
+    (
+        opts.read_committed_snapshot,
+        opts.allow_snapshot_isolation,
+        is_user,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_write_without_transaction<C, S>(
     state: &SharedState<C, S>,
     session_id: SessionId,
@@ -41,21 +180,43 @@ pub(crate) fn execute_write_without_transaction<C, S>(
     stmt: Statement,
     ctx: &mut ExecutionContext,
     clock: &dyn Clock,
+    active_db: &str,
+    rcsi_enabled: bool,
+    allow_snapshot_isolation: bool,
+    hints_by_table: HashMap<String, TableLockHints>,
 ) -> StmtResult<Option<QueryResult>>
 where
-    C: EngineCatalog,
-    S: EngineStorage,
+    C: EngineCatalog + 'static,
+    S: EngineStorage + 'static,
 {
-    LockTable::acquire_statement_locks(
+    LockTable::acquire_statement_locks_with_hints(
         &state.table_locks,
         session_id,
         tx_manager,
         workspace_slot,
         &stmt,
+        active_db,
+        allow_snapshot_isolation,
+        &hints_by_table,
         session_options.lock_timeout_ms,
         session_options.deadlock_priority,
         &|sid| dispatch_helpers::lookup_session_deadlock_priority(state, sid),
     )?;
+
+    let rt = build_row_lock_runtime(
+        state,
+        session_id,
+        active_db,
+        tx_manager.session_isolation_level,
+        rcsi_enabled,
+        allow_snapshot_isolation,
+        false,
+        0,
+        session_options,
+        hints_by_table,
+        workspace_slot,
+    );
+    ctx.session.extras.row_locks = Some(rt);
 
     let mut storage_guard = state.storage.write();
     let durability_active = !state.durability.lock().is_noop();
@@ -72,6 +233,7 @@ where
     let (cat, stor) = storage_guard.get_mut_refs();
     let mut script = create_script_executor(cat, stor, clock);
     let out = script.execute(stmt.clone(), ctx);
+    ctx.session.extras.row_locks = None;
     let is_control_flow = out.as_ref().is_ok_and(|o| o.is_control_flow());
     if out.is_ok() && !is_control_flow {
         storage_guard.commit_ts += 1;
@@ -112,21 +274,43 @@ pub(crate) fn execute_read_without_transaction<C, S>(
     stmt: Statement,
     ctx: &mut ExecutionContext,
     clock: &dyn Clock,
+    active_db: &str,
+    rcsi_enabled: bool,
+    allow_snapshot_isolation: bool,
+    hints_by_table: HashMap<String, TableLockHints>,
 ) -> StmtResult<Option<QueryResult>>
 where
-    C: EngineCatalog,
-    S: EngineStorage,
+    C: EngineCatalog + 'static,
+    S: EngineStorage + 'static,
 {
-    LockTable::acquire_statement_locks(
+    LockTable::acquire_statement_locks_with_hints(
         &state.table_locks,
         session_id,
         tx_manager,
         workspace_slot,
         &stmt,
+        active_db,
+        allow_snapshot_isolation,
+        &hints_by_table,
         session_options.lock_timeout_ms,
         session_options.deadlock_priority,
         &|sid| dispatch_helpers::lookup_session_deadlock_priority(state, sid),
     )?;
+
+    let rt = build_row_lock_runtime(
+        state,
+        session_id,
+        active_db,
+        tx_manager.session_isolation_level,
+        rcsi_enabled,
+        allow_snapshot_isolation,
+        false,
+        0,
+        session_options,
+        hints_by_table,
+        workspace_slot,
+    );
+    ctx.session.extras.row_locks = Some(rt);
 
     if let Statement::Dml(DmlStatement::Select(ref select_stmt)) = stmt {
         if select_stmt.into_table.is_none() {
@@ -143,16 +327,18 @@ where
                 storage: stor,
                 clock,
             };
-            let result = qe.execute_select(
+            let res = qe.execute_select(
                 super::super::query::plan::RelationalQuery::from(*select_stmt),
                 ctx,
-            )?;
+            );
+            ctx.session.extras.row_locks = None;
+            state.table_locks.lock().release_all_for_session(session_id);
+            let result = res?;
             if !result.columns.is_empty() {
                 if let Some(ref sink) = ctx.frame.result_set_sink {
                     sink.lock().push(result.clone());
                 }
             }
-            state.table_locks.lock().release_all_for_session(session_id);
             return Ok(StmtOutcome::Ok(Some(result)));
         }
     }
@@ -161,6 +347,7 @@ where
     let (cat, stor) = storage_guard.get_mut_refs();
     let mut script = create_script_executor(cat, stor, clock);
     let out = script.execute(stmt, ctx);
+    ctx.session.extras.row_locks = None;
     state.table_locks.lock().release_all_for_session(session_id);
     out
 }
@@ -211,6 +398,11 @@ where
         return result;
     }
 
+    let has_writes = !collect_write_tables(&stmt).is_empty();
+    dispatch_helpers::check_and_prepare_database_lifecycle(
+        state, session_id, &stmt, ctx, has_writes,
+    )?;
+
     if session_options.fmtonly {
         if let Statement::Dml(DmlStatement::Select(select_stmt)) = &stmt {
             return execute_fmt_only_select(state, select_stmt, ctx);
@@ -254,16 +446,44 @@ where
         ctx.frame.xact_state = tx_manager.xact_state;
     }
 
+    let active_db = ctx
+        .metadata
+        .database
+        .as_deref()
+        .unwrap_or("master")
+        .to_string();
+    let hints_by_table = collect_and_validate_statement_hints(&stmt, &active_db)?;
+    let (rcsi_enabled, allow_snapshot_isolation, is_user_db) =
+        active_db_isolation_flags(state, &active_db);
+
     let isolation_level = tx_manager
         .active
         .as_ref()
         .map(|tx| tx.isolation_level)
         .unwrap_or(tx_manager.session_isolation_level);
+
+    // SQL Server error 3952: accessing user tables under SNAPSHOT isolation when
+    // ALLOW_SNAPSHOT_ISOLATION is OFF on a user database.
+    if isolation_level == IsolationLevel::Snapshot
+        && is_user_db
+        && !allow_snapshot_isolation
+        && (!collect_read_tables(&stmt).is_empty() || has_writes)
+        && !matches!(&stmt, Statement::Ddl(_))
+    {
+        return Err(DbError::Execution(format!(
+            "Snapshot isolation transaction failed accessing database '{}' because snapshot isolation is not allowed in this database. Use ALTER DATABASE to allow snapshot isolation.",
+            active_db
+        )));
+    }
+
     let is_select = matches!(
         &stmt,
         Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
     );
-    let read_uncommitted_dirty = isolation_level == IsolationLevel::ReadUncommitted && is_select;
+    let nolock_dirty =
+        is_select && all_read_tables_have_nolock(&stmt, &active_db, &hints_by_table);
+    let read_uncommitted_dirty =
+        (isolation_level == IsolationLevel::ReadUncommitted && is_select) || nolock_dirty;
 
     if tx_manager.active.is_some() {
         execute_in_transaction(
@@ -276,6 +496,11 @@ where
             session_options,
             stmt,
             ctx,
+            &active_db,
+            rcsi_enabled,
+            allow_snapshot_isolation,
+            hints_by_table,
+            nolock_dirty,
         )
     } else if read_uncommitted_dirty {
         execute_dirty_read_without_transaction(state, session_id, workspace_slot, stmt, ctx, clock)
@@ -291,6 +516,10 @@ where
                 stmt,
                 ctx,
                 clock,
+                &active_db,
+                rcsi_enabled,
+                allow_snapshot_isolation,
+                hints_by_table,
             )
         } else {
             execute_write_without_transaction(
@@ -302,6 +531,10 @@ where
                 stmt,
                 ctx,
                 clock,
+                &active_db,
+                rcsi_enabled,
+                allow_snapshot_isolation,
+                hints_by_table,
             )
         }
     }
@@ -318,17 +551,25 @@ fn execute_in_transaction<C, S>(
     session_options: &mut SessionOptions,
     stmt: Statement,
     ctx: &mut ExecutionContext,
+    active_db: &str,
+    rcsi_enabled: bool,
+    allow_snapshot_isolation: bool,
+    hints_by_table: HashMap<String, TableLockHints>,
+    nolock_dirty: bool,
 ) -> StmtResult<Option<QueryResult>>
 where
-    C: EngineCatalog,
-    S: EngineStorage,
+    C: EngineCatalog + 'static,
+    S: EngineStorage + 'static,
 {
-    LockTable::acquire_statement_locks(
+    LockTable::acquire_statement_locks_with_hints(
         &state.table_locks,
         session_id,
         tx_manager,
         workspace_slot,
         &stmt,
+        active_db,
+        allow_snapshot_isolation,
+        &hints_by_table,
         session_options.lock_timeout_ms,
         session_options.deadlock_priority,
         &|sid| dispatch_helpers::lookup_session_deadlock_priority(state, sid),
@@ -347,8 +588,14 @@ where
         &stmt,
         Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
     );
-    let read_uncommitted_dirty = isolation_level == IsolationLevel::ReadUncommitted && is_select;
+    let read_uncommitted_dirty =
+        (isolation_level == IsolationLevel::ReadUncommitted && is_select) || nolock_dirty;
     let read_committed_select = isolation_level == IsolationLevel::ReadCommitted && is_select;
+    let savepoint_depth = tx_manager
+        .active
+        .as_ref()
+        .map(|tx| tx.savepoints.len())
+        .unwrap_or(0);
 
     if tx_manager.active.is_none()
         && session_options.implicit_transactions
@@ -368,6 +615,22 @@ where
         ctx.frame.trancount = tx_manager.depth;
         ctx.frame.xact_state = tx_manager.xact_state;
     }
+
+    let rt = build_row_lock_runtime(
+        state,
+        session_id,
+        active_db,
+        isolation_level,
+        rcsi_enabled,
+        allow_snapshot_isolation,
+        true,
+        savepoint_depth,
+        session_options,
+        hints_by_table,
+        workspace_slot,
+    );
+    let acquired_handle = Arc::clone(&rt.acquired_locks);
+    ctx.session.extras.row_locks = Some(rt);
 
     let out = if read_uncommitted_dirty {
         let (mut dirty_catalog, mut dirty_storage) =
@@ -390,6 +653,30 @@ where
             create_script_executor(&mut workspace.catalog, &mut workspace.storage, clock);
         script.execute(stmt.clone(), ctx)
     };
+    ctx.session.extras.row_locks = None;
+
+    let stmt_row_locks = std::mem::take(&mut *acquired_handle.lock());
+    if out.is_ok() {
+        if let Some(workspace) = workspace_slot.as_mut() {
+            workspace.acquired_locks.extend(stmt_row_locks);
+        }
+    } else {
+        release_statement_row_locks(&state.table_locks, session_id, stmt_row_locks);
+    }
+
+    // Error 3960 (SNAPSHOT update conflict) always aborts and rolls back the snapshot transaction.
+    if out.as_ref().is_err_and(|e| e.number() == 3960) {
+        transaction_exec::force_xact_abort(
+            state,
+            session_id,
+            tx_manager,
+            journal,
+            workspace_slot,
+            ctx,
+            session_options,
+        );
+        return out;
+    }
 
     dispatch_helpers::update_transaction_state(
         &out,

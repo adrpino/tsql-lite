@@ -64,6 +64,16 @@ where
                 let canonical_name =
                     super::super::database_catalog::database_name_for_id_in(catalog, database_id)
                         .unwrap_or_else(|| database.clone());
+                let db_opts = catalog.get_database_options(&canonical_name);
+                drop(storage_guard);
+                if db_opts.user_access == 1
+                    && has_other_session_in_database(state, session_id, &canonical_name)
+                {
+                    return Some(Err(DbError::Execution(format!(
+                        "Database '{}' is already open and can only have one user at a time.",
+                        canonical_name
+                    ))));
+                }
                 ctx.metadata.database = Some(canonical_name);
                 Some(Ok(StmtOutcome::Ok(None)))
             }
@@ -189,9 +199,11 @@ where
     let storage_guard = state.storage.read();
     let read_tables = collect_read_tables(stmt);
     for table_def in storage_guard.catalog.get_tables() {
+        let display_schema =
+            super::super::database_catalog::display_schema_name(table_def.schema_or_dbo());
         let tname = format!(
             "{}.{}",
-            normalize_identifier(table_def.schema_or_dbo()),
+            normalize_identifier(display_schema),
             normalize_identifier(&table_def.name)
         );
         if workspace.write_tables.contains(&tname) {
@@ -208,9 +220,11 @@ where
         }
     }
     for table_def in storage_guard.catalog.get_tables() {
+        let display_schema =
+            super::super::database_catalog::display_schema_name(table_def.schema_or_dbo());
         let tname = format!(
             "{}.{}",
-            normalize_identifier(table_def.schema_or_dbo()),
+            normalize_identifier(display_schema),
             normalize_identifier(&table_def.name)
         );
         if workspace.write_tables.contains(&tname) {
@@ -263,6 +277,144 @@ pub(crate) fn update_transaction_state<C, S>(
             session_options,
         );
     } else if out.is_err() {
-        tx_manager.xact_state = -1;
+        // SQL Server error 1222 (lock timeout / NOWAIT) does NOT doom an active transaction
+        // when XACT_ABORT is OFF.
+        if !out.as_ref().is_err_and(|e| e.number() == 1222) {
+            tx_manager.xact_state = -1;
+        }
     }
+}
+
+pub(crate) fn has_other_session_in_database<C, S>(
+    state: &SharedState<C, S>,
+    current_session_id: SessionId,
+    db_name: &str,
+) -> bool
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    let mut other_sids: Vec<SessionId> = state
+        .sessions
+        .iter()
+        .map(|entry| *entry.key())
+        .filter(|&sid| sid != current_session_id)
+        .collect();
+    other_sids.sort_unstable();
+    for sid in other_sids {
+        if let Some(entry) = state.sessions.get(&sid) {
+            if let Some(sess) = entry.value().try_lock() {
+                if sess.current_database.eq_ignore_ascii_case(db_name) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Evicts sibling sessions attached to `db_name` (rolling back any open transactions,
+/// releasing their locks/dirty buffers, and switching their database context to `master`).
+/// Invoked by `ALTER DATABASE [db] SET SINGLE_USER` and `WITH ROLLBACK IMMEDIATE`.
+pub(crate) fn evict_sessions_for_database<C, S>(
+    state: &SharedState<C, S>,
+    current_session_id: SessionId,
+    db_name: &str,
+) where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    let mut other_sids: Vec<SessionId> = state
+        .sessions
+        .iter()
+        .map(|entry| *entry.key())
+        .filter(|&sid| sid != current_session_id)
+        .collect();
+    other_sids.sort_unstable();
+    for sid in other_sids {
+        if let Some(entry) = state.sessions.get(&sid) {
+            let mut sess = entry.value().lock();
+            if sess.current_database.eq_ignore_ascii_case(db_name) {
+                if sess.tx_manager.depth > 0 || sess.workspace.is_some() {
+                    state.table_locks.lock().release_all_for_session(sid);
+                    state.dirty_buffer.lock().clear_session(sid);
+                    state.app_locks.release_transaction_locks(sid);
+                    sess.workspace = None;
+                    sess.tx_manager.active = None;
+                    sess.tx_manager.depth = 0;
+                    sess.tx_manager.xact_state = 0;
+                }
+                sess.current_database = "master".to_string();
+            }
+        }
+    }
+}
+
+/// Checks database-level lifecycle guards before executing DDL/DML:
+/// - Evicts sibling sessions on `ALTER DATABASE ... SET SINGLE_USER` / `WITH ROLLBACK IMMEDIATE`.
+/// - Rejects `DROP DATABASE` with error 3702 if another session is still connected to that DB.
+/// - Rejects writes on a read-only database (e.g. `AS SNAPSHOT OF` or `SET READ_ONLY`) with error 3906.
+pub(crate) fn check_and_prepare_database_lifecycle<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+    stmt: &Statement,
+    ctx: &ExecutionContext,
+    has_writes: bool,
+) -> Result<(), DbError>
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    if let Statement::Ddl(ddl) = stmt {
+        if let crate::ast::DdlStatement::CatalogMetadata(meta) = ddl.as_ref() {
+            match meta.as_ref() {
+                crate::ast::CatalogMetadataAction::AlterDatabase {
+                    name,
+                    options,
+                    rollback_immediate,
+                } => {
+                    let target_db = if name.eq_ignore_ascii_case("CURRENT") {
+                        ctx.metadata.database.as_deref().unwrap_or("master")
+                    } else {
+                        name.as_str()
+                    };
+                    let setting_single_user = options
+                        .iter()
+                        .any(|o| matches!(o, crate::ast::DatabaseOptionChange::UserAccess(1)));
+                    if *rollback_immediate || setting_single_user {
+                        evict_sessions_for_database(state, session_id, target_db);
+                    }
+                    return Ok(());
+                }
+                crate::ast::CatalogMetadataAction::DropDatabase { name, .. } => {
+                    if has_other_session_in_database(state, session_id, name) {
+                        return Err(DbError::Execution(format!(
+                            "Cannot drop database '{}' because it is currently in use.",
+                            name
+                        )));
+                    }
+                    return Ok(());
+                }
+                crate::ast::CatalogMetadataAction::CreateDatabase { .. } => {
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if has_writes {
+        let active_db = ctx.metadata.database.as_deref().unwrap_or("master");
+        let is_read_only = {
+            let guard = state.storage.read();
+            guard.catalog.get_database_options(active_db).is_read_only
+        };
+        if is_read_only {
+            return Err(DbError::Execution(format!(
+                "Failed to update database '{}' because the database is read-only.",
+                active_db
+            )));
+        }
+    }
+    Ok(())
 }

@@ -1,4 +1,15 @@
-use super::harness::{DiffStep, DiffSuite};
+use super::harness::{
+    DiffStep, DiffSuite, MultiSessionDiffSuite, MultiSessionStep, SessionSlot,
+};
+
+pub fn all_multi_session_suites() -> Vec<MultiSessionDiffSuite> {
+    vec![
+        table_locking_hints_multi_session_parity(),
+        rcsi_non_blocking_reads_parity(),
+        snapshot_isolation_mvcc_and_3960_parity(),
+        snapshot_isolation_disallowed_3952_parity(),
+    ]
+}
 
 pub fn all_suites() -> Vec<DiffSuite> {
     vec![
@@ -18,6 +29,8 @@ pub fn all_suites() -> Vec<DiffSuite> {
         catalog_and_metadata_parity(),
         enterprise_result_sets_schemabinding_ddl_triggers_applock_collation(),
         security_governance_and_query_fidelity(),
+        error_number_parity_sql2019(),
+        sp_msforeachtable_test_reset_parity(),
     ]
 }
 
@@ -1397,6 +1410,415 @@ fn security_governance_and_query_fidelity() -> DiffSuite {
                       DROP COLUMN MASTER KEY [CMK_DiffTest];
                       SELECT @cmk_name, @cek_name, @alg, (SELECT COUNT(*) FROM sys.column_master_keys WHERE name = 'CMK_DiffTest');",
                 ordered: true,
+            },
+        ],
+    }
+}
+
+fn error_number_parity_sql2019() -> DiffSuite {
+    DiffSuite {
+        name: "error_number_parity_sql2019",
+        category: "SQL Server Error Numbers",
+        min_sql_version: 15,
+        setup_batches: &[
+            "CREATE TABLE dbo.ErrParents (
+                ParentId INT PRIMARY KEY,
+                Code VARCHAR(5) NOT NULL UNIQUE,
+                Tag VARCHAR(20) NULL,
+                Amount INT NOT NULL CHECK (Amount >= 0)
+            );
+            CREATE UNIQUE INDEX UX_ErrParents_Tag ON dbo.ErrParents(Tag) WHERE Tag IS NOT NULL;
+            CREATE TABLE dbo.ErrChildren (
+                ChildId INT PRIMARY KEY,
+                ParentId INT NOT NULL REFERENCES dbo.ErrParents(ParentId)
+            );
+            INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (1, 'A1', 'T1', 10);
+            INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (2, 'A2', 'T2', 20);",
+        ],
+        steps: &[
+            DiffStep::ExpectErrCode {
+                label: "pk_violation_2627",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (1, 'B1', 'T3', 10);",
+                expected_code: Some(2627),
+            },
+            DiffStep::ExpectErrCode {
+                label: "unique_constraint_violation_2627",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (3, 'A1', 'T3', 10);",
+                expected_code: Some(2627),
+            },
+            DiffStep::ExpectErrCode {
+                label: "unique_index_violation_2601",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (4, 'A4', 'T1', 10);",
+                expected_code: Some(2601),
+            },
+            DiffStep::ExpectErrCode {
+                label: "fk_violation_547",
+                sql: "INSERT INTO dbo.ErrChildren (ChildId, ParentId) VALUES (1, 999);",
+                expected_code: Some(547),
+            },
+            DiffStep::ExpectErrCode {
+                label: "check_constraint_violation_547",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (5, 'A5', 'T5', -1);",
+                expected_code: Some(547),
+            },
+            DiffStep::ExpectErrCode {
+                label: "not_null_violation_515",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (6, NULL, 'T6', 1);",
+                expected_code: Some(515),
+            },
+            DiffStep::ExpectErrCode {
+                label: "string_truncation_2628",
+                sql: "INSERT INTO dbo.ErrParents (ParentId, Code, Tag, Amount) VALUES (7, 'TOO_LONG_CODE', 'T7', 1);",
+                expected_code: Some(2628),
+            },
+            DiffStep::ExpectErrCode {
+                label: "invalid_object_208",
+                sql: "SELECT * FROM dbo.NoSuchTable_ErrTest;",
+                expected_code: Some(208),
+            },
+            DiffStep::ExpectErrCode {
+                label: "invalid_column_207",
+                sql: "SELECT NoSuchCol FROM dbo.ErrParents;",
+                expected_code: Some(207),
+            },
+            DiffStep::ExpectErrCode {
+                label: "divide_by_zero_8134",
+                sql: "SELECT 1 / 0;",
+                expected_code: Some(8134),
+            },
+            DiffStep::ExpectErrCode {
+                label: "conversion_failed_245",
+                sql: "SELECT CAST('not_an_int' AS INT);",
+                expected_code: Some(245),
+            },
+            DiffStep::ExpectErrCode {
+                label: "duplicate_object_2714",
+                sql: "CREATE TABLE dbo.ErrParents (Id INT);",
+                expected_code: Some(2714),
+            },
+            DiffStep::Query {
+                label: "catch_error_number_2601_and_2627_and_2628",
+                sql: "DECLARE @e1 INT = 0, @e2 INT = 0, @e3 INT = 0;
+                      BEGIN TRY INSERT INTO dbo.ErrParents VALUES (1, 'Z1', 'Z1', 1); END TRY BEGIN CATCH SET @e1 = ERROR_NUMBER(); END CATCH;
+                      BEGIN TRY INSERT INTO dbo.ErrParents VALUES (9, 'Z2', 'T1', 1); END TRY BEGIN CATCH SET @e2 = ERROR_NUMBER(); END CATCH;
+                      BEGIN TRY INSERT INTO dbo.ErrParents VALUES (10, '123456', 'Z3', 1); END TRY BEGIN CATCH SET @e3 = ERROR_NUMBER(); END CATCH;
+                      SELECT @e1 AS PkErr, @e2 AS UniqueIdxErr, @e3 AS TruncErr;",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn sp_msforeachtable_test_reset_parity() -> DiffSuite {
+    DiffSuite {
+        name: "sp_msforeachtable_test_reset_parity",
+        category: "Test Reset & Lifecycle",
+        min_sql_version: 15,
+        setup_batches: &[
+            "CREATE TABLE dbo.ResetParents (
+                Id INT PRIMARY KEY,
+                Name NVARCHAR(50) NOT NULL
+            );
+            CREATE TABLE dbo.ResetChildren (
+                Id INT PRIMARY KEY,
+                ParentId INT NOT NULL REFERENCES dbo.ResetParents(Id)
+            );
+            CREATE TABLE dbo.SeedLookup (
+                Code VARCHAR(10) PRIMARY KEY
+            );
+            INSERT INTO dbo.ResetParents VALUES (1, N'Alpha'), (2, N'Beta');
+            INSERT INTO dbo.ResetChildren VALUES (10, 1), (20, 2);
+            INSERT INTO dbo.SeedLookup VALUES ('KEEP');",
+        ],
+        steps: &[
+            DiffStep::ExecOk {
+                label: "msforeachtable_disable_constraints_delete_non_seed_reenable",
+                sql: "EXEC sp_MSforeachtable 'ALTER TABLE ? NOCHECK CONSTRAINT ALL';
+                      EXEC sp_MSforeachtable @command1 = 'DELETE FROM ?', @whereand = 'AND o.name <> ''SeedLookup''';
+                      EXEC sp_MSforeachtable 'ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL';",
+            },
+            DiffStep::Query {
+                label: "msforeachtable_verify_counts_after_reset",
+                sql: "SELECT
+                        (SELECT COUNT(*) FROM dbo.ResetParents) AS Parents,
+                        (SELECT COUNT(*) FROM dbo.ResetChildren) AS Children,
+                        (SELECT COUNT(*) FROM dbo.SeedLookup) AS Seed;",
+                ordered: true,
+            },
+            DiffStep::ExecOk {
+                label: "msforeachtable_custom_replacechar_and_pre_post",
+                sql: "CREATE TABLE dbo.AuditLog (Msg NVARCHAR(50));
+                      EXEC sp_MSforeachtable
+                          @command1 = 'INSERT INTO dbo.AuditLog VALUES (''#'')',
+                          @replacechar = '#',
+                          @whereand = 'AND o.name = ''SeedLookup''',
+                          @precommand = 'INSERT INTO dbo.AuditLog VALUES (''PRE'')',
+                          @postcommand = 'INSERT INTO dbo.AuditLog VALUES (''POST'')';",
+            },
+            DiffStep::Query {
+                label: "msforeachtable_verify_pre_table_post_log",
+                sql: "SELECT Msg FROM dbo.AuditLog ORDER BY Msg;",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn table_locking_hints_multi_session_parity() -> MultiSessionDiffSuite {
+    MultiSessionDiffSuite {
+        name: "table_locking_hints_multi_session_parity",
+        category: "Row-Locking Table Hints",
+        min_sql_version: 15,
+        db_options_batches: &[],
+        setup_batches: &[
+            "CREATE TABLE dbo.JobQueue (
+                Id INT PRIMARY KEY,
+                Status VARCHAR(20) NOT NULL
+            );
+            INSERT INTO dbo.JobQueue VALUES (1, 'Pending'), (2, 'Pending'), (3, 'Pending');",
+        ],
+        steps: &[
+            // Worker A claims job 1 with UPDLOCK, ROWLOCK, READPAST
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "worker_a_claims_first_job",
+                sql: "BEGIN TRAN;
+                      SELECT TOP (1) Id FROM dbo.JobQueue WITH (UPDLOCK, ROWLOCK, READPAST)
+                      WHERE Status = 'Pending' ORDER BY Id;",
+                ordered: true,
+            },
+            // Worker B skips locked job 1 and claims job 2
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "worker_b_skips_job1_claims_job2",
+                sql: "SET LOCK_TIMEOUT 200;
+                      BEGIN TRAN;
+                      SELECT TOP (1) Id FROM dbo.JobQueue WITH (UPDLOCK, ROWLOCK, READPAST)
+                      WHERE Status = 'Pending' ORDER BY Id;",
+                ordered: true,
+            },
+            // Worker B trying to UPDLOCK job 1 directly times out with 1222
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::B,
+                label: "worker_b_updlock_on_job1_times_out_1222",
+                sql: "SELECT Id FROM dbo.JobQueue WITH (UPDLOCK, ROWLOCK) WHERE Id = 1;",
+                expected_code: Some(1222),
+            },
+            // Both workers finish their own disjoint claimed rows and commit
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "worker_a_completes_job1",
+                sql: "UPDATE dbo.JobQueue SET Status = 'Done' WHERE Id = 1; COMMIT TRAN;",
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::B,
+                label: "worker_b_completes_job2",
+                sql: "UPDATE dbo.JobQueue SET Status = 'Done' WHERE Id = 2; COMMIT TRAN;",
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "both_claimed_jobs_committed_cleanly",
+                sql: "SELECT Id, Status FROM dbo.JobQueue ORDER BY Id;",
+                ordered: true,
+            },
+            // Uncommitted UPDATE on job 3: READPAST skips it, NOLOCK sees dirty write, NOWAIT hits 1222
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "session_a_updates_job3_uncommitted",
+                sql: "BEGIN TRAN; UPDATE dbo.JobQueue SET Status = 'Running' WHERE Id = 3;",
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "readpast_skips_uncommitted_updated_row",
+                sql: "SELECT Id, Status FROM dbo.JobQueue WITH (READPAST) ORDER BY Id;",
+                ordered: true,
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "nolock_reads_uncommitted_write",
+                sql: "SELECT Status FROM dbo.JobQueue WITH (NOLOCK) WHERE Id = 3;",
+                ordered: true,
+            },
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::B,
+                label: "nowait_on_locked_row_returns_1222",
+                sql: "SELECT Status FROM dbo.JobQueue WITH (NOWAIT) WHERE Id = 3;",
+                expected_code: Some(1222),
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "session_a_rolls_back_job3",
+                sql: "ROLLBACK TRAN;",
+            },
+            // HOLDLOCK holds shared lock until COMMIT, blocking Session B UPDATE
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "holdlock_reads_job3",
+                sql: "BEGIN TRAN; SELECT Id, Status FROM dbo.JobQueue WITH (HOLDLOCK, ROWLOCK) WHERE Id = 3;",
+                ordered: true,
+            },
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::B,
+                label: "update_blocked_by_holdlock_returns_1222",
+                sql: "UPDATE dbo.JobQueue SET Status = 'Blocked' WHERE Id = 3;",
+                expected_code: Some(1222),
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "session_a_commits_holdlock",
+                sql: "COMMIT TRAN;",
+            },
+            // Conflicting hints rejected on both engines
+            MultiSessionStep::ExpectErr {
+                session: SessionSlot::A,
+                label: "conflicting_nolock_and_holdlock_rejected",
+                sql: "SELECT Id FROM dbo.JobQueue WITH (NOLOCK, HOLDLOCK);",
+            },
+        ],
+    }
+}
+
+fn rcsi_non_blocking_reads_parity() -> MultiSessionDiffSuite {
+    MultiSessionDiffSuite {
+        name: "rcsi_non_blocking_reads_parity",
+        category: "RCSI Isolation",
+        min_sql_version: 15,
+        db_options_batches: &["ALTER DATABASE [{db}] SET READ_COMMITTED_SNAPSHOT ON;"],
+        setup_batches: &[
+            "CREATE TABLE dbo.Accounts (
+                AccountId INT PRIMARY KEY,
+                Balance INT NOT NULL
+            );
+            INSERT INTO dbo.Accounts VALUES (1, 100), (2, 200);",
+        ],
+        steps: &[
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "sys_databases_reports_rcsi_on",
+                sql: "SELECT is_read_committed_snapshot_on FROM sys.databases WHERE database_id = DB_ID();",
+                ordered: true,
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "writer_updates_uncommitted",
+                sql: "BEGIN TRAN; UPDATE dbo.Accounts SET Balance = 500 WHERE AccountId = 1;",
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "rcsi_reader_does_not_block_sees_committed_version",
+                sql: "SET LOCK_TIMEOUT 200; SELECT Balance FROM dbo.Accounts WHERE AccountId = 1;",
+                ordered: true,
+            },
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::B,
+                label: "readcommittedlock_hint_overrides_rcsi_and_blocks_1222",
+                sql: "SELECT Balance FROM dbo.Accounts WITH (READCOMMITTEDLOCK) WHERE AccountId = 1;",
+                expected_code: Some(1222),
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "writer_commits",
+                sql: "COMMIT TRAN;",
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "rcsi_reader_sees_new_committed_version",
+                sql: "SELECT Balance FROM dbo.Accounts WHERE AccountId = 1;",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn snapshot_isolation_mvcc_and_3960_parity() -> MultiSessionDiffSuite {
+    MultiSessionDiffSuite {
+        name: "snapshot_isolation_mvcc_and_3960_parity",
+        category: "SNAPSHOT Isolation",
+        min_sql_version: 15,
+        db_options_batches: &["ALTER DATABASE [{db}] SET ALLOW_SNAPSHOT_ISOLATION ON;"],
+        setup_batches: &[
+            "CREATE TABLE dbo.Accounts (
+                AccountId INT PRIMARY KEY,
+                Balance INT NOT NULL
+            );
+            INSERT INTO dbo.Accounts VALUES (1, 100), (2, 200);",
+        ],
+        steps: &[
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "sys_databases_reports_snapshot_on",
+                sql: "SELECT snapshot_isolation_state, snapshot_isolation_state_desc FROM sys.databases WHERE database_id = DB_ID();",
+                ordered: true,
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "snapshot_reader_starts_tx_and_reads_initial",
+                sql: "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
+                      BEGIN TRAN;
+                      SELECT Balance FROM dbo.Accounts WHERE AccountId = 1;",
+                ordered: true,
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::B,
+                label: "concurrent_writer_commits_without_blocking",
+                sql: "BEGIN TRAN; UPDATE dbo.Accounts SET Balance = 250 WHERE AccountId = 1; COMMIT TRAN;",
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "snapshot_reader_still_sees_tx_start_version",
+                sql: "SELECT Balance FROM dbo.Accounts WHERE AccountId = 1;",
+                ordered: true,
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "snapshot_tx_updates_disjoint_row_ok",
+                sql: "UPDATE dbo.Accounts SET Balance = 999 WHERE AccountId = 2;",
+            },
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::A,
+                label: "snapshot_tx_conflicting_update_fails_3960",
+                sql: "UPDATE dbo.Accounts SET Balance = 999 WHERE AccountId = 1;",
+                expected_code: Some(3960),
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::A,
+                label: "snapshot_tx_aborted_trancount_zero",
+                sql: "SELECT @@TRANCOUNT;",
+                ordered: true,
+            },
+            MultiSessionStep::Query {
+                session: SessionSlot::B,
+                label: "disjoint_row_rolled_back_on_3960_abort",
+                sql: "SELECT AccountId, Balance FROM dbo.Accounts ORDER BY AccountId;",
+                ordered: true,
+            },
+        ],
+    }
+}
+
+fn snapshot_isolation_disallowed_3952_parity() -> MultiSessionDiffSuite {
+    MultiSessionDiffSuite {
+        name: "snapshot_isolation_disallowed_3952_parity",
+        category: "SNAPSHOT Isolation",
+        min_sql_version: 15,
+        db_options_batches: &[],
+        setup_batches: &[
+            "CREATE TABLE dbo.Accounts (AccountId INT PRIMARY KEY, Balance INT NOT NULL);
+             INSERT INTO dbo.Accounts VALUES (1, 100);",
+        ],
+        steps: &[
+            MultiSessionStep::ExpectErrCode {
+                session: SessionSlot::A,
+                label: "snapshot_read_fails_3952_when_not_allowed",
+                sql: "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
+                      BEGIN TRAN;
+                      SELECT Balance FROM dbo.Accounts WHERE AccountId = 1;",
+                expected_code: Some(3952),
+            },
+            MultiSessionStep::ExecOk {
+                session: SessionSlot::A,
+                label: "cleanup_trancount",
+                sql: "IF @@TRANCOUNT > 0 ROLLBACK TRAN;",
             },
         ],
     }

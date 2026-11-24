@@ -17,6 +17,11 @@ pub(crate) struct DatabaseEntry {
     pub name: String,
     pub compatibility_level: u8,
     pub recovery_model: String,
+    pub user_access: u8,
+    pub is_read_only: bool,
+    pub read_committed_snapshot: bool,
+    pub allow_snapshot_isolation: bool,
+    pub source_database_id: Option<i32>,
 }
 
 const BUILTIN_DATABASES: &[DatabaseDef] = &[
@@ -65,11 +70,19 @@ pub(crate) fn is_builtin_database(name: &str) -> bool {
 pub(crate) fn all_databases(catalog: &dyn Catalog) -> Vec<DatabaseEntry> {
     let mut out: Vec<DatabaseEntry> = BUILTIN_DATABASES
         .iter()
-        .map(|db| DatabaseEntry {
-            id: db.id,
-            name: db.name.to_string(),
-            compatibility_level: db.compatibility_level,
-            recovery_model: db.recovery_model.to_string(),
+        .map(|db| {
+            let opts = catalog.get_database_options(db.name);
+            DatabaseEntry {
+                id: db.id,
+                name: db.name.to_string(),
+                compatibility_level: opts.compatibility_level,
+                recovery_model: opts.recovery_model,
+                user_access: opts.user_access,
+                is_read_only: opts.is_read_only,
+                read_committed_snapshot: opts.read_committed_snapshot,
+                allow_snapshot_isolation: opts.allow_snapshot_isolation,
+                source_database_id: opts.source_database_id,
+            }
         })
         .collect();
     for udb in catalog.get_user_databases() {
@@ -78,6 +91,11 @@ pub(crate) fn all_databases(catalog: &dyn Catalog) -> Vec<DatabaseEntry> {
             name: udb.name.clone(),
             compatibility_level: udb.compatibility_level,
             recovery_model: udb.recovery_model.clone(),
+            user_access: udb.user_access,
+            is_read_only: udb.is_read_only,
+            read_committed_snapshot: udb.read_committed_snapshot,
+            allow_snapshot_isolation: udb.allow_snapshot_isolation,
+            source_database_id: udb.source_database_id,
         });
     }
     out

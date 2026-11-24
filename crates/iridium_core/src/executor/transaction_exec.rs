@@ -54,6 +54,7 @@ where
                     write_tables: HashSet::new(),
                     acquired_locks: Vec::new(),
                 });
+                ctx.session.dirty_buffer = Some(std::sync::Arc::clone(&state.dirty_buffer));
                 state.wal_begin(tx_id, &format!("{:?}", tx_manager.session_isolation_level));
                 journal.record(JournalEvent::Begin {
                     isolation_level: tx_manager.session_isolation_level,
@@ -90,14 +91,50 @@ where
 
             let mut storage_guard = state.storage.write();
 
-            let conflicts = detect_conflicts(
-                tx.isolation_level,
-                &workspace.base_table_versions,
-                &workspace.read_tables,
-                &workspace.write_tables,
-                &storage_guard.table_versions,
-            );
+            let active_db = ctx.metadata.database.as_deref().unwrap_or("master");
+            let allow_snapshot_isolation = storage_guard
+                .catalog
+                .get_database_options(active_db)
+                .allow_snapshot_isolation;
+
+            let conflicts = if tx.isolation_level == crate::ast::IsolationLevel::Snapshot
+                && allow_snapshot_isolation
+            {
+                detect_snapshot_row_conflicts(
+                    &workspace.catalog,
+                    &workspace.base_storage,
+                    &workspace.storage,
+                    &storage_guard.storage,
+                )
+            } else {
+                detect_conflicts(
+                    tx.isolation_level,
+                    &workspace.base_table_versions,
+                    &workspace.read_tables,
+                    &workspace.write_tables,
+                    &storage_guard.table_versions,
+                )
+            };
             if conflicts {
+                if tx.isolation_level == crate::ast::IsolationLevel::Snapshot {
+                    drop(storage_guard);
+                    state
+                        .table_locks
+                        .lock()
+                        .release_all_for_session(session_id);
+                    state.dirty_buffer.lock().clear_session(session_id);
+                    ctx.session
+                        .extras
+                        .app_locks
+                        .release_transaction_locks(session_id);
+                    tx_manager.active = None;
+                    tx_manager.depth = 0;
+                    tx_manager.xact_state = 0;
+                    return Err(DbError::Execution(format!(
+                        "Snapshot isolation transaction aborted due to update conflict. You cannot use snapshot isolation to access database '{}' to update, delete, or modify a row that has been modified or deleted by another transaction. Retry the transaction.",
+                        active_db
+                    )));
+                }
                 *workspace_slot = Some(workspace);
                 return Err(DbError::Execution(
                     "transaction conflict detected during COMMIT".into(),
@@ -152,6 +189,7 @@ where
                 .lock()
                 .release_workspace_locks(session_id, &mut tmp_ws, 0);
             state.dirty_buffer.lock().clear_session(session_id);
+            ctx.session.dirty_buffer = None;
             if session_options.cursor_close_on_commit {
                 ctx.session.cursors.clear();
                 *ctx.session.fetch_status = -1;
@@ -245,6 +283,7 @@ where
                         .lock()
                         .release_workspace_locks(session_id, workspace_slot, 0);
                     state.dirty_buffer.lock().clear_session(session_id);
+                    ctx.session.dirty_buffer = None;
                     if session_options.cursor_close_on_commit {
                         ctx.session.cursors.clear();
                         *ctx.session.fetch_status = -1;
@@ -426,4 +465,42 @@ fn map_write_kind(kind: WriteIntentKind) -> WriteKind {
         WriteIntentKind::Delete => WriteKind::Delete,
         WriteIntentKind::Ddl => WriteKind::Ddl,
     }
+}
+
+/// Checks whether any row modified by `workspace_storage` (relative to `base_storage`)
+/// was concurrently modified or deleted in `committed_storage` (relative to `base_storage`).
+fn detect_snapshot_row_conflicts<C: EngineCatalog, S: EngineStorage>(
+    catalog: &C,
+    base_storage: &S,
+    workspace_storage: &S,
+    committed_storage: &S,
+) -> bool {
+    for tbl in catalog.get_tables() {
+        let tid = tbl.id;
+        let Ok(base_iter) = base_storage.scan_rows(tid) else {
+            continue;
+        };
+        let Ok(ws_iter) = workspace_storage.scan_rows(tid) else {
+            continue;
+        };
+        let Ok(cur_iter) = committed_storage.scan_rows(tid) else {
+            continue;
+        };
+        let Ok(base_rows) = base_iter.collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        let Ok(ws_rows) = ws_iter.collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        let Ok(cur_rows) = cur_iter.collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        let common = base_rows.len().min(ws_rows.len()).min(cur_rows.len());
+        for i in 0..common {
+            if ws_rows[i] != base_rows[i] && cur_rows[i] != base_rows[i] {
+                return true;
+            }
+        }
+    }
+    false
 }

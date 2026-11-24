@@ -96,7 +96,18 @@ where
     let buffer = state.dirty_buffer.lock();
     for session_ops in buffer.pending.values() {
         for (table_name, ops) in session_ops {
-            if let Some(def) = merged_catalog.find_table("dbo", table_name) {
+            let def_opt = if let Some((schema, name)) = table_name.split_once('\x02') {
+                merged_catalog.find_table(schema, name)
+            } else {
+                merged_catalog.find_table("dbo", table_name).or_else(|| {
+                    merged_catalog
+                        .get_tables()
+                        .iter()
+                        .find(|t| t.name.eq_ignore_ascii_case(table_name))
+                        .map(|t| t.as_ref())
+                })
+            };
+            if let Some(def) = def_opt {
                 let table_id = def.id;
                 merged_storage.ensure_table(table_id)?;
                 for op in ops {

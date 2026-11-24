@@ -8,8 +8,11 @@ pub(crate) fn enforce_string_length(
 ) -> Result<(), DbError> {
     let max_len = match data_type {
         DataType::Char { len } | DataType::NChar { len } => Some(*len as usize),
-        DataType::VarChar { max_len } | DataType::NVarChar { max_len } => Some(*max_len as usize),
-        DataType::Binary { len } | DataType::VarBinary { max_len: len } => Some(*len as usize),
+        DataType::VarChar { max_len } | DataType::NVarChar { max_len } if *max_len != u16::MAX => {
+            Some(*max_len as usize)
+        }
+        DataType::Binary { len } => Some(*len as usize),
+        DataType::VarBinary { max_len: len } if *len != u16::MAX => Some(*len as usize),
         _ => None,
     };
 

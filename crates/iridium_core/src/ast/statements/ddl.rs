@@ -139,11 +139,31 @@ pub enum CatalogMetadataAction {
     },
     CreateDatabase {
         name: String,
+        #[serde(default)]
+        clone_from: Option<String>,
+        #[serde(default)]
+        as_snapshot: bool,
+    },
+    AlterDatabase {
+        name: String,
+        options: Vec<DatabaseOptionChange>,
+        #[serde(default)]
+        rollback_immediate: bool,
     },
     DropDatabase {
         name: String,
         if_exists: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DatabaseOptionChange {
+    UserAccess(u8), // 0 = MULTI_USER, 1 = SINGLE_USER, 2 = RESTRICTED_USER
+    ReadOnly(bool),
+    ReadCommittedSnapshot(bool),
+    AllowSnapshotIsolation(bool),
+    RecoveryModel(String),
+    CompatibilityLevel(u8),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -13,6 +13,15 @@ fn compute_early_materialize_limit(
     query: &RelationalQuery,
     ctx: &mut ExecutionContext,
 ) -> Option<usize> {
+    if ctx
+        .session
+        .extras
+        .row_locks
+        .as_ref()
+        .is_some_and(|rt| rt.hints_by_table.values().any(|h| h.readpast))
+    {
+        return None;
+    }
     if !query.sort.order_by.is_empty()
         || !query.filter.group_by.is_empty()
         || !query.filter.grouping_sets.is_empty()

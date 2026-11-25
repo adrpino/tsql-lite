@@ -5,7 +5,7 @@
 //! and covers the core Edit Data JSON-RPC methods. The differential harness
 //! (tests/vscode_mssql/tests/edit_data.rs) verifies the file exists; the
 //! engine-side contract is exercised separately by
-//! `crates/iridium_core/tests/edit_data_contract.rs`.
+//! `crates/tsql_lite_core/tests/edit_data_contract.rs`.
 
 use iridium_vscode_mssql_tests::capture_dir;
 

@@ -1,107 +1,95 @@
-# Iridium SQL
+# tsql-lite
 
-> Maintained fork of [celsowm/iridium-sql](https://github.com/celsowm/iridium-sql) with extended T-SQL compatibility, copy-on-write storage/catalog isolation, and performance optimizations.
+An embedded **SQL Server-compatible T-SQL engine** and **TDS 7.4 wire server** written in pure Rust — designed for millisecond local development, CI integration testing, and embedded/WASM workflows without Docker or a full SQL Server installation.
 
-An open SQL Server-compatible database engine with native persistence by default and WASM support for embedding.
+- **163 / 163** live SQL Server 2022 differential parity checks passing (`./scripts/test-compat.sh`)
+- **19 / 19** live `.NET` `Microsoft.Data.SqlClient` + Dapper + EF Core 8 differential checks passing (`./scripts/test-drivers.sh`)
+- **Zero-copy CoW database cloning & isolated snapshots** (`fork_isolated()`, `CREATE DATABASE ... AS CLONE OF` / `AS SNAPSHOT OF`)
+- **Persistent (`redb` + WAL) or pure in-memory (`--memory`) execution**
 
-Iridium SQL is an independent Rust implementation built for application-facing compatibility, local-first persistence, and predictable behavior across native, server, and WASM runtimes.
+---
 
-## What It Is
+## Highlights
 
-- A T-SQL engine with a native TDS server.
-- A persistent database engine by default in native/server mode.
-- A WASM runtime for embedding, browser work, and lightweight local use.
-- A compatibility-driven project with behavior tracked in docs, not implied by the name.
+- **T-SQL Language Surface:** `CREATE/ALTER/DROP` tables, views, stored procedures, scalar/inline/multi-statement TVFs, `AFTER` & `INSTEAD OF` DML triggers, database-level DDL triggers (`EVENTDATA()`), `MERGE` (with error `8672`), `PIVOT`/`UNPIVOT`, recursive CTEs (`MAXRECURSION`), `GROUPING SETS`/`ROLLUP`/`CUBE`, window functions (including SQL Server 2022 named `WINDOW` clauses), `FOR JSON`, `FOR XML` + `.value()`/`.exist()`/`.query()`/`.nodes()`/`.modify()`, `OPENJSON`, `OPENXML`, `GENERATE_SERIES`, temporal tables (`FOR SYSTEM_TIME`), and native scalar/table UDTs.
+- **Strict SQL Server Parity:** Exact error-code parity (`103`, `257`, `515`, `529`, `547`, `1054`, `1205`, `1222`, `1505`, `2601`, `2627`, `2628`, `3702`, `3729`, `3906`, `3952`, `3960`, `4512`, `5074`, `8672`, `9400`/`9436`), verbatim `sys.sql_modules` / `OBJECT_DEFINITION()` / `sp_helptext`, `WITH SCHEMABINDING` creation + drop/alter guards, 128-char/116-char identifier limits, and strict XML well-formedness & implicit-conversion enforcement.
+- **Concurrency, Isolation & Lifecycle:** Row-locking table hints (`UPDLOCK`, `ROWLOCK`, `READPAST`, `HOLDLOCK`, `NOLOCK`, `NOWAIT`, `READCOMMITTEDLOCK`, `XLOCK`, `TABLOCK`/`TABLOCKX`), `READ_COMMITTED_SNAPSHOT` (RCSI) & `SNAPSHOT` MVCC isolation with 3-way row merge & error `3960` conflict abort, deadlock detection (`1205`), `ALTER DATABASE ... SET SINGLE_USER WITH ROLLBACK IMMEDIATE` session eviction, and `sp_MSforeachtable`.
+- **Enterprise Governance:** Multi-database isolation, Row-Level Security (`CREATE SECURITY POLICY` `FILTER` & `BLOCK` predicates), Dynamic Data Masking (`MASKED WITH` + `UNMASK`), and `GRANT`/`DENY`/`REVOKE` + `EXECUTE AS`.
+- **TDS 7.4 Wire Server (`tsql-lite-server`):** TLS 1.3/1.2, MARS (`SMP 0x53`), Transaction Manager (`0x0E`), RPC (`sp_executesql`, `sp_prepare`/`sp_prepexec`/`sp_execute`, cursors, named stored procedures with `OUTPUT` & TVPs), `SqlBulkCopy`, `ATTENTION` cancellation, and SSMS Object Explorer probes.
 
-## Why It Exists
-
-The goal is to provide an open alternative to SQL Server-style workflows without tying the project to a single runtime shape.
-
-That means:
-
-- native/server usage defaults to durable storage on disk
-- `--memory` stays available for ephemeral and test-only scenarios
-- WASM stays memory-first, with explicit checkpoint/export/import flows when persistence is needed
+---
 
 ## Quick Start
 
-Run the server with persistent storage:
+### Embedded Rust (`tsql-lite-core`)
+
+```rust
+use tsql_lite_core::Engine;
+
+let engine = Engine::new();
+engine.exec("CREATE TABLE dbo.Users (Id INT IDENTITY(1,1) PRIMARY KEY, Name NVARCHAR(100) NOT NULL);")?;
+engine.exec("INSERT INTO dbo.Users (Name) VALUES (N'Ada'), (N'Linus');")?;
+
+let result = engine.query("SELECT Id, Name FROM dbo.Users ORDER BY Id;")?;
+assert_eq!(result.rows.len(), 2);
+
+// Instant copy-on-write fork for parallel isolated tests:
+let test_db = engine.fork_isolated();
+```
+
+### Standalone TDS Server (`tsql-lite-server`)
 
 ```bash
-cargo run --package iridium_server --bin iridium-server
+# Persistent storage on disk (default)
+cargo run --release -p tsql-lite-server --bin tsql-lite-server -- --tls-gen
+
+# Ephemeral in-memory mode (for local dev & CI)
+cargo run --release -p tsql-lite-server --bin tsql-lite-server -- --memory --tls-gen
 ```
 
-Run in ephemeral mode:
+Connect with `Microsoft.Data.SqlClient`, Dapper, EF Core 8, `tiberius`, `sqlcmd`, or SSMS on `localhost:1433`.
+
+### WebAssembly (`tsql-lite-wasm`)
 
 ```bash
-cargo run --package iridium_server --bin iridium-server -- --memory
+wasm-pack build crates/tsql_lite_wasm --target web --out-dir crates/tsql_lite_wasm/pkg
 ```
 
-On Windows, persistent data defaults to `%ProgramData%\Iridium SQL\iridium_sql_data`.
-Use `--data-dir <PATH>` to override it, or the portable ZIP's
-`start-iridium-server-portable.cmd` to keep data next to the extracted bundle.
-
-Build the WASM package:
+### Differential Verification Against Live SQL Server 2022
 
 ```bash
-wasm-pack build crates/iridium_wasm --target web --out-dir crates/iridium_wasm/pkg
+./scripts/test-compat.sh    # 163/163 T-SQL & concurrency checks vs live SQL Server 2022
+./scripts/test-drivers.sh   # 19/19 .NET SqlClient + Dapper + EF Core 8 checks
 ```
 
-For Docker, image publishing, and Testcontainers integration, see the [Docker guide](docs/docker.md).
+---
 
-## Minimal Example
+## Workspace Crates
 
-```ts
-import { IridiumDatabase } from "@celsowm/iridium-sql-client";
+| Crate | Path | Purpose |
+|---|---|---|
+| `tsql-lite-core` | `crates/tsql_lite_core` | T-SQL lexer, parser, binder, executor, MVCC/locking, `redb` persistence, catalog |
+| `tsql-lite-server` | `crates/tsql_lite_server` | TDS 7.4 wire server (`tsql-lite-server`, `tsql-lite-healthcheck`) |
+| `tsql-lite-wasm` | `crates/tsql_lite_wasm` | WebAssembly bindings |
 
-const db = await IridiumDatabase.create();
+---
 
-await db.exec(`
-  CREATE TABLE dbo.Users (
-    Id INT IDENTITY(1,1) PRIMARY KEY,
-    Name NVARCHAR(100) NOT NULL
-  )
-`);
+## Documentation
 
-const result = await db.query(`SELECT TOP 1 Name FROM dbo.Users`);
-```
-
-For checkpoint-based persistence in WASM or client flows:
-
-```ts
-const checkpoint = await db.exportCheckpoint();
-const restored = await IridiumDatabase.fromCheckpoint(checkpoint);
-```
-
-## Compatibility
-
-Compatibility is measured, documented, and updated continuously.
-
-- [Frequently Asked Questions (FAQ)](docs/faq.md)
 - [Compatibility Matrix](docs/compatibility-matrix.md)
 - [T-SQL Function Parity Reference](docs/tsql-function-parity.md)
 - [SQL Server Error Parity](docs/error-parity.md)
+- [Docker Guide](docs/docker.md)
+- [FAQ](docs/faq.md)
 
-Current posture:
+---
 
-- SQL Server compatibility is the target, not a claim of total parity.
-- Native/server persistence is the default.
-- WASM support is first-class, but intentionally memory-first.
+## Origin & Attribution
 
-## Project Surface
+`tsql-lite` was originally forked from [celsowm/iridium-sql](https://github.com/celsowm/iridium-sql) (MIT License) at `v0.1.13` and independently evolved with multi-database isolation, row-locking hints, RCSI/SNAPSHOT MVCC, enterprise security (RLS, DDM, DDL triggers), verbatim `sys.sql_modules`, strict SQL Server error/XML/identifier/SCHEMABINDING parity, and live SQL Server 2022 + `.NET` differential verification.
 
-- `crates/iridium_core` - parser, binder, executor, storage, and compatibility logic
-- `crates/iridium_server` - TDS server and playground runtime
-- `crates/iridium_wasm` - WASM bindings
-- `packages/iridium-client` - TypeScript client API
-- `packages/iridium-playground` - browser playground
+Full commit history and original copyright notices are preserved in this repository and in [`LICENSE`](LICENSE).
 
 ## Disclaimer
 
-Iridium SQL is an independent implementation and does not use Microsoft proprietary SQL Server code.
-
-Microsoft and SQL Server are trademarks of Microsoft Corporation. Any mention of SQL Server in this repository is for compatibility and interoperability description only.
-
-## License
-
-MIT
+`tsql-lite` is an independent clean-room Rust implementation and does not contain any proprietary Microsoft SQL Server code. Microsoft and SQL Server are trademarks of Microsoft Corporation and are referenced solely for compatibility and interoperability description.

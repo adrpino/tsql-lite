@@ -4,7 +4,7 @@
 //! the JSON-RPC method names the Table Designer contract relies on (init,
 //! publish, publish variations) are covered. The TDS contract itself is
 //! exercised separately by
-//! `crates/iridium_core/tests/table_designer_contract.rs`.
+//! `crates/tsql_lite_core/tests/table_designer_contract.rs`.
 
 use iridium_vscode_mssql_tests::capture_dir;
 

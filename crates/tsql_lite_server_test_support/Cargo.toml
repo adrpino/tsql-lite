@@ -1,0 +1,20 @@
+[package]
+name = "tsql-lite-server-test-support"
+version.workspace = true
+edition.workspace = true
+description = "Internal test support helpers for tsql-lite-server integration tests"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+keywords = ["sql-server", "tds", "tests"]
+categories = ["database", "development-tools::testing"]
+
+[dependencies]
+tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.0" }
+tsql-lite-server = { path = "../tsql_lite_server", version = "0.3.0" }
+tiberius = { version = "0.12", default-features = false, features = ["tokio", "tds73", "chrono", "rustls"] }
+tokio = { version = "1", features = ["net"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+log = "0.4"
+env_logger = "0.11"

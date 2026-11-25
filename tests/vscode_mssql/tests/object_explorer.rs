@@ -66,7 +66,7 @@ fn object_explorer_capture_covers_create_and_expand() {
 #[test]
 fn object_explorer_capture_path_matches_ssms_oracle_layout() {
     // The SSMS Object Explorer contract test lives at
-    // crates/iridium_server/tests/ssms_object_explorer_contract.rs and replays
+    // crates/tsql_lite_server/tests/ssms_object_explorer_contract.rs and replays
     // raw T-SQL. The vscode-mssql oracle is the JSON-RPC counterpart; both
     // must be present so the matrix can distinguish "SSMS-replay works" from
     // "vscode-mssql JSON-RPC contract works".
@@ -74,7 +74,7 @@ fn object_explorer_capture_path_matches_ssms_oracle_layout() {
     // `CARGO_MANIFEST_DIR` is this crate (tests/vscode_mssql); the workspace
     // root is two levels up (../..).
     let ws_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    let ssms_fixture = ws_root.join("crates/iridium_server/tests/fixtures/ssms_object_explorer_cases.json");
+    let ssms_fixture = ws_root.join("crates/tsql_lite_server/tests/fixtures/ssms_object_explorer_cases.json");
     assert!(
         ssms_fixture.exists(),
         "SSMS Object Explorer fixture missing — expected alongside the vscode-mssql oracle"

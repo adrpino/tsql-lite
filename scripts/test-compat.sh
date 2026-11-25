@@ -72,4 +72,4 @@ SQLSERVER_HOST="${SQLSERVER_HOST:-127.0.0.1}" \
 SQLSERVER_PORT="$PORT" \
 SQLSERVER_USER="${SQLSERVER_USER:-sa}" \
 SQLSERVER_PASSWORD="$PASSWORD" \
-cargo test -p iridium_core --test sqlserver_differential -- --ignored --nocapture "$@"
+cargo test -p tsql-lite-core --test sqlserver_differential -- --ignored --nocapture "$@"

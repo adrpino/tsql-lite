@@ -1,0 +1,44 @@
+[package]
+name = "tsql-lite-server"
+version.workspace = true
+edition.workspace = true
+description = "Standalone TDS 7.4 SQL Server-compatible wire server in pure Rust"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["tds", "sql-server", "tsql", "database", "server"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.0" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+bytes = "1"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+regex = "1"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tiberius = { version = "0.12", default-features = false, features = ["tokio", "tds73", "chrono", "rustls"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "tsql-lite-server"
+path = "bin/main.rs"
+
+[[bin]]
+name = "compat-query"
+path = "bin/compat-query.rs"
+
+[[bin]]
+name = "tsql-lite-healthcheck"
+path = "bin/healthcheck.rs"

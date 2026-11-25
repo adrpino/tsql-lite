@@ -10,8 +10,8 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
-  # iridium-server playground mode for testing with any SQL Server client
-  iridium-playground:
+  # tsql-lite-server playground mode for testing with any SQL Server client
+  tsql-lite-playground:
     build:
       context: .
       dockerfile: Dockerfile

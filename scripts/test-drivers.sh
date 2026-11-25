@@ -40,11 +40,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "1/4 Building iridium-server (release)..."
-cargo build --release -p iridium_server --bin iridium-server
+echo "1/4 Building tsql-lite-server (release)..."
+cargo build --release -p tsql-lite-server --bin tsql-lite-server
 
-echo "2/4 Starting iridium-server on 0.0.0.0:${IRIDIUM_PORT}..."
-RUST_LOG="${RUST_LOG:-warn}" "$REPO_ROOT/target/release/iridium-server" \
+echo "2/4 Starting tsql-lite-server on 0.0.0.0:${IRIDIUM_PORT}..."
+RUST_LOG="${RUST_LOG:-warn}" "$REPO_ROOT/target/release/tsql-lite-server" \
     --memory --tls-gen --host 0.0.0.0 --port "$IRIDIUM_PORT" \
     -u sa -P "$PASSWORD" -d master >"$IRIDIUM_LOG" 2>&1 &
 IRIDIUM_PID=$!

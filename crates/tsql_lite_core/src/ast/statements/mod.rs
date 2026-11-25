@@ -12,9 +12,11 @@ use crate::ast::statements::ddl::*;
 use crate::ast::statements::dml::*;
 use crate::ast::statements::procedural::*;
 use crate::ast::statements::query::*;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum Statement {
     Dml(DmlStatement),
     Ddl(Box<DdlStatement>),
@@ -25,7 +27,8 @@ pub enum Statement {
     WithCte(Box<WithCteStmt>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum DmlStatement {
     Select(Box<SelectStmt>),
     Insert(Box<InsertStmt>),
@@ -39,7 +42,8 @@ pub enum DmlStatement {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum DdlStatement {
     CreateTable(CreateTableStmt),
     CreateIndex(CreateIndexStmt),
@@ -65,7 +69,8 @@ pub enum DdlStatement {
     CatalogMetadata(Box<CatalogMetadataAction>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum ProceduralStatement {
     Declare(Box<DeclareStmt>),
     Set(Box<SetStmt>),
@@ -95,7 +100,8 @@ pub enum ProceduralStatement {
     WaitFor(Box<WaitForStmt>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum TransactionStatement {
     Begin(Option<String>),
     Commit(Option<String>),
@@ -103,7 +109,8 @@ pub enum TransactionStatement {
     Save(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum CursorStatement {
     OpenCursor(String),
     FetchCursor(Box<FetchCursorStmt>),
@@ -111,7 +118,8 @@ pub enum CursorStatement {
     DeallocateCursor(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SessionStatement {
     SetTransactionIsolationLevel(IsolationLevel),
     UseDatabase(String),
@@ -123,7 +131,8 @@ pub enum SessionStatement {
     Checkpoint,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum IsolationLevel {
     ReadUncommitted,
     #[default]
@@ -133,7 +142,8 @@ pub enum IsolationLevel {
     Snapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SessionOption {
     AnsiNulls,
     QuotedIdentifier,
@@ -165,20 +175,23 @@ pub enum SessionOption {
     Unsupported(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SessionOptionValue {
     Bool(bool),
     Int(i64),
     Text(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum RoutineParamType {
     Scalar(DataTypeSpec),
     TableType(crate::ast::ObjectName),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct RoutineParam {
     pub name: String,
     pub param_type: RoutineParamType,
@@ -187,7 +200,8 @@ pub struct RoutineParam {
     pub default: Option<Expr>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SetIdentityInsertStmt {
     pub table: crate::ast::ObjectName,
     pub on: bool,

@@ -11,8 +11,9 @@ use super::super::result::QueryResult;
 use super::super::session::SessionManager;
 use super::super::tooling::{ExecutionTrace, ExplainPlan, SessionOptions};
 use super::persistence::DatabaseInner;
-use super::{CheckpointManager, SqlAnalyzer, StatementExecutor};
-use super::{EngineCatalog, EngineStorage};
+#[cfg(feature = "checkpoint")]
+use super::CheckpointManager;
+use super::{EngineCatalog, EngineStorage, SqlAnalyzer, StatementExecutor};
 
 pub struct EngineInner<C, S>
 where
@@ -51,6 +52,7 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
         }
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn from_checkpoint(payload: &str) -> Result<Self, DbError> {
         let db = DatabaseInner::from_checkpoint(payload)?;
         let default_session = db.session_manager().create_session();
@@ -191,10 +193,12 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
         self.db.set_durability_sink(durability);
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn export_checkpoint(&self) -> Result<String, DbError> {
         self.db.checkpoint_manager().export_checkpoint()
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn import_checkpoint(&self, payload: &str) -> Result<(), DbError> {
         self.db.checkpoint_manager().import_checkpoint(payload)
     }

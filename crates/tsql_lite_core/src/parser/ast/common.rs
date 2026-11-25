@@ -1,7 +1,6 @@
 use super::expressions::Expr;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ObjectName {
     pub database: Option<String>,
     pub schema: Option<String>,
@@ -14,7 +13,7 @@ impl ObjectName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataType {
     Int,
     BigInt,
@@ -53,7 +52,7 @@ pub enum DataType {
     Custom(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpenJsonColumn {
     pub name: String,
     pub data_type: DataType,
@@ -61,7 +60,7 @@ pub struct OpenJsonColumn {
     pub as_json: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TableFactor {
     Named(ObjectName),
     Derived(Box<crate::parser::ast::statements::query::SelectStmt>),
@@ -98,7 +97,7 @@ impl TableFactor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SystemTimeClause {
     AsOf(Expr),
     FromTo(Expr, Expr),
@@ -107,14 +106,13 @@ pub enum SystemTimeClause {
     All,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableRef {
     pub factor: TableFactor,
     pub alias: Option<String>,
     pub pivot: Option<Box<PivotSpec>>,
     pub unpivot: Option<Box<UnpivotSpec>>,
     pub hints: Vec<String>,
-    #[serde(default)]
     pub system_time: Option<Box<SystemTimeClause>>,
 }
 
@@ -135,23 +133,20 @@ impl TableRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PivotSpec {
     pub aggregate_func: String,
     pub aggregate_col: String,
     pub pivot_col: String,
     pub pivot_values: Vec<String>,
-    #[serde(default)]
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnpivotSpec {
     pub value_col: String,
     pub pivot_col: String,
     pub column_list: Vec<String>,
-    #[serde(default)]
     pub alias: Option<String>,
-    #[serde(default)]
     pub source_alias: Option<String>,
 }

@@ -1,8 +1,7 @@
 use super::super::common::{ObjectName, TableRef};
 use super::super::expressions::Expr;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectStmt {
     pub from: Option<TableRef>,
     pub joins: Vec<JoinClause>,
@@ -21,7 +20,7 @@ pub struct SelectStmt {
     pub extra: Option<Box<SelectExtra>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct SelectExtra {
     pub for_xml: Option<ForXmlClause>,
     pub for_json: Option<ForJsonClause>,
@@ -30,7 +29,7 @@ pub struct SelectExtra {
     pub max_recursion: Option<u16>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForXmlClause {
     pub mode: String,
     pub path: Option<String>,
@@ -38,7 +37,7 @@ pub struct ForXmlClause {
     pub type_directive: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForJsonClause {
     pub mode: String,
     pub root: Option<String>,
@@ -46,32 +45,32 @@ pub struct ForJsonClause {
     pub without_array_wrapper: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct JoinClause {
     pub join_type: JoinType,
     pub table: TableRef,
     pub on: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ApplyClause {
     pub apply_type: ApplyType,
     pub table: TableRef,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApplyType {
     Cross,
     Outer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SetOp {
     pub kind: SetOpKind,
     pub right: SelectStmt,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SetOpKind {
     Union,
     UnionAll,
@@ -79,22 +78,20 @@ pub enum SetOpKind {
     Except,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectItem {
     pub expr: Expr,
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TopSpec {
     pub value: Expr,
-    #[serde(default)]
     pub percent: bool,
-    #[serde(default)]
     pub with_ties: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum JoinType {
     Inner,
     Left,
@@ -103,7 +100,7 @@ pub enum JoinType {
     Cross,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OrderByExpr {
     pub expr: Expr,
     pub asc: bool,

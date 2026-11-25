@@ -1,6 +1,8 @@
-﻿use serde::{Deserialize, Serialize};
+﻿#[cfg(feature = "checkpoint")]
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum DataTypeSpec {
     Bit,
     TinyInt,

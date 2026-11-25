@@ -12,7 +12,9 @@ use crate::ast::{IsolationLevel, Statement};
 use crate::catalog::CatalogImpl;
 use crate::error::DbError;
 use crate::storage::InMemoryStorage;
+#[cfg(feature = "checkpoint")]
 use serde::de::DeserializeOwned;
+#[cfg(feature = "checkpoint")]
 use serde::Serialize;
 
 use super::result::QueryResult;
@@ -21,6 +23,7 @@ use super::tooling::{ExecutionTrace, ExplainPlan, SessionOptions};
 use crate::executor::locks::SessionId;
 use std::sync::Arc;
 
+#[cfg(feature = "checkpoint")]
 pub trait CheckpointManager {
     fn export_checkpoint(&self) -> Result<String, DbError>;
     fn import_checkpoint(&self, payload: &str) -> Result<(), DbError>;
@@ -133,16 +136,25 @@ pub trait RandomSeed {
     fn set_session_seed(&self, session_id: SessionId, seed: u64) -> Result<(), DbError>;
 }
 
+#[cfg(feature = "checkpoint")]
 pub trait EngineCatalog:
     crate::catalog::Catalog + Serialize + DeserializeOwned + Clone + 'static + Default
 {
 }
 
+#[cfg(feature = "checkpoint")]
 impl<T> EngineCatalog for T where
     T: crate::catalog::Catalog + Serialize + DeserializeOwned + Clone + 'static + Default
 {
 }
 
+#[cfg(not(feature = "checkpoint"))]
+pub trait EngineCatalog: crate::catalog::Catalog + Clone + 'static + Default {}
+
+#[cfg(not(feature = "checkpoint"))]
+impl<T> EngineCatalog for T where T: crate::catalog::Catalog + Clone + 'static + Default {}
+
+#[cfg(feature = "checkpoint")]
 pub trait EngineStorage:
     crate::storage::Storage
     + crate::storage::CheckpointableStorage
@@ -154,6 +166,7 @@ pub trait EngineStorage:
 {
 }
 
+#[cfg(feature = "checkpoint")]
 impl<T> EngineStorage for T where
     T: crate::storage::Storage
         + crate::storage::CheckpointableStorage
@@ -165,10 +178,23 @@ impl<T> EngineStorage for T where
 {
 }
 
+#[cfg(not(feature = "checkpoint"))]
+pub trait EngineStorage:
+    crate::storage::Storage + crate::storage::CheckpointableStorage + Clone + 'static + Default
+{
+}
+
+#[cfg(not(feature = "checkpoint"))]
+impl<T> EngineStorage for T where
+    T: crate::storage::Storage + crate::storage::CheckpointableStorage + Clone + 'static + Default
+{
+}
+
 pub struct StatementExecutorService<C, S> {
     pub(crate) state: Arc<SharedState<C, S>>,
 }
 
+#[cfg(feature = "checkpoint")]
 pub struct CheckpointManagerService<C, S> {
     pub(crate) state: Arc<SharedState<C, S>>,
 }
@@ -204,6 +230,7 @@ impl Database {
     pub fn new() -> Self {
         Self(DatabaseInner::new())
     }
+    #[cfg(feature = "checkpoint")]
     pub fn from_checkpoint(payload: &str) -> Result<Self, DbError> {
         DatabaseInner::from_checkpoint(payload).map(Self)
     }
@@ -257,6 +284,7 @@ impl Engine {
         Self(EngineInner::new())
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn from_checkpoint(payload: &str) -> Result<Self, DbError> {
         Ok(Self(EngineInner::from_checkpoint(payload)?))
     }
@@ -442,6 +470,7 @@ macro_rules! delegate_db_traits {
                 self.0.session_options(sid)
             }
         }
+        #[cfg(feature = "checkpoint")]
         impl CheckpointManager for $wrapper {
             fn export_checkpoint(&self) -> Result<String, DbError> {
                 self.0.export_checkpoint()

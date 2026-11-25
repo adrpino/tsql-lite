@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::Hash;
 
@@ -9,7 +8,7 @@ macro_rules! define_keywords {
             $variant:ident => $sql:expr
         ),* $(,)?
     ) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum Keyword {
             $( $variant, )*
         }

@@ -1,9 +1,11 @@
 use crate::ast::common::TableRef;
 use crate::ast::expressions::Expr;
 use crate::ast::ObjectName;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SelectStmt {
     pub from_clause: Option<FromNode>,
     pub applies: Vec<ApplyClause>,
@@ -18,19 +20,20 @@ pub struct SelectStmt {
     pub offset: Option<Expr>,
     pub fetch: Option<Expr>,
     pub set_op: Option<Box<SetOpClause>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub extra: Option<Box<SelectExtra>>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SelectExtra {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub for_xml: Option<ForXmlClause>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub for_json: Option<ForJsonClause>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub grouping_sets: Vec<Vec<Expr>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub max_recursion: Option<u16>,
 }
 
@@ -55,7 +58,8 @@ impl SelectStmt {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ForXmlClause {
     pub mode: String,
     pub path: Option<String>,
@@ -63,7 +67,8 @@ pub struct ForXmlClause {
     pub type_directive: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ForJsonClause {
     pub mode: String,
     pub root: Option<String>,
@@ -71,7 +76,8 @@ pub struct ForJsonClause {
     pub without_array_wrapper: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum FromNode {
     Table(TableRef),
     Aliased {
@@ -86,14 +92,16 @@ pub enum FromNode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct JoinClause {
     pub join_type: JoinType,
     pub table: TableRef,
     pub on: Option<Expr>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum JoinType {
     Inner,
     Left,
@@ -102,47 +110,54 @@ pub enum JoinType {
     Cross,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ApplyClause {
     pub apply_type: ApplyType,
     pub subquery: Box<SelectStmt>,
     pub alias: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum ApplyType {
     Cross,
     Outer,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SelectItem {
     pub expr: Expr,
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TopSpec {
     pub value: Expr,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub percent: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub with_ties: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct OrderByExpr {
     pub expr: Expr,
     pub asc: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SetOpClause {
     pub kind: SetOpKind,
     pub right: SelectStmt,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SetOpKind {
     Union,
     UnionAll,
@@ -150,7 +165,8 @@ pub enum SetOpKind {
     Except,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SetOpStmt {
     pub left: Box<crate::ast::Statement>,
     pub op: SetOpKind,

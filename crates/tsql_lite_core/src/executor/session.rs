@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-
 use crate::catalog::Catalog;
 use crate::error::DbError;
 use crate::storage::Storage;
@@ -250,8 +247,8 @@ pub struct SessionRuntime<C, S> {
 
 impl<C, S> SessionRuntime<C, S>
 where
-    C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
-    S: Storage + Serialize + DeserializeOwned + Clone + 'static + Default,
+    C: Catalog + Clone + 'static,
+    S: Storage + Clone + 'static + Default,
 {
     pub(crate) fn new() -> Self {
         Self {
@@ -345,8 +342,8 @@ impl<C, S> SharedState<C, S> {
 
 impl<C, S> SharedState<C, S>
 where
-    C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
-    S: Storage + Serialize + DeserializeOwned + Clone + 'static + Default,
+    C: Catalog + Clone + 'static,
+    S: Storage + Clone + 'static + Default,
 {
     pub fn with_initial(catalog: C, storage: S) -> Self {
         Self {

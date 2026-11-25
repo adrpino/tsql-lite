@@ -10,8 +10,9 @@ keywords = ["sql-server", "tsql", "tds", "database", "embedded"]
 categories = ["database", "web-programming"]
 
 [features]
-default = ["persistence"]
-persistence = ["dep:redb"]
+default = ["checkpoint", "persistence"]
+checkpoint = []
+persistence = ["checkpoint", "dep:redb"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

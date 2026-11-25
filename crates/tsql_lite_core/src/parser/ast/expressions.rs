@@ -1,8 +1,7 @@
 use super::common::DataType;
 use super::statements::query::{OrderByExpr, SelectStmt};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Eq,
     NotEq,
@@ -23,14 +22,14 @@ pub enum BinaryOp {
     Like,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Negate,
     Not,
     BitwiseNot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
     Identifier(String),
     QualifiedIdentifier(Vec<String>),
@@ -116,20 +115,18 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowFunctionExpr {
     pub name: String,
     pub args: Vec<Expr>,
     pub partition_by: Vec<Expr>,
     pub order_by: Vec<OrderByExpr>,
     pub frame: Option<WindowFrame>,
-    #[serde(default)]
     pub ignore_nulls: bool,
-    #[serde(default)]
     pub base_window: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NamedWindowDef {
     pub name: String,
     pub base_window: Option<String>,
@@ -138,7 +135,7 @@ pub struct NamedWindowDef {
     pub frame: Option<WindowFrame>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowFrame {
     pub units: WindowFrameUnits,
     pub extent: WindowFrameExtent,
@@ -150,20 +147,20 @@ impl WindowFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowFrameUnits {
     Rows,
     Range,
     Groups,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WindowFrameExtent {
     Bound(WindowFrameBound),
     Between(WindowFrameBound, WindowFrameBound),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WindowFrameBound {
     UnboundedPreceding,
     Preceding(Option<i64>),
@@ -172,7 +169,7 @@ pub enum WindowFrameBound {
     UnboundedFollowing,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WhenClause {
     pub condition: Expr,
     pub result: Expr,

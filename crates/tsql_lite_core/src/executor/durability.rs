@@ -1,18 +1,23 @@
 use std::collections::HashMap;
+#[cfg(feature = "checkpoint")]
 use std::fs;
 use std::marker::PhantomData;
+#[cfg(feature = "checkpoint")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "checkpoint")]
 use serde::de::DeserializeOwned;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::Catalog;
 use crate::error::DbError;
 use crate::storage::StorageCheckpointData;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(serialize = "C: Serialize"))]
-#[serde(bound(deserialize = "C: DeserializeOwned"))]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "checkpoint", serde(bound(serialize = "C: Serialize")))]
+#[cfg_attr(feature = "checkpoint", serde(bound(deserialize = "C: DeserializeOwned")))]
 pub struct RecoveryCheckpoint<C> {
     pub catalog: C,
     pub storage_data: StorageCheckpointData,
@@ -20,6 +25,7 @@ pub struct RecoveryCheckpoint<C> {
     pub table_versions: HashMap<String, u64>,
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C> RecoveryCheckpoint<C>
 where
     C: Catalog + Serialize + DeserializeOwned,
@@ -79,7 +85,7 @@ impl<C> Default for NoopDurability<C> {
 
 impl<C> DurabilityWriter<C> for NoopDurability<C>
 where
-    C: Catalog + Serialize + DeserializeOwned,
+    C: Catalog,
 {
     fn persist_checkpoint(&mut self, _checkpoint: &RecoveryCheckpoint<C>) -> Result<(), DbError> {
         Ok(())
@@ -92,7 +98,7 @@ where
 
 impl<C> RecoveryReader<C> for NoopDurability<C>
 where
-    C: Catalog + Serialize + DeserializeOwned,
+    C: Catalog,
 {
     fn latest_checkpoint(&self) -> Option<RecoveryCheckpoint<C>> {
         None
@@ -104,6 +110,7 @@ pub struct InMemoryDurability<C> {
     latest: Option<RecoveryCheckpoint<C>>,
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C> InMemoryDurability<C> {
     pub fn latest_json(&self) -> Result<Option<String>, DbError>
     where
@@ -115,7 +122,7 @@ impl<C> InMemoryDurability<C> {
 
 impl<C> DurabilityWriter<C> for InMemoryDurability<C>
 where
-    C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
+    C: Catalog + Clone + 'static,
 {
     fn persist_checkpoint(&mut self, checkpoint: &RecoveryCheckpoint<C>) -> Result<(), DbError> {
         self.latest = Some(checkpoint.clone());
@@ -125,19 +132,21 @@ where
 
 impl<C> RecoveryReader<C> for InMemoryDurability<C>
 where
-    C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
+    C: Catalog + Clone + 'static,
 {
     fn latest_checkpoint(&self) -> Option<RecoveryCheckpoint<C>> {
         self.latest.clone()
     }
 }
 
+#[cfg(feature = "checkpoint")]
 #[derive(Debug)]
 pub struct FileDurability<C> {
     path: PathBuf,
     latest: Option<RecoveryCheckpoint<C>>,
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C> FileDurability<C>
 where
     C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
@@ -156,6 +165,7 @@ where
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C> DurabilityWriter<C> for FileDurability<C>
 where
     C: Catalog + Serialize + DeserializeOwned + Clone + 'static,
@@ -169,6 +179,7 @@ where
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C> RecoveryReader<C> for FileDurability<C>
 where
     C: Catalog + Serialize + DeserializeOwned + Clone + 'static,

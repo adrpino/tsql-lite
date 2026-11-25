@@ -2,9 +2,11 @@ use super::*;
 use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 use crate::types::DataType;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct PrincipalDef {
     pub principal_id: i32,
     pub name: String,
@@ -15,13 +17,15 @@ pub struct PrincipalDef {
     pub is_fixed_role: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct RoleMemberDef {
     pub role_principal_id: i32,
     pub member_principal_id: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct PermissionDef {
     pub class: i32,
     pub class_desc: String,
@@ -36,7 +40,8 @@ pub struct PermissionDef {
     pub state_desc: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct PartitionFunctionDef {
     pub function_id: i32,
     pub name: String,
@@ -45,7 +50,8 @@ pub struct PartitionFunctionDef {
     pub boundary_values: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct PartitionSchemeDef {
     pub data_space_id: i32,
     pub name: String,
@@ -53,7 +59,8 @@ pub struct PartitionSchemeDef {
     pub filegroups: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct FilegroupDef {
     pub data_space_id: i32,
     pub name: String,
@@ -61,21 +68,22 @@ pub struct FilegroupDef {
     pub is_read_only: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct UserDatabaseDef {
     pub id: i32,
     pub name: String,
     pub compatibility_level: u8,
     pub recovery_model: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub user_access: u8,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_read_only: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub read_committed_snapshot: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub allow_snapshot_isolation: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub source_database_id: Option<i32>,
 }
 
@@ -104,7 +112,8 @@ impl Default for DatabaseRuntimeOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ColumnMasterKeyDef {
     pub column_master_key_id: i32,
     pub name: String,
@@ -114,34 +123,39 @@ pub struct ColumnMasterKeyDef {
     pub signature: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ColumnEncryptionKeyValueDef {
     pub column_master_key_id: i32,
     pub encrypted_value: Vec<u8>,
     pub encryption_algorithm_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ColumnEncryptionKeyDef {
     pub column_encryption_key_id: i32,
     pub name: String,
     pub values: Vec<ColumnEncryptionKeyValueDef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct MaskedColumnDef {
     pub table_id: u32,
     pub column_name: String,
     pub masking_function: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SecurityPredicateKind {
     Filter,
     Block,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum SecurityBlockOp {
     /// Applies to all DML writes when no explicit operation is specified.
     All,
@@ -173,7 +187,8 @@ impl SecurityBlockOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SecurityPredicateDef {
     pub predicate_id: i32,
     pub kind: SecurityPredicateKind,
@@ -188,7 +203,8 @@ pub struct SecurityPredicateDef {
     pub target_table: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SecurityPolicyDef {
     pub object_id: i32,
     pub schema_id: u32,

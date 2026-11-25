@@ -1,7 +1,6 @@
 use super::token::Keyword;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Keyword(Keyword),
     Identifier(String),

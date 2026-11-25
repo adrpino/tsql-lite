@@ -2,9 +2,8 @@ use super::super::common::DataType;
 use super::super::common::TableRef;
 use super::super::expressions::Expr;
 use super::query::{JoinClause, SelectStmt};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Statement {
     Dml(DmlStatement),
     Ddl(Box<DdlStatement>),
@@ -18,7 +17,7 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DmlStatement {
     Select(Box<SelectStmt>),
     Insert(Box<InsertStmt>),
@@ -30,7 +29,7 @@ pub enum DmlStatement {
     SelectAssign(Box<SelectAssignStmt>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectAssignStmt {
     pub assignments: Vec<SelectAssignTarget>,
     pub from: Option<TableRef>,
@@ -43,7 +42,7 @@ pub struct SelectAssignStmt {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DdlStatement {
     Create(Box<CreateStmt>),
     AlterTable {
@@ -127,7 +126,7 @@ pub enum DdlStatement {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ProceduralStatement {
     Declare(Vec<DeclareVar>),
     DeclareTableVar {
@@ -214,14 +213,14 @@ pub enum ProceduralStatement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResultSetColumnDef {
     pub name: String,
     pub data_type: crate::parser::ast::DataType,
     pub nullable: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResultSetDef {
     Columns(Vec<ResultSetColumnDef>),
     AsObject(Vec<String>),
@@ -229,14 +228,14 @@ pub enum ResultSetDef {
     AsForXml,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResultSetsClause {
     Undefined,
     None,
     Definitions(Vec<ResultSetDef>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TransactionStatement {
     Begin(Option<String>),
     Commit(Option<String>),
@@ -244,7 +243,7 @@ pub enum TransactionStatement {
     Save(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CursorStatement {
     Open(String),
     Fetch {
@@ -256,7 +255,7 @@ pub enum CursorStatement {
     Deallocate(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SessionStatement {
     SetTransactionIsolationLevel(IsolationLevel),
     UseDatabase(String),
@@ -274,7 +273,7 @@ pub enum SessionStatement {
     Checkpoint,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MergeStmt {
     pub target: TableRef,
     pub source: TableRef,
@@ -285,21 +284,21 @@ pub struct MergeStmt {
     pub output_into_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MergeWhenClause {
     pub when: MergeWhen,
     pub condition: Option<Expr>,
     pub action: MergeAction,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MergeWhen {
     Matched,
     NotMatched,
     NotMatchedBySource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MergeAction {
     Update {
         assignments: Vec<UpdateAssignment>,
@@ -311,14 +310,14 @@ pub enum MergeAction {
     Delete,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CteDef {
     pub name: String,
     pub columns: Vec<String>,
     pub query: SelectStmt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InsertStmt {
     pub table: Vec<String>,
     pub columns: Vec<String>,
@@ -328,7 +327,7 @@ pub struct InsertStmt {
     pub output_into_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InsertSource {
     Values(Vec<Vec<Expr>>),
     Select(Box<SelectStmt>),
@@ -341,14 +340,14 @@ pub enum InsertSource {
     DefaultValues,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BulkInsertStmt {
     pub table: Vec<String>,
     pub from: String,
     pub options: Vec<BulkInsertOption>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BulkInsertOption {
     CheckConstraints,
     FireTriggers,
@@ -364,13 +363,13 @@ pub enum BulkInsertOption {
     ErrorFile(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InsertBulkStmt {
     pub table: Vec<String>,
     pub columns: Vec<ColumnDef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UpdateStmt {
     pub table: TableRef,
     pub assignments: Vec<UpdateAssignment>,
@@ -384,13 +383,13 @@ pub struct UpdateStmt {
     pub output_into_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UpdateAssignment {
     pub column: String,
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DeleteStmt {
     pub table: Vec<String>,
     pub top: Option<Expr>,
@@ -403,14 +402,14 @@ pub struct DeleteStmt {
     pub output_into_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DeclareVar {
     pub name: String,
     pub data_type: DataType,
     pub initial_value: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CreateStmt {
     Table {
         name: Vec<String>,
@@ -452,7 +451,7 @@ pub enum CreateStmt {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RoutineParam {
     pub name: String,
     pub data_type: DataType,
@@ -462,7 +461,7 @@ pub struct RoutineParam {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FunctionBody {
     ScalarReturn(Expr),
     Block(Vec<Statement>),
@@ -479,7 +478,7 @@ pub enum FunctionBody {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColumnDef {
     pub name: String,
     pub data_type: DataType,
@@ -496,13 +495,11 @@ pub struct ColumnDef {
     pub foreign_key: Option<ForeignKeyRef>,
     pub collation: Option<String>,
     pub is_clustered: bool,
-    #[serde(default)]
     pub with_values: bool,
-    #[serde(default)]
     pub masking_function: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ForeignKeyRef {
     pub name: Option<String>,
     pub ref_table: Vec<String>,
@@ -512,7 +509,7 @@ pub struct ForeignKeyRef {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AlterTableAction {
     AddColumn(ColumnDef),
     DropColumn(String),
@@ -548,7 +545,7 @@ pub enum AlterTableAction {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TableConstraint {
     PrimaryKey {
         name: Option<String>,
@@ -587,7 +584,7 @@ pub enum TableConstraint {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReferentialAction {
     NoAction,
     Cascade,
@@ -595,7 +592,7 @@ pub enum ReferentialAction {
     SetDefault,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchDirection {
     Next,
     Prior,
@@ -605,18 +602,18 @@ pub enum FetchDirection {
     Relative(Expr),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndexColumn {
     pub name: String,
     pub is_desc: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IndexOption {
     FillFactor(u8),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CreateIndexStmt {
     pub name: Vec<String>,
     pub table: Vec<String>,
@@ -627,20 +624,20 @@ pub struct CreateIndexStmt {
     pub filter_predicate: Option<Box<Expr>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectAssignTarget {
     pub variable: String,
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExecArg {
     pub name: Option<String>,
     pub expr: Expr,
     pub is_output: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OutputColumn {
     pub source: OutputSource,
     pub column: String,
@@ -649,14 +646,14 @@ pub struct OutputColumn {
     pub is_wildcard: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OutputSource {
     Inserted,
     Deleted,
     Expr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IsolationLevel {
     ReadUncommitted,
     ReadCommitted,
@@ -665,7 +662,7 @@ pub enum IsolationLevel {
     Snapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SessionOption {
     AnsiNulls,
     QuotedIdentifier,
@@ -697,20 +694,20 @@ pub enum SessionOption {
     Unsupported(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SessionOptionValue {
     Bool(bool),
     Int(i64),
     Text(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RoutineParamType {
     Scalar(super::super::data_types::DataTypeSpec),
     TableType(super::super::common::ObjectName),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TriggerEvent {
     Insert,
     Update,

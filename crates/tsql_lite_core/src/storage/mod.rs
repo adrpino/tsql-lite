@@ -26,7 +26,8 @@ pub struct StoredRow {
     pub deleted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum StorageCheckpointData {
     InMemory(HashMap<u32, Vec<StoredRow>>),
     Persistent,
@@ -174,6 +175,7 @@ impl InMemoryStorage {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl Serialize for InMemoryStorage {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
@@ -189,6 +191,7 @@ impl Serialize for InMemoryStorage {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<'de> Deserialize<'de> for InMemoryStorage {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]

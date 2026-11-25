@@ -1,8 +1,10 @@
 use crate::ast::data_types::DataTypeSpec;
 use crate::ast::statements::query::OrderByExpr;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum Expr {
     Identifier(String),
     QualifiedIdentifier(Vec<String>),
@@ -17,7 +19,7 @@ pub enum Expr {
     FunctionCall {
         name: String,
         args: Vec<Expr>,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         within_group: Option<Box<Vec<OrderByExpr>>>,
     },
     Binary {
@@ -87,24 +89,27 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct WindowFunctionExpr {
     pub func: WindowFunc,
     pub args: Vec<Expr>,
     pub partition_by: Vec<Expr>,
     pub order_by: Vec<OrderByExpr>,
     pub frame: Option<WindowFrame>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub ignore_nulls: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct WhenClause {
     pub condition: Expr,
     pub result: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum WindowFunc {
     RowNumber,
     Rank,
@@ -121,26 +126,30 @@ pub enum WindowFunc {
     Aggregate(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct WindowFrame {
     pub units: WindowFrameUnits,
     pub extent: WindowFrameExtent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum WindowFrameUnits {
     Rows,
     Range,
     Groups,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum WindowFrameExtent {
     Bound(WindowFrameBound),
     Between(WindowFrameBound, WindowFrameBound),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum WindowFrameBound {
     UnboundedPreceding,
     Preceding(Option<i64>),
@@ -149,14 +158,16 @@ pub enum WindowFrameBound {
     UnboundedFollowing,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum UnaryOp {
     Negate,
     Not,
     BitwiseNot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum BinaryOp {
     Eq,
     NotEq,

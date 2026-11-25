@@ -2,27 +2,32 @@
 use crate::ast::expressions::Expr;
 use crate::ast::statements::query::SelectStmt;
 use crate::ast::ObjectName;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateTableStmt {
     pub name: ObjectName,
     pub columns: Vec<ColumnSpec>,
     pub table_constraints: Vec<TableConstraintSpec>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateSynonymStmt {
     pub name: ObjectName,
     pub base_object: ObjectName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropSynonymStmt {
     pub name: ObjectName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateSequenceStmt {
     pub name: ObjectName,
     pub data_type: DataTypeSpec,
@@ -33,12 +38,14 @@ pub struct CreateSequenceStmt {
     pub is_cycling: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropSequenceStmt {
     pub name: ObjectName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct AlterSequenceStmt {
     pub name: ObjectName,
     pub restart: Option<Option<i64>>,
@@ -48,7 +55,8 @@ pub struct AlterSequenceStmt {
     pub is_cycling: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum CatalogMetadataAction {
     CreateUser {
         name: String,
@@ -139,15 +147,15 @@ pub enum CatalogMetadataAction {
     },
     CreateDatabase {
         name: String,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         clone_from: Option<String>,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         as_snapshot: bool,
     },
     AlterDatabase {
         name: String,
         options: Vec<DatabaseOptionChange>,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         rollback_immediate: bool,
     },
     DropDatabase {
@@ -156,7 +164,8 @@ pub enum CatalogMetadataAction {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum DatabaseOptionChange {
     UserAccess(u8), // 0 = MULTI_USER, 1 = SINGLE_USER, 2 = RESTRICTED_USER
     ReadOnly(bool),
@@ -166,7 +175,8 @@ pub enum DatabaseOptionChange {
     CompatibilityLevel(u8),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SecurityPredicateSpec {
     pub is_block: bool,
     pub block_op: Option<crate::catalog::SecurityBlockOp>,
@@ -175,7 +185,8 @@ pub struct SecurityPredicateSpec {
     pub target: ObjectName,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum AlterSecurityPolicyAction {
     AddPredicate(SecurityPredicateSpec),
     AlterPredicate(SecurityPredicateSpec),
@@ -187,14 +198,16 @@ pub enum AlterSecurityPolicyAction {
     SetState(bool),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropTableStmt {
     pub name: ObjectName,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub if_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateIndexStmt {
     pub name: ObjectName,
     pub table: ObjectName,
@@ -202,61 +215,70 @@ pub struct CreateIndexStmt {
     pub is_clustered: bool,
     pub columns: Vec<IndexColumnSpec>,
     pub options: Vec<IndexOptionSpec>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub filter_predicate: Option<Box<Expr>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct IndexColumnSpec {
     pub name: String,
     pub is_desc: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum IndexOptionSpec {
     FillFactor(u8),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropIndexStmt {
     pub name: ObjectName,
     pub table: ObjectName,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub if_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateSchemaStmt {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropSchemaStmt {
     pub name: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub if_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct AlterSchemaTransferStmt {
     pub target_schema: String,
     pub entity_type: Option<String>,
     pub source: ObjectName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TruncateTableStmt {
     pub name: ObjectName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct AlterTableStmt {
     pub table: ObjectName,
     pub action: AlterTableAction,
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum AlterTableAction {
     AddColumn(ColumnSpec),
     DropColumn(String),
@@ -267,13 +289,13 @@ pub enum AlterTableAction {
     },
     AddConstraint {
         constraint: TableConstraintSpec,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         with_check: Option<bool>,
     },
     DropConstraint(String),
     CheckConstraint {
         check: bool,
-        #[serde(default)]
+        #[cfg_attr(feature = "checkpoint", serde(default))]
         with_check: Option<bool>,
         name: Option<String>,
     },
@@ -294,51 +316,57 @@ pub enum AlterTableAction {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateViewStmt {
     pub name: ObjectName,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub ctes: Vec<crate::ast::statements::procedural::CteDef>,
     pub query: SelectStmt,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub or_alter: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_schema_bound: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub with_check_option: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub definition_sql: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropViewStmt {
     pub name: ObjectName,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub if_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateTypeStmt {
     pub name: ObjectName,
     pub columns: Vec<ColumnSpec>,
     pub table_constraints: Vec<TableConstraintSpec>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CreateScalarTypeStmt {
     pub name: ObjectName,
     pub base_type: DataTypeSpec,
     pub nullable: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct DropTypeStmt {
     pub name: ObjectName,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub if_exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ColumnSpec {
     pub name: String,
     pub data_type: DataTypeSpec,
@@ -356,13 +384,14 @@ pub struct ColumnSpec {
     pub collation: Option<String>,
     pub is_clustered: bool,
     pub ansi_padding_on: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub with_values: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub masking_function: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum ReferentialAction {
     NoAction,
     Cascade,
@@ -370,7 +399,8 @@ pub enum ReferentialAction {
     SetDefault,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ForeignKeyRef {
     pub name: Option<String>,
     pub referenced_table: ObjectName,
@@ -379,7 +409,8 @@ pub struct ForeignKeyRef {
     pub on_update: Option<ReferentialAction>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum TableConstraintSpec {
     Default {
         name: String,

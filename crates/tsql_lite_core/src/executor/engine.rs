@@ -1,8 +1,10 @@
 use crate::ast;
 use crate::error::DbError;
 
+#[cfg(feature = "checkpoint")]
+pub use super::database::CheckpointManager;
 pub use super::database::{
-    CheckpointManager, Database, DatabaseInner, Engine, EngineInner, SqlAnalyzer, StatementExecutor,
+    Database, DatabaseInner, Engine, EngineInner, SqlAnalyzer, StatementExecutor,
 };
 pub use super::locks::SessionId;
 pub use super::projection::deduplicate_projected_rows;

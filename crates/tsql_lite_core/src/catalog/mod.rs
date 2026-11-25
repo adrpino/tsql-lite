@@ -26,15 +26,18 @@ use crate::ast::{DataTypeSpec, FunctionBody, RoutineParam, Statement, TriggerEve
 use crate::error::DbError;
 use crate::executor::string_norm::normalize_identifier;
 use crate::types::DataType;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SchemaDef {
     pub id: u32,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ForeignKeyDef {
     pub name: String,
     pub columns: Vec<String>,
@@ -42,13 +45,14 @@ pub struct ForeignKeyDef {
     pub referenced_columns: Vec<String>,
     pub on_delete: crate::ast::ReferentialAction,
     pub on_update: crate::ast::ReferentialAction,
-    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_true"))]
     pub enabled: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_not_trusted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct IdentityDef {
     pub seed: i64,
     pub increment: i64,
@@ -71,7 +75,8 @@ impl IdentityDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ColumnDef {
     pub id: u32,
     pub name: String,
@@ -87,23 +92,25 @@ pub struct ColumnDef {
     pub computed_expr: Option<Expr>,
     pub collation: Option<String>,
     pub is_clustered: bool,
-    #[serde(default = "default_ansi_padding_on")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_ansi_padding_on"))]
     pub ansi_padding_on: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_rowversion: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CheckConstraintDef {
     pub name: String,
     pub expr: Expr,
-    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_true"))]
     pub enabled: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_not_trusted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct IndexDef {
     pub id: u32,
     pub schema_id: u32,
@@ -112,11 +119,12 @@ pub struct IndexDef {
     pub column_ids: Vec<u32>,
     pub is_unique: bool,
     pub is_clustered: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub filter_predicate: Option<Box<Expr>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TemporalTableConfig {
     pub table_id: u32,
     pub start_col: String,
@@ -126,7 +134,8 @@ pub struct TemporalTableConfig {
     pub system_versioning: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TableDef {
     pub id: u32,
     pub schema_id: u32,
@@ -144,6 +153,7 @@ impl TableDef {
 }
 
 #[allow(clippy::large_enum_variant)]
+#[cfg(feature = "checkpoint")]
 mod serde_arc {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
@@ -165,10 +175,11 @@ mod serde_arc {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum RoutineKind {
     Procedure {
-        #[serde(with = "serde_arc")]
+        #[cfg_attr(feature = "checkpoint", serde(with = "serde_arc"))]
         body: std::sync::Arc<Vec<Statement>>,
     },
     Function {
@@ -177,23 +188,25 @@ pub enum RoutineKind {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct RoutineDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
     pub params: Vec<RoutineParam>,
     pub kind: RoutineKind,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub definition_sql: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_schema_bound: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TableTypeDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
@@ -201,9 +214,10 @@ pub struct TableTypeDef {
     pub table_constraints: Vec<crate::ast::TableConstraintSpec>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ScalarTypeDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
@@ -211,31 +225,34 @@ pub struct ScalarTypeDef {
     pub nullable: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ViewDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub schema_id: u32,
-    #[serde(with = "serde_arc")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "serde_arc"))]
     pub query: std::sync::Arc<Statement>, // Should be Statement::Select
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub definition_sql: String,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_schema_bound: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub with_check_option: bool,
 }
 
+#[cfg(feature = "checkpoint")]
 fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TriggerDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
@@ -243,21 +260,22 @@ pub struct TriggerDef {
     pub table_name: String,
     pub events: Vec<TriggerEvent>,
     pub is_instead_of: bool,
-    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_true"))]
     pub enabled: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub is_database_scope: bool,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub ddl_events: Vec<String>,
-    #[serde(with = "serde_arc")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "serde_arc"))]
     pub body: std::sync::Arc<Vec<Statement>>,
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub definition_sql: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SynonymDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
@@ -292,6 +310,7 @@ impl Clone for SeqCounter {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl Serialize for SeqCounter {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -301,6 +320,7 @@ impl Serialize for SeqCounter {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<'de> Deserialize<'de> for SeqCounter {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -310,9 +330,10 @@ impl<'de> Deserialize<'de> for SeqCounter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SequenceDef {
-    #[serde(default)]
+    #[cfg_attr(feature = "checkpoint", serde(default))]
     pub object_id: i32,
     pub schema: String,
     pub name: String,
@@ -325,7 +346,8 @@ pub struct SequenceDef {
     pub is_cycling: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ExtendedPropertyDef {
     pub class: i32,
     pub class_desc: String,
@@ -706,6 +728,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "checkpoint")]
 mod atomic_u32_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -726,6 +749,7 @@ mod atomic_u32_serde {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 mod atomic_i32_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -746,6 +770,7 @@ mod atomic_i32_serde {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 mod atomic_u64_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -770,6 +795,7 @@ fn default_next_rowversion() -> Arc<AtomicU64> {
     Arc::new(AtomicU64::new(1))
 }
 
+#[cfg(feature = "checkpoint")]
 mod arc_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
@@ -791,72 +817,73 @@ mod arc_serde {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CatalogImpl {
     schemas: CowRegistry<String, SchemaDef>,
     tables: CowRegistry<(u32, String), TableDef>,
     indexes: CowRegistry<(u32, u32, String), IndexDef>,
     routines: CowRegistry<(String, String), RoutineDef>,
-    #[serde(with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "arc_serde"))]
     table_types: Arc<Vec<TableTypeDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     scalar_types: Arc<Vec<ScalarTypeDef>>,
     views: CowRegistry<(String, String), ViewDef>,
     triggers: CowRegistry<(String, String), TriggerDef>,
-    #[serde(with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "arc_serde"))]
     synonyms: Arc<Vec<SynonymDef>>,
-    #[serde(with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "arc_serde"))]
     sequences: Arc<Vec<SequenceDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     extended_properties: Arc<Vec<ExtendedPropertyDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     principals: Arc<Vec<PrincipalDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     role_members: Arc<Vec<RoleMemberDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     permissions: Arc<Vec<PermissionDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     partition_functions: Arc<Vec<PartitionFunctionDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     partition_schemes: Arc<Vec<PartitionSchemeDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     filegroups: Arc<Vec<FilegroupDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     table_large_value_out_of_row: Arc<Vec<u32>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     masked_columns: Arc<Vec<MaskedColumnDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     column_master_keys: Arc<Vec<ColumnMasterKeyDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     column_encryption_keys: Arc<Vec<ColumnEncryptionKeyDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     user_databases: Arc<Vec<UserDatabaseDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     builtin_db_options: Arc<Vec<UserDatabaseDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     security_policies: Arc<Vec<SecurityPolicyDef>>,
-    #[serde(default, with = "arc_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default, with = "arc_serde"))]
     temporal_tables: Arc<Vec<TemporalTableConfig>>,
-    #[serde(with = "atomic_u32_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "atomic_u32_serde"))]
     next_schema_id: Arc<AtomicU32>,
-    #[serde(with = "atomic_u32_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "atomic_u32_serde"))]
     next_table_id: Arc<AtomicU32>,
-    #[serde(with = "atomic_u32_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "atomic_u32_serde"))]
     next_column_id: Arc<AtomicU32>,
-    #[serde(with = "atomic_u32_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(with = "atomic_u32_serde"))]
     next_index_id: Arc<AtomicU32>,
-    #[serde(default = "default_next_object_id", with = "atomic_i32_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_next_object_id", with = "atomic_i32_serde"))]
     next_object_id: Arc<AtomicI32>,
-    #[serde(default = "default_next_rowversion", with = "atomic_u64_serde")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_next_rowversion", with = "atomic_u64_serde"))]
     next_rowversion: Arc<AtomicU64>,
 
-    #[serde(skip)]
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
     type_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
     scalar_type_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
     synonym_map: Arc<HashMap<(String, String), usize>>,
-    #[serde(skip)]
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
     sequence_map: Arc<HashMap<(String, String), usize>>,
 }
 
@@ -1019,10 +1046,12 @@ impl Default for CatalogImpl {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 fn default_next_object_id() -> Arc<AtomicI32> {
     Arc::new(AtomicI32::new(-1))
 }
 
+#[cfg(feature = "checkpoint")]
 fn default_ansi_padding_on() -> bool {
     true
 }
@@ -1627,8 +1656,11 @@ impl Catalog for CatalogImpl {
             }
         }
 
+        #[cfg(feature = "checkpoint")]
         let src_prefix = crate::executor::database_catalog::db_schema_prefix(source_db);
+        #[cfg(feature = "checkpoint")]
         let tgt_prefix = crate::executor::database_catalog::db_schema_prefix(&target_db);
+        #[cfg(feature = "checkpoint")]
         let remap_serde_prefixes = |val: &mut serde_json::Value| {
             fn walk(v: &mut serde_json::Value, src_p: &str, tgt_p: &str) {
                 match v {
@@ -1666,6 +1698,7 @@ impl Catalog for CatalogImpl {
             .collect();
         for mut v in src_views {
             v.schema = remap_schema(&v.schema);
+            #[cfg(feature = "checkpoint")]
             if let Ok(mut jv) = serde_json::to_value(&*v.query) {
                 remap_serde_prefixes(&mut jv);
                 if let Ok(remapped) = serde_json::from_value::<Statement>(jv) {
@@ -1684,6 +1717,7 @@ impl Catalog for CatalogImpl {
             .collect();
         for mut r in src_routines {
             r.schema = remap_schema(&r.schema);
+            #[cfg(feature = "checkpoint")]
             if let Ok(mut jv) = serde_json::to_value(&r.kind) {
                 remap_serde_prefixes(&mut jv);
                 if let Ok(remapped) = serde_json::from_value::<RoutineKind>(jv) {
@@ -1703,6 +1737,7 @@ impl Catalog for CatalogImpl {
         for mut tr in src_triggers {
             tr.schema = remap_schema(&tr.schema);
             tr.table_schema = remap_schema(&tr.table_schema);
+            #[cfg(feature = "checkpoint")]
             if let Ok(mut jv) = serde_json::to_value(&*tr.body) {
                 remap_serde_prefixes(&mut jv);
                 if let Ok(remapped) = serde_json::from_value::<Vec<Statement>>(jv) {

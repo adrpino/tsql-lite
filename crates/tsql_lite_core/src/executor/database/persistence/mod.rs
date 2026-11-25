@@ -14,12 +14,14 @@ use crate::executor::wal::{Lsn, WalRecord};
 use super::super::durability::RecoveryReader;
 use super::super::durability::{DurabilitySink, RecoveryCheckpoint};
 use super::super::session::{SharedState, SharedStorage};
+#[cfg(feature = "checkpoint")]
+use super::CheckpointManager as CheckpointManagerTrait;
 use super::{
-    CheckpointManager as CheckpointManagerTrait, EngineCatalog, EngineStorage,
-    RandomSeed as RandomSeedTrait, SqlAnalyzer as SqlAnalyzerTrait,
+    EngineCatalog, EngineStorage, RandomSeed as RandomSeedTrait, SqlAnalyzer as SqlAnalyzerTrait,
     StatementExecutor as StatementExecutorTrait,
 };
 
+#[cfg(feature = "checkpoint")]
 mod checkpoint;
 mod session;
 
@@ -129,6 +131,7 @@ where
         }
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn from_checkpoint(payload: &str) -> Result<Self, DbError> {
         let checkpoint = RecoveryCheckpoint::<C>::from_json(payload)?;
         let state = SharedState::from_checkpoint_internal(checkpoint);
@@ -184,6 +187,7 @@ where
         }
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn checkpoint_manager(&self) -> super::CheckpointManagerService<C, S> {
         super::CheckpointManagerService {
             state: self.inner.clone(),
@@ -301,10 +305,12 @@ where
         self.analyzer().session_options(session_id)
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn export_checkpoint(&self) -> Result<String, DbError> {
         self.checkpoint_manager().export_checkpoint()
     }
 
+    #[cfg(feature = "checkpoint")]
     pub fn import_checkpoint(&self, payload: &str) -> Result<(), DbError> {
         self.checkpoint_manager().import_checkpoint(payload)
     }
@@ -508,6 +514,7 @@ where
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<C, S> super::CheckpointManager for DatabaseInner<C, S>
 where
     C: EngineCatalog,

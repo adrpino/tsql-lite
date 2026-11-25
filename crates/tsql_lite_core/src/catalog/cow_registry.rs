@@ -1,3 +1,4 @@
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -365,6 +366,7 @@ impl<K: Eq + Hash, V> CowRegistry<K, V> {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<K, V: Serialize> Serialize for CowRegistry<K, V> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -380,6 +382,7 @@ impl<K, V: Serialize> Serialize for CowRegistry<K, V> {
     }
 }
 
+#[cfg(feature = "checkpoint")]
 impl<'de, K, V: Deserialize<'de>> Deserialize<'de> for CowRegistry<K, V> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

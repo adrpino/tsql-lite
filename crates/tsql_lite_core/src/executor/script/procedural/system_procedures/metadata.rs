@@ -440,7 +440,7 @@ pub(crate) fn execute_sp_tables(exec: &mut ScriptExecutor<'_>) -> Result<QueryRe
         .iter()
         .map(|t| {
             vec![
-                Value::VarChar("iridium_sql".into()),
+                Value::VarChar("tsql_lite".into()),
                 Value::VarChar("dbo".into()),
                 Value::VarChar(t.name.clone()),
                 Value::VarChar("TABLE".into()),

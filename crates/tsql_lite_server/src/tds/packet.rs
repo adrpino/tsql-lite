@@ -377,8 +377,8 @@ impl<'a> PacketReader<'a> {
         let byte_count = char_count * 2;
         let bytes = self.read_bytes(byte_count)?;
         let mut u16s = Vec::with_capacity(char_count);
-        for chunk in bytes.chunks_exact(2) {
-            u16s.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+        for &chunk in bytes.as_chunks::<2>().0 {
+            u16s.push(u16::from_le_bytes(chunk));
         }
         Ok(String::from_utf16_lossy(&u16s))
     }

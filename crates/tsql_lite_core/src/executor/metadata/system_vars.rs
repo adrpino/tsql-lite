@@ -88,7 +88,7 @@ static SYSTEM_VARIABLES: &[SystemVariable] = &[
         name: "@@VERSION",
         handler: |_| {
             Value::NVarChar(
-                "Microsoft SQL Server 2022 (RTM) - 16.0.1000.6 (iridium_sql emulator)".into(),
+                "Microsoft SQL Server 2022 (RTM) - 16.0.1000.6 (tsql_lite emulator)".into(),
             )
         },
     },

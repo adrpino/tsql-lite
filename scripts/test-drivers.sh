@@ -6,18 +6,18 @@ cd "$REPO_ROOT"
 
 # Portable containerized differential driver compatibility suite.
 # Runs real Microsoft.Data.SqlClient + Dapper inside mcr.microsoft.com/dotnet/sdk:8.0
-# against BOTH a live SQL Server 2022 container (ground-truth oracle) and iridium-server.
+# against BOTH a live SQL Server 2022 container (ground-truth oracle) and tsql-lite-server.
 # Requires only Docker or Podman + Rust (no local .NET SDK needed).
 
 SQLSERVER_IMAGE="${SQLSERVER_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}"
 DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:8.0}"
-PASSWORD="${SQLSERVER_PASSWORD:-IridiumTest!2026}"
-IRIDIUM_PORT="${IRIDIUM_DRIVER_TEST_PORT:-14433}"
-NET_NAME="iridium_drv_net_$$"
-SQL_CONTAINER="iridium_drv_sqlserver_$$"
-NUGET_VOL="iridium_drv_nuget_cache"
-IRIDIUM_PID=""
-IRIDIUM_LOG="/tmp/iridium_drv_server_$$.log"
+PASSWORD="${SQLSERVER_PASSWORD:-TsqlLiteTest!2026}"
+TSQL_LITE_PORT="${TSQL_LITE_DRIVER_TEST_PORT:-14433}"
+NET_NAME="tsql_lite_drv_net_$$"
+SQL_CONTAINER="tsql_lite_drv_sqlserver_$$"
+NUGET_VOL="tsql_lite_drv_nuget_cache"
+TSQL_LITE_PID=""
+TSQL_LITE_LOG="/tmp/tsql_lite_drv_server_$$.log"
 RUNTIME=""
 
 if command -v docker >/dev/null 2>&1; then
@@ -30,27 +30,27 @@ else
 fi
 
 cleanup() {
-    if [ -n "$IRIDIUM_PID" ]; then
-        kill "$IRIDIUM_PID" 2>/dev/null || true
-        wait "$IRIDIUM_PID" 2>/dev/null || true
+    if [ -n "$TSQL_LITE_PID" ]; then
+        kill "$TSQL_LITE_PID" 2>/dev/null || true
+        wait "$TSQL_LITE_PID" 2>/dev/null || true
     fi
     "$RUNTIME" rm -f "$SQL_CONTAINER" >/dev/null 2>&1 || true
     "$RUNTIME" network rm "$NET_NAME" >/dev/null 2>&1 || true
-    rm -f "$IRIDIUM_LOG"
+    rm -f "$TSQL_LITE_LOG"
 }
 trap cleanup EXIT
 
 echo "1/4 Building tsql-lite-server (release)..."
 cargo build --release -p tsql-lite-server --bin tsql-lite-server
 
-echo "2/4 Starting tsql-lite-server on 0.0.0.0:${IRIDIUM_PORT}..."
+echo "2/4 Starting tsql-lite-server on 0.0.0.0:${TSQL_LITE_PORT}..."
 RUST_LOG="${RUST_LOG:-warn}" "$REPO_ROOT/target/release/tsql-lite-server" \
-    --memory --tls-gen --host 0.0.0.0 --port "$IRIDIUM_PORT" \
-    -u sa -P "$PASSWORD" -d master >"$IRIDIUM_LOG" 2>&1 &
-IRIDIUM_PID=$!
+    --memory --tls-gen --host 0.0.0.0 --port "$TSQL_LITE_PORT" \
+    -u sa -P "$PASSWORD" -d master >"$TSQL_LITE_LOG" 2>&1 &
+TSQL_LITE_PID=$!
 
 for attempt in $(seq 1 30); do
-    if nc -z 127.0.0.1 "$IRIDIUM_PORT" >/dev/null 2>&1; then
+    if nc -z 127.0.0.1 "$TSQL_LITE_PORT" >/dev/null 2>&1; then
         break
     fi
     sleep 0.2
@@ -95,7 +95,7 @@ if [ "$(uname -s)" = "Linux" ]; then
 fi
 
 ORACLE_CONN="Server=sqlserver,1433;Database=master;User Id=sa;Password=${PASSWORD};Encrypt=True;TrustServerCertificate=True;"
-IRIDIUM_CONN="Server=host.docker.internal,${IRIDIUM_PORT};Database=master;User Id=sa;Password=${PASSWORD};Encrypt=True;TrustServerCertificate=True;"
+IRIDIUM_CONN="Server=host.docker.internal,${TSQL_LITE_PORT};Database=master;User Id=sa;Password=${PASSWORD};Encrypt=True;TrustServerCertificate=True;"
 
 echo "4/4 Running containerized .NET Microsoft.Data.SqlClient + Dapper suite..."
 "$RUNTIME" run --rm \

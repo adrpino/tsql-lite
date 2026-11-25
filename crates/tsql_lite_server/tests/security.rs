@@ -113,8 +113,8 @@ async fn test_auth_accept() {
 fn temp_cert_paths(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let dir = std::env::temp_dir();
     let pid = std::process::id();
-    let cert = dir.join(format!("iridium_test_{}_{}.crt", tag, pid));
-    let key = dir.join(format!("iridium_test_{}_{}.key", tag, pid));
+    let cert = dir.join(format!("tsql_lite_test_{}_{}.crt", tag, pid));
+    let key = dir.join(format!("tsql_lite_test_{}_{}.key", tag, pid));
     tsql_lite_server::tls::generate_self_signed_cert(cert.to_str().unwrap(), key.to_str().unwrap())
         .expect("generate self-signed cert");
     (cert, key)

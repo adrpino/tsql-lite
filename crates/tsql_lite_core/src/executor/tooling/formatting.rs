@@ -241,7 +241,6 @@ pub(crate) fn format_expr(expr: &Expr) -> String {
                 func,
                 partition_by,
                 order_by,
-                frame: _,
                 ..
             } = wf.as_ref();
             let func_name_owned: String;

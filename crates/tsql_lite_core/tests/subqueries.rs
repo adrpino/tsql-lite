@@ -45,7 +45,7 @@ fn col_str(row: &[Value], idx: usize) -> String {
         Value::NVarChar(s) => s.clone(),
         Value::Char(s) => s.clone(),
         Value::NChar(s) => s.clone(),
-        _ => panic!("expected string at index {}, got {:?}", idx, &row[idx]),
+        _ => panic!("expected string at index {}, got {:?}", idx, row[idx]),
     }
 }
 
@@ -59,7 +59,7 @@ fn col_num(row: &[Value], idx: usize) -> i64 {
             let divisor = 10i128.pow(*scale as u32);
             (*raw / divisor) as i64
         }
-        _ => panic!("expected number at index {}, got {:?}", idx, &row[idx]),
+        _ => panic!("expected number at index {}, got {:?}", idx, row[idx]),
     }
 }
 

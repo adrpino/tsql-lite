@@ -348,10 +348,10 @@ fn test_ssms_database_info_probe_with_master_files_df_alias() {
     let mut engine = Engine::new();
     let r = query(
         &mut engine,
-        "SELECT dtb.name AS [Name], ISNULL(df.physical_name, N'') AS [PrimaryFilePath] FROM master.sys.databases AS dtb LEFT OUTER JOIN sys.master_files AS df ON df.database_id = dtb.database_id and 1=df.data_space_id and 1 = df.file_id WHERE dtb.name = N'iridium_sql'",
+        "SELECT dtb.name AS [Name], ISNULL(df.physical_name, N'') AS [PrimaryFilePath] FROM master.sys.databases AS dtb LEFT OUTER JOIN sys.master_files AS df ON df.database_id = dtb.database_id and 1=df.data_space_id and 1 = df.file_id WHERE dtb.name = N'tsql_lite'",
     );
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(r.rows[0][0], Value::VarChar("iridium_sql".to_string()));
+    assert_eq!(r.rows[0][0], Value::VarChar("tsql_lite".to_string()));
 }
 
 #[test]
@@ -382,7 +382,7 @@ fn test_has_dbaccess_for_master() {
     let mut engine = Engine::new();
     let r = query(
         &mut engine,
-        "SELECT HAS_DBACCESS('master') AS has_master, HAS_DBACCESS('msdb') AS has_msdb, HAS_DBACCESS('iridium_sql') AS has_iridium_sql",
+        "SELECT HAS_DBACCESS('master') AS has_master, HAS_DBACCESS('msdb') AS has_msdb, HAS_DBACCESS('tsql_lite') AS has_tsql_lite",
     );
     assert_eq!(r.rows[0][0], Value::Int(1));
     assert_eq!(r.rows[0][1], Value::Int(1));

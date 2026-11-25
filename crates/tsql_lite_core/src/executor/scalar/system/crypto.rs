@@ -216,7 +216,7 @@ const PASSPHRASE_NONCE_LEN: usize = 12;
 
 fn derive_passphrase_key(passphrase: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"iridium-passphrase-v1:");
+    hasher.update(b"tsql-lite-passphrase-v1:");
     for u in passphrase.encode_utf16() {
         hasher.update(u.to_le_bytes());
     }

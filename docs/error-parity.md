@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document records the current state of error handling in Iridium SQL and how it compares to SQL Server.
+This document records the current state of error handling in tsql-lite and how it compares to SQL Server.
 
 The short version:
 
@@ -12,7 +12,7 @@ The short version:
 
 ## Custom Errors
 
-Iridium SQL supports explicit custom errors through [`DbError::Custom`](../crates/iridium_core/src/error.rs).
+tsql-lite supports explicit custom errors through [`DbError::Custom`](../crates/tsql_lite_core/src/error.rs).
 
 That variant carries:
 
@@ -74,12 +74,12 @@ If a failure does not have a good SQL Server match yet:
 
 ## Related Files
 
-- [`crates/iridium_core/src/error.rs`](../crates/iridium_core/src/error.rs)
-- [`crates/iridium_core/tests/sqlserver_differential.rs`](../crates/iridium_core/tests/sqlserver_differential.rs) (`error_number_parity_sql2019`, `table_locking_hints_multi_session_parity`, `snapshot_isolation_mvcc_and_3960_parity`, `snapshot_isolation_disallowed_3952_parity`)
-- [`crates/iridium_server/tests/test_db_lifecycle_teardown.rs`](../crates/iridium_server/tests/test_db_lifecycle_teardown.rs)
-- [`crates/iridium_core/tests/try_catch_test.rs`](../crates/iridium_core/tests/try_catch_test.rs)
-- [`crates/iridium_core/tests/procedural_edge_cases.rs`](../crates/iridium_core/tests/procedural_edge_cases.rs)
-- [`crates/iridium_core/tests/sqlserver_comparison.rs`](../crates/iridium_core/tests/sqlserver_comparison.rs)
+- [`crates/tsql_lite_core/src/error.rs`](../crates/tsql_lite_core/src/error.rs)
+- [`crates/tsql_lite_core/tests/sqlserver_differential.rs`](../crates/tsql_lite_core/tests/sqlserver_differential.rs) (`error_number_parity_sql2019`, `table_locking_hints_multi_session_parity`, `snapshot_isolation_mvcc_and_3960_parity`, `snapshot_isolation_disallowed_3952_parity`)
+- [`crates/tsql_lite_server/tests/test_db_lifecycle_teardown.rs`](../crates/tsql_lite_server/tests/test_db_lifecycle_teardown.rs)
+- [`crates/tsql_lite_core/tests/try_catch_test.rs`](../crates/tsql_lite_core/tests/try_catch_test.rs)
+- [`crates/tsql_lite_core/tests/procedural_edge_cases.rs`](../crates/tsql_lite_core/tests/procedural_edge_cases.rs)
+- [`crates/tsql_lite_core/tests/sqlserver_comparison.rs`](../crates/tsql_lite_core/tests/sqlserver_comparison.rs)
 
 ## Status
 

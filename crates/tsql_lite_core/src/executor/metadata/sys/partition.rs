@@ -319,9 +319,8 @@ impl VirtualTable for SysAllocationUnits {
     fn rows(&self, catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
         let partitions = SysPartitions;
         let mut rows = Vec::new();
-        let mut au_id = 72057594045000000i64;
 
-        for p_row in partitions.rows(catalog, _ctx) {
+        for (au_id, p_row) in (72057594045000000i64..).zip(partitions.rows(catalog, _ctx)) {
             let container_id = match p_row.values[0] {
                 Value::BigInt(v) => v,
                 _ => 0,
@@ -340,7 +339,6 @@ impl VirtualTable for SysAllocationUnits {
                 ],
                 deleted: false,
             });
-            au_id += 1;
         }
 
         rows

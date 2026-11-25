@@ -11,19 +11,23 @@ env:
 
 jobs:
   check:
-    name: Clippy & Workspace Tests
+    name: Clippy, WASM & Workspace Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (all targets)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: WASM target check
+        run: cargo check --target wasm32-unknown-unknown -p tsql-lite-wasm
 
       - name: Workspace tests
         run: cargo test --workspace

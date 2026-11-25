@@ -797,7 +797,7 @@ fn eval_json_object_fn(
         ));
     }
     let mut pairs = Vec::with_capacity(args.len() / 2);
-    for pair in args.chunks_exact(2) {
+    for pair in args.as_chunks::<2>().0 {
         let key_val =
             crate::executor::evaluator::eval_expr(&pair[0], row, ctx, catalog, storage, clock)?;
         if key_val.is_null() {

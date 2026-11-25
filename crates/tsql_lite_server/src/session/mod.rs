@@ -83,7 +83,7 @@ static SQL_KEYWORD_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub(crate) fn format_sql_for_log(sql: &str) -> String {
-    let text = if std::env::var("IRIDIUM_LOG_FULL_SQL")
+    let text = if std::env::var("TSQL_LITE_LOG_FULL_SQL")
         .or_else(|_| std::env::var("TSQL_LOG_FULL_SQL"))
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
@@ -93,7 +93,7 @@ pub(crate) fn format_sql_for_log(sql: &str) -> String {
         truncate_for_log(sql, 4000)
     };
 
-    if std::env::var("IRIDIUM_LOG_SQL_HIGHLIGHT")
+    if std::env::var("TSQL_LITE_LOG_SQL_HIGHLIGHT")
         .or_else(|_| std::env::var("TSQL_LOG_SQL_HIGHLIGHT"))
         .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
         .unwrap_or(false)

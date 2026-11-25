@@ -133,10 +133,10 @@ pub fn default_data_dir() -> PathBuf {
     {
         if let Some(program_data) = std::env::var_os("ProgramData") {
             return PathBuf::from(program_data)
-                .join("Iridium SQL")
-                .join("iridium_sql_data");
+                .join("tsql-lite")
+                .join("tsql_lite_data");
         }
     }
 
-    PathBuf::from("iridium_sql_data")
+    PathBuf::from("tsql_lite_data")
 }

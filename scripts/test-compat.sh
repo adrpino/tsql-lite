@@ -10,8 +10,8 @@ cd "$REPO_ROOT"
 
 IMAGE="${SQLSERVER_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}"
 PORT="${SQLSERVER_PORT:-11433}"
-PASSWORD="${SQLSERVER_PASSWORD:-IridiumTest!2026}"
-CONTAINER_NAME="iridium_diff_sqlserver_$$"
+PASSWORD="${SQLSERVER_PASSWORD:-TsqlLiteTest!2026}"
+CONTAINER_NAME="tsql_lite_diff_sqlserver_$$"
 MANAGED_CONTAINER=false
 RUNTIME=""
 

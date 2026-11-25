@@ -5,7 +5,6 @@ edition.workspace = true
 description = "Standalone TDS 7.4 SQL Server-compatible wire server in pure Rust"
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme = "../../README.md"
 keywords = ["tds", "sql-server", "tsql", "database", "server"]
 categories = ["database", "network-programming"]

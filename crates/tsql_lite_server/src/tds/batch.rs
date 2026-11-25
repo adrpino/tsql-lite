@@ -34,11 +34,11 @@ pub fn parse_sql_batch(data: &[u8]) -> io::Result<String> {
 
     // Decode UTF-16LE
     let mut u16s = Vec::with_capacity(remaining / 2);
-    for chunk in sql_bytes.chunks_exact(2) {
-        u16s.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    for &chunk in sql_bytes.as_chunks::<2>().0 {
+        u16s.push(u16::from_le_bytes(chunk));
     }
     // Handle odd byte at end (shouldn't happen, but be safe)
-    if sql_bytes.len() % 2 != 0 {
+    if !sql_bytes.len().is_multiple_of(2) {
         u16s.push(sql_bytes[sql_bytes.len() - 1] as u16);
     }
 

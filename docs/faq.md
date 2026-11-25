@@ -17,17 +17,17 @@
 
 ## General
 
-### 1. What is Iridium SQL?
-Iridium SQL is an independent, open-source SQL Server-compatible database engine written in [Rust](https://www.rust-lang.org/). It provides a T-SQL engine with a native [TDS (Tabular Data Stream)](https://learn.microsoft.com/en-us/sql/relational-databases/native-client-ole-db-tabular-data-stream/tabular-data-stream-protocol) server, allowing it to work with existing SQL Server tools and drivers while offering a lightweight, embeddable, and [WASM](https://webassembly.org/)-compatible alternative.
+### 1. What is tsql-lite?
+tsql-lite is an independent, open-source SQL Server-compatible database engine written in [Rust](https://www.rust-lang.org/). It provides a T-SQL engine with a native [TDS (Tabular Data Stream)](https://learn.microsoft.com/en-us/sql/relational-databases/native-client-ole-db-tabular-data-stream/tabular-data-stream-protocol) server, allowing it to work with existing SQL Server tools and drivers while offering a lightweight, embeddable, and [WASM](https://webassembly.org/)-compatible alternative.
 
-### 2. Why was Iridium SQL created?
+### 2. Why was tsql-lite created?
 The project aims to provide an open alternative to SQL Server-style workflows. It is designed for application-facing compatibility, local-first persistence, and predictable behavior across native, server, and WASM runtimes.
 
-### 3. How does Iridium SQL differ from SQLite or PostgreSQL?
-While [SQLite](https://www.sqlite.org/) and [PostgreSQL](https://www.postgresql.org/) are excellent databases, they use different SQL dialects (Standard SQL / PostgreSQL dialect). Iridium SQL is specifically built for users and applications that depend on **T-SQL** (Transact-SQL) and the **TDS protocol**, providing a drop-in experience for those already using SQL Server tools and libraries.
+### 3. How does tsql-lite differ from SQLite or PostgreSQL?
+While [SQLite](https://www.sqlite.org/) and [PostgreSQL](https://www.postgresql.org/) are excellent databases, they use different SQL dialects (Standard SQL / PostgreSQL dialect). tsql-lite is specifically built for users and applications that depend on **T-SQL** (Transact-SQL) and the **TDS protocol**, providing a drop-in experience for those already using SQL Server tools and libraries.
 
-### 4. Can I use Iridium SQL for production workloads?
-Iridium SQL is under active development. While it is highly compatible with many application-facing T-SQL patterns, it is recommended to evaluate its current [Compatibility Matrix](compatibility-matrix.md) to ensure it meets your specific requirements.
+### 4. Can I use tsql-lite for production workloads?
+tsql-lite is under active development. While it is highly compatible with many application-facing T-SQL patterns, it is recommended to evaluate its current [Compatibility Matrix](compatibility-matrix.md) to ensure it meets your specific requirements.
 
 ### 5. What are the primary use cases?
 - **Local-first applications** that want to use T-SQL without a heavy SQL Server installation.
@@ -36,10 +36,10 @@ Iridium SQL is under active development. While it is highly compatible with many
 - **Migration scenarios** where you need a lightweight shim for SQL Server-dependent apps.
 
 ### 6. Is it a fork of any existing project?
-No. Iridium SQL is built from the ground up in Rust. It does not use code from SQL Server, Postgres, or any other existing engine.
+No. tsql-lite is built from the ground up in Rust. It does not use code from SQL Server, Postgres, or any other existing engine.
 
-### 7. What is the "Iridium" name about?
-Iridium is a dense, corrosion-resistant metal. The name reflects the project's goal of being a solid, reliable, and "hard" implementation of a complex specification.
+### 7. What is the "tsql-lite" name about?
+tsql-lite is a dense, corrosion-resistant metal. The name reflects the project's goal of being a solid, reliable, and "hard" implementation of a complex specification.
 
 ---
 
@@ -63,17 +63,17 @@ We strive to minimize `unsafe` usage. It is occasionally used in low-level stora
 
 ## Compatibility & T-SQL
 
-### 12. How compatible is Iridium SQL with Microsoft SQL Server?
-Iridium SQL targets a "useful SQL Server-compatible subset." It is not a 1:1 clone of every internal SQL Server feature, but it aims for user-visible parity in T-SQL syntax, result sets, metadata (sys.* views), and TDS protocol behavior.
+### 12. How compatible is tsql-lite with Microsoft SQL Server?
+tsql-lite targets a "useful SQL Server-compatible subset." It is not a 1:1 clone of every internal SQL Server feature, but it aims for user-visible parity in T-SQL syntax, result sets, metadata (sys.* views), and TDS protocol behavior.
 
 ### 13. Which version of SQL Server is the target?
 The compatibility target is generally aligned with modern SQL Server versions (2016 and later), focusing on features like window functions, CTEs, and JSON support.
 
 ### 14. Is T-SQL the only supported language?
-Yes, Iridium SQL is specifically designed as a T-SQL engine. It implements the [T-SQL dialect](https://learn.microsoft.com/en-us/sql/t-sql/language-reference), including its unique procedural extensions (IF/ELSE, WHILE, TRY/CATCH) and system functions.
+Yes, tsql-lite is specifically designed as a T-SQL engine. It implements the [T-SQL dialect](https://learn.microsoft.com/en-us/sql/t-sql/language-reference), including its unique procedural extensions (IF/ELSE, WHILE, TRY/CATCH) and system functions.
 
 ### 15. Does it support modern T-SQL features like PIVOT or MERGE?
-Yes. Iridium SQL includes support for complex T-SQL statements including `PIVOT`, `UNPIVOT`, `MERGE` (including `WHEN NOT MATCHED BY SOURCE`), `STRING_AGG`, and recursive CTEs.
+Yes. tsql-lite includes support for complex T-SQL statements including `PIVOT`, `UNPIVOT`, `MERGE` (including `WHEN NOT MATCHED BY SOURCE`), `STRING_AGG`, and recursive CTEs.
 
 ### 16. Does it support window functions?
 Yes, it supports a broad range of window functions including `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`, `NTILE`, and windowed aggregates like `SUM(x) OVER(...)`.
@@ -85,7 +85,7 @@ Yes. We implement a large number of system functions (math, string, date, metada
 Yes, [TVPs](https://learn.microsoft.com/en-us/sql/relational-databases/native-client/features/table-valued-parameters-sql-server-native-client) are supported both in T-SQL batches and via the TDS protocol, including multi-column TVPs and `READONLY` enforcement.
 
 ### 19. How are errors handled? Does it match SQL Server error codes?
-Iridium SQL aims for high fidelity in error reporting. When a query fails, the engine returns TDS error tokens that include SQL Server-compatible error numbers (e.g., 2627 for primary key violations, 1205 for deadlocks), states, and message patterns.
+tsql-lite aims for high fidelity in error reporting. When a query fails, the engine returns TDS error tokens that include SQL Server-compatible error numbers (e.g., 2627 for primary key violations, 1205 for deadlocks), states, and message patterns.
 
 ### 20. Does it support temporary tables?
 Yes, both local (`#temp`) and global (`##global_temp`) temporary tables are supported with proper session scoping and automatic cleanup.
@@ -98,7 +98,7 @@ Both simple and [recursive CTEs](https://learn.microsoft.com/en-us/sql/t-sql/que
 ## Implementation Details
 
 ### 22. How is the parser implemented?
-The parser is a custom-built [recursive descent parser](https://en.wikipedia.org/wiki/Recursive_descent_parser) located in `crates/iridium_core/src/parser/`. It handles T-SQL lexing, statement parsing, and expression evaluation. It is designed to be highly compatible with T-SQL's specific grammar quirks, such as bracketed identifiers and semicolon-less batches.
+The parser is a custom-built [recursive descent parser](https://en.wikipedia.org/wiki/Recursive_descent_parser) located in `crates/tsql_lite_core/src/parser/`. It handles T-SQL lexing, statement parsing, and expression evaluation. It is designed to be highly compatible with T-SQL's specific grammar quirks, such as bracketed identifiers and semicolon-less batches.
 
 ### 23. How are tables represented in Rust?
 Internally, tables are managed by the `Catalog`. Data is stored in rows (represented as `Vec<Value>`) within the `Storage` layer. The executor uses an [AST (Abstract Syntax Tree)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) to navigate and manipulate this data during query execution.
@@ -113,7 +113,7 @@ The engine follows a phase-based execution model:
 System views are implemented as "metadata shims" in the engine. When a user queries `sys.objects` or `INFORMATION_SCHEMA.TABLES`, the engine intercepts these requests and dynamically generates the result sets from the internal `Catalog` state.
 
 ### 26. What data types are supported?
-Iridium SQL supports a wide range of T-SQL data types, including `INT`, `BIGINT`, `DECIMAL`, `NVARCHAR`, `VARCHAR`, `VARBINARY`, `BIT`, `DATETIME`, `DATETIME2`, `UNIQUEIDENTIFIER`, and `TABLE`.
+tsql-lite supports a wide range of T-SQL data types, including `INT`, `BIGINT`, `DECIMAL`, `NVARCHAR`, `VARCHAR`, `VARBINARY`, `BIT`, `DATETIME`, `DATETIME2`, `UNIQUEIDENTIFIER`, and `TABLE`.
 
 ### 27. How does the engine handle type coercion?
 The engine implements T-SQL's [implicit conversion](https://learn.microsoft.com/en-us/sql/t-sql/data-types/data-type-conversion-database-engine) rules. For example, it can automatically coerce `DATE` to `DATETIME2` or `BINARY(16)` to `UNIQUEIDENTIFIER`.
@@ -126,8 +126,8 @@ The engine currently uses a rule-based approach for most queries. However, it do
 ## Persistence & Storage
 
 ### 29. Where and how is the database persisted?
-In native/server mode, Iridium SQL defaults to durable storage on disk.
-- **Default Path (Windows):** `%ProgramData%\Iridium SQL\iridium_sql_data`
+In native/server mode, tsql-lite defaults to durable storage on disk.
+- **Default Path (Windows):** `%ProgramData%\tsql-lite\tsql_lite_data`
 - **Mechanism:** It uses [redb](https://github.com/crawshaw/redb), a high-performance, embedded, [ACID](https://en.wikipedia.org/wiki/ACID)-compliant key-value store written in Rust, as its primary storage backend. Tables and indexes are mapped to redb tables.
 
 ### 30. Can I run it entirely in memory?
@@ -147,7 +147,7 @@ Yes, you can use the `--data-dir <PATH>` flag when starting the server to specif
 ## Transactions & Concurrency
 
 ### 34. Does it support transactions?
-Yes. Iridium SQL supports ACID transactions with `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK`.
+Yes. tsql-lite supports ACID transactions with `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK`.
 
 ### 35. What isolation levels are supported?
 We support `READ COMMITTED`, `READ UNCOMMITTED`, and `SNAPSHOT` isolation. The implementation uses a mix of row-level locks and [MVCC (Multi-Version Concurrency Control)](https://en.wikipedia.org/wiki/Multiversion_concurrency_control) depending on the requested level.
@@ -160,20 +160,20 @@ The engine uses a fine-grained locking system. It can acquire Shared (S), Exclus
 Yes. The engine includes a [deadlock detector](https://en.wikipedia.org/wiki/Deadlock) that builds a "wait-for" graph. If a cycle is detected, one of the sessions is chosen as a "victim," its transaction is rolled back, and a 1205 error is returned.
 
 ### 38. What is `XACT_ABORT`?
-Like SQL Server, Iridium SQL supports `SET XACT_ABORT ON/OFF`. When `ON`, any run-time error causes the current transaction to be automatically rolled back.
+Like SQL Server, tsql-lite supports `SET XACT_ABORT ON/OFF`. When `ON`, any run-time error causes the current transaction to be automatically rolled back.
 
 ---
 
 ## WASM & Embedding
 
-### 39. How do I use Iridium SQL in a web application?
-You can use the `@celsowm/iridium-sql-client` TypeScript package. It provides a high-level API to create a database instance, execute queries, and manage checkpoints within the browser using WebAssembly.
+### 39. How do I use tsql-lite in a web application?
+You can use the `@adrpino/tsql-lite-client` TypeScript package. It provides a high-level API to create a database instance, execute queries, and manage checkpoints within the browser using WebAssembly.
 
 ### 40. Is the entire engine running in the browser?
-Yes. The complete `iridium_core` engine, including the parser and executor, is compiled to WASM. There is no backend server required for basic query execution in the browser.
+Yes. The complete `tsql_lite_core` engine, including the parser and executor, is compiled to WASM. There is no backend server required for basic query execution in the browser.
 
 ### 41. How does persistence work in WASM?
-In the browser, persistence is "memory-first" by default. However, Iridium SQL provides `exportCheckpoint()` and `fromCheckpoint()` methods. You can save the exported byte array to [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) or `localStorage` and restore it when the user returns.
+In the browser, persistence is "memory-first" by default. However, tsql-lite provides `exportCheckpoint()` and `fromCheckpoint()` methods. You can save the exported byte array to [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) or `localStorage` and restore it when the user returns.
 
 ### 42. What are the limitations of the WASM version?
 The WASM version is single-threaded (due to standard browser constraints) and does not support the native TDS network server. It communicates directly via a JS/Rust bridge.
@@ -183,10 +183,10 @@ The WASM version is single-threaded (due to standard browser constraints) and do
 ## Tools & Connectivity
 
 ### 43. Does it support SQL Server Management Studio (SSMS)?
-Yes. Iridium SQL implements the "SSMS Object Explorer contract," allowing SSMS and Azure Data Studio to connect, browse objects, and run queries.
+Yes. tsql-lite implements the "SSMS Object Explorer contract," allowing SSMS and Azure Data Studio to connect, browse objects, and run queries.
 
 ### 44. Which drivers are supported?
-Iridium SQL aims for compatibility with standard TDS drivers, including:
+tsql-lite aims for compatibility with standard TDS drivers, including:
 - [sqlcmd](https://learn.microsoft.com/en-us/sql/tools/sqlcmd-utility)
 - [tedious](https://tediousjs.github.io/tedious/) (Node.js)
 - [tiberius](https://github.com/stevee/tiberius) (Rust)
@@ -197,14 +197,14 @@ Iridium SQL aims for compatibility with standard TDS drivers, including:
 Yes, the server supports [TLS (Transport Layer Security)](https://en.wikipedia.org/wiki/Transport_Layer_Security) for secure connections. You can provide your own certificate or use a self-signed one for development.
 
 ### 46. Is there a playground?
-Yes! The repository includes a browser-based T-SQL playground in `packages/iridium-playground` where you can try out queries instantly.
+Yes! The repository includes a browser-based T-SQL playground in `packages/tsql-lite-playground` where you can try out queries instantly.
 
 ---
 
 ## Performance
 
-### 47. How fast is Iridium SQL?
-In many scenarios, Iridium SQL can be faster than a full SQL Server instance for small-to-medium datasets because it has much lower overhead and is optimized for embedded use. However, for massive multi-terabyte datasets, the lack of a mature cost-based optimizer and distributed features may be a factor.
+### 47. How fast is tsql-lite?
+In many scenarios, tsql-lite can be faster than a full SQL Server instance for small-to-medium datasets because it has much lower overhead and is optimized for embedded use. However, for massive multi-terabyte datasets, the lack of a mature cost-based optimizer and distributed features may be a factor.
 
 ### 48. Does it support parallel query execution?
 Not yet. Current query execution is single-threaded per session to ensure simplicity and correctness, though different sessions run on different threads.
@@ -216,14 +216,14 @@ Not yet. Current query execution is single-threaded per session to ensure simpli
 
 ## Legal & Licensing
 
-### 50. Is Iridium SQL associated with Microsoft?
-No. Iridium SQL is an independent implementation and does not use any Microsoft proprietary code. "Microsoft" and "SQL Server" are trademarks of Microsoft Corporation, used here for compatibility description only.
+### 50. Is tsql-lite associated with Microsoft?
+No. tsql-lite is an independent implementation and does not use any Microsoft proprietary code. "Microsoft" and "SQL Server" are trademarks of Microsoft Corporation, used here for compatibility description only.
 
 ### 51. What is the license?
-Iridium SQL is released under the **[MIT License](https://opensource.org/licenses/MIT)**, making it free for both open-source and commercial use.
+tsql-lite is released under the **[MIT License](https://opensource.org/licenses/MIT)**, making it free for both open-source and commercial use.
 
 ### 52. Do I need a license key?
-No. Iridium SQL is 100% free and open-source. There are no "Enterprise" editions or hidden costs.
+No. tsql-lite is 100% free and open-source. There are no "Enterprise" editions or hidden costs.
 
 ---
 
@@ -240,4 +240,4 @@ We are currently focusing on:
 Yes! We love contributions. Whether it's fixing a bug, adding a new T-SQL function, or improving documentation, please check our `CONTRIBUTING.md` (or `AGENTS.md`) and open a Pull Request.
 
 ### 55. How do I report a bug?
-Please open an issue on our [GitHub repository](https://github.com/celsowm/iridium-sql) with a reproducible T-SQL script and a description of the expected vs. actual behavior.
+Please open an issue on our [GitHub repository](https://github.com/adrpino/tsql-lite) with a reproducible T-SQL script and a description of the expected vs. actual behavior.

@@ -38,8 +38,8 @@ mod tests {
         let engine = Engine::new();
 
         engine
-            .exec("USE iridium_sql")
-            .expect("USE iridium_sql failed");
+            .exec("USE tsql_lite")
+            .expect("USE tsql_lite failed");
 
         let stmt = parse_sql(
             "SELECT DB_NAME() AS current_db, DB_ID() AS current_db_id, database_id, authenticating_database_id \
@@ -50,7 +50,7 @@ mod tests {
 
         assert_eq!(result.rows.len(), 1);
         let row = &result.rows[0];
-        assert_eq!(row[0], Value::NVarChar("iridium_sql".to_string()));
+        assert_eq!(row[0], Value::NVarChar("tsql_lite".to_string()));
         assert_eq!(row[1], Value::Int(5));
         assert_eq!(row[2], Value::SmallInt(5));
         assert_eq!(row[3], Value::Int(1));

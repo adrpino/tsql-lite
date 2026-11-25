@@ -94,20 +94,16 @@ pub fn parse_prelogin(data: &[u8]) -> io::Result<PreloginData> {
                         .to_string(),
                 );
             }
-            PRELOGIN_THREADID => {
-                if token_data.len() >= 4 {
-                    thread_id = Some(u32::from_le_bytes([
-                        token_data[0],
-                        token_data[1],
-                        token_data[2],
-                        token_data[3],
-                    ]));
-                }
+            PRELOGIN_THREADID if token_data.len() >= 4 => {
+                thread_id = Some(u32::from_le_bytes([
+                    token_data[0],
+                    token_data[1],
+                    token_data[2],
+                    token_data[3],
+                ]));
             }
-            PRELOGIN_MARS => {
-                if !token_data.is_empty() {
-                    mars = Some(token_data[0]);
-                }
+            PRELOGIN_MARS if !token_data.is_empty() => {
+                mars = Some(token_data[0]);
             }
             _ => {}
         }

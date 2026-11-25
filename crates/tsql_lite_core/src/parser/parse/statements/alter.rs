@@ -637,11 +637,9 @@ pub fn parse_alter(parser: &mut Parser) -> ParseResult<Statement> {
                             i = val_idx;
                         }
                     }
-                    "ROLLBACK" => {
-                        if tokens.get(i + 1).map(|s| s.as_str()) == Some("IMMEDIATE") {
-                            rollback_immediate = true;
-                            i += 1;
-                        }
+                    "ROLLBACK" if tokens.get(i + 1).map(|s| s.as_str()) == Some("IMMEDIATE") => {
+                        rollback_immediate = true;
+                        i += 1;
                     }
                     _ => {}
                 }

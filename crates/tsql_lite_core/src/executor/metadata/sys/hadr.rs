@@ -119,7 +119,7 @@ impl VirtualTable for SysMasterFiles {
 pub(crate) struct SysDatabaseMirroring;
 pub(crate) struct SysDatabaseFiles;
 
-/// Database IDs that match sys.databases (master=1, tempdb=2, model=3, msdb=4, iridium_sql=5).
+/// Database IDs that match sys.databases (master=1, tempdb=2, model=3, msdb=4, tsql_lite=5).
 const DATABASE_IDS: &[i32] = &[1, 2, 3, 4, 5];
 
 impl VirtualTable for SysDatabaseMirroring {
@@ -226,14 +226,14 @@ impl VirtualTable for SysDatabaseFiles {
     }
 
     fn rows(&self, _catalog: &dyn Catalog, _ctx: &ExecutionContext) -> Vec<StoredRow> {
-        // Assume database_id 5 (iridium_sql) is the current database for this view.
+        // Assume database_id 5 (tsql_lite) is the current database for this view.
         vec![StoredRow {
             values: vec![
                 Value::Int(1),
                 Value::TinyInt(0), // ROWS
                 Value::NVarChar("ROWS".to_string()),
-                Value::NVarChar("iridium_sql".to_string()),
-                Value::NVarChar("C:\\data\\iridium_sql.mdf".to_string()),
+                Value::NVarChar("tsql_lite".to_string()),
+                Value::NVarChar("C:\\data\\tsql_lite.mdf".to_string()),
                 Value::TinyInt(0), // ONLINE
                 Value::NVarChar("ONLINE".to_string()),
                 Value::Int(1024),

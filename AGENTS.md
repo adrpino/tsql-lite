@@ -1,4 +1,4 @@
-# Agent Guidelines for Iridium SQL
+# Agent Guidelines for tsql-lite
 
 ## Testing
 
@@ -6,15 +6,15 @@
 
 **Core Engine Tests (Recommended for development):**
 ```bash
-cargo test -p iridium_core
-cargo test -p iridium_wasm
+cargo test -p tsql_lite_core
+cargo test -p tsql_lite_wasm
 ```
 
 **Server Integration Tests (Requires Podman):**
 ```bash
 podman machine start
-podman start iridium_test_sqlserver
-cargo test -p iridium_server
+podman start tsql_lite_test_sqlserver
+cargo test -p tsql_lite_server
 ```
 
 ### Podman Container Setup
@@ -28,12 +28,12 @@ podman machine start
 
 **Start SQL Server Container:**
 ```bash
-podman start iridium_test_sqlserver
+podman start tsql_lite_test_sqlserver
 ```
 
 **Container Details:**
 - Image: `mcr.microsoft.com/azure-sql-edge:latest`
-- Container Name: `iridium_test_sqlserver`
+- Container Name: `tsql_lite_test_sqlserver`
 - Port: 11433 (host) -> 1433 (container)
 - SQL Server credentials are supplied through `MSSQL_SA_PASSWORD`; keep the value in an ignored local `.env` file or the shell environment, never in tracked files.
 
@@ -46,7 +46,7 @@ podman-compose start sqlserver
 
 ### Known Test Issues
 
-**iridium_server Integration Tests:**
+**tsql_lite_server Integration Tests:**
 - Currently marked as `#[ignore]` due to TDS handshake incompatibility with tiberius 0.12
 - Tests fail with "early eof" during PRELOGIN/LOGIN handshake
 - Root cause: Client requests encryption (ENCRYPT_ON) but server has TLS disabled
@@ -54,7 +54,7 @@ podman-compose start sqlserver
 
 **Workaround:** Run integration tests with `--ignored` flag if you've fixed the TLS issue:
 ```bash
-cargo test -p iridium_server -- --ignored
+cargo test -p tsql_lite_server -- --ignored
 ```
 
 **Pre-existing flaky tests** (timing/perf-dependent; not caused by code changes):
@@ -65,7 +65,7 @@ cargo test -p iridium_server -- --ignored
 
 When running the full core suite for regression, skip them:
 ```bash
-cargo test -p iridium_core --tests -- `
+cargo test -p tsql_lite_core --tests -- `
   --skip test_lock_timeout_wait_success `
   --skip test_lock_timeout_infinite_wait `
   --skip test_phase8_perf_select_speed `
@@ -82,14 +82,14 @@ cargo test -p iridium_core --tests -- `
 
 ## Architecture
 
-- `iridium_core`: T-SQL engine (parser, executor, storage)
-- `iridium_server`: TDS 7.4 protocol server
-- `iridium_wasm`: WebAssembly bindings
+- `tsql_lite_core`: T-SQL engine (parser, executor, storage)
+- `tsql_lite_server`: TDS 7.4 protocol server
+- `tsql_lite_wasm`: WebAssembly bindings
 
 ## Common Tasks
 
 **Fix compilation errors:**
-1. Check for missing exports in `iridium_core/src/lib.rs`
+1. Check for missing exports in `tsql_lite_core/src/lib.rs`
 2. Verify all imports are used or marked with `#[allow(unused_imports)]`
 
 **Fix test failures:**
@@ -98,9 +98,9 @@ cargo test -p iridium_core --tests -- `
 3. Look for parser bugs in statement parsing logic
 
 **Add new features:**
-1. Add AST types in `iridium_core/src/ast/`
-2. Add parser in `iridium_core/src/parser/statements/`
-3. Add executor in `iridium_core/src/executor/`
-4. Update exports in `iridium_core/src/lib.rs`
+1. Add AST types in `tsql_lite_core/src/ast/`
+2. Add parser in `tsql_lite_core/src/parser/statements/`
+3. Add executor in `tsql_lite_core/src/executor/`
+4. Update exports in `tsql_lite_core/src/lib.rs`
 5. Update `docs/tsql-function-parity.md` (verified by `tsql_function_parity_doc`) and run `./scripts/test-compat.sh` for live SQL Server differential parity.
 

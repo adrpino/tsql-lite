@@ -31,7 +31,7 @@ internal static class Program
 
         if (string.IsNullOrWhiteSpace(oracleConn) || string.IsNullOrWhiteSpace(targetConn))
         {
-            Console.Error.WriteLine("Usage: DriverCompat --oracle <sqlserver-connstr> --target <iridium-connstr> [--filter <substring>]");
+            Console.Error.WriteLine("Usage: DriverCompat --oracle <sqlserver-connstr> --target <tsql-lite-connstr> [--filter <substring>]");
             return 2;
         }
 
@@ -63,7 +63,7 @@ internal static class Program
                 passed++;
                 Console.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "[PASS] {0}  (sqlserver={1}ms, iridium={2}ms) => {3}",
+                    "[PASS] {0}  (sqlserver={1}ms, tsql-lite={2}ms) => {3}",
                     name,
                     oracleOutcome.ElapsedMs,
                     targetOutcome.ElapsedMs,
@@ -74,7 +74,7 @@ internal static class Program
                 failed++;
                 Console.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "[DIFF] {0}  (sqlserver={1}ms, iridium={2}ms)",
+                    "[DIFF] {0}  (sqlserver={1}ms, tsql-lite={2}ms)",
                     name,
                     oracleOutcome.ElapsedMs,
                     targetOutcome.ElapsedMs));
@@ -85,7 +85,7 @@ internal static class Program
                     oracleOutcome.Payload));
                 Console.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "       Iridium Server  [{0}]: {1}",
+                    "       tsql-lite Server  [{0}]: {1}",
                     targetOutcome.Ok ? "OK" : "ERR",
                     targetOutcome.Payload));
             }

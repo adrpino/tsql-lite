@@ -36,8 +36,8 @@ pub fn decode_password(encrypted: &[u8]) -> String {
     }
     // Decode as UTF-16LE
     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
-        u16s.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+    for &chunk in bytes.as_chunks::<2>().0 {
+        u16s.push(u16::from_le_bytes(chunk));
     }
     String::from_utf16_lossy(&u16s)
 }

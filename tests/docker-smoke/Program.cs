@@ -9,7 +9,7 @@ await using var command = new SqlCommand("SELECT 1", connection);
 var actual = await command.ExecuteScalarAsync();
 if (Convert.ToInt32(actual) != 1)
 {
-    throw new Exception($"Expected 1 from Iridium SQL, got {actual}");
+    throw new Exception($"Expected 1 from tsql-lite, got {actual}");
 }
 
-Console.WriteLine($"Iridium SQL TDS smoke test passed on port {port}.");
+Console.WriteLine($"tsql-lite TDS smoke test passed on port {port}.");

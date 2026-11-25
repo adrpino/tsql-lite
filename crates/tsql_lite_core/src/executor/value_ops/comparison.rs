@@ -404,12 +404,46 @@ pub enum SqlHashKey {
     Null,
     ExactNum(i128, u8),
     Float(u64),
+    /// Stack-inline folded string for UTF-8 lengths <= 24 bytes (zero heap alloc).
+    /// Canonical invariant: folded length <= 24 ALWAYS uses `ShortString`, > 24 ALWAYS uses `String`.
+    ShortString([u8; 24], u8),
     String(String),
     DateTime(NaiveDateTime),
     DateTimeOffset(String),
     Binary(Vec<u8>),
     Vector(Vec<u32>),
     Uuid(uuid::Uuid),
+}
+
+#[inline]
+fn folded_str_to_hash_key(s: &str) -> SqlHashKey {
+    let trimmed = s.trim_end_matches(' ');
+    if trimmed.len() <= 24 && trimmed.is_ascii() {
+        let mut buf = [0u8; 24];
+        for (dst, &b) in buf.iter_mut().zip(trimmed.as_bytes()) {
+            *dst = b.to_ascii_lowercase();
+        }
+        return SqlHashKey::ShortString(buf, trimmed.len() as u8);
+    }
+    let folded = trimmed.to_lowercase();
+    if folded.len() <= 24 {
+        let mut buf = [0u8; 24];
+        buf[..folded.len()].copy_from_slice(folded.as_bytes());
+        SqlHashKey::ShortString(buf, folded.len() as u8)
+    } else {
+        SqlHashKey::String(folded)
+    }
+}
+
+#[inline]
+fn already_folded_to_hash_key(folded: String) -> SqlHashKey {
+    if folded.len() <= 24 {
+        let mut buf = [0u8; 24];
+        buf[..folded.len()].copy_from_slice(folded.as_bytes());
+        SqlHashKey::ShortString(buf, folded.len() as u8)
+    } else {
+        SqlHashKey::String(folded)
+    }
 }
 
 fn canonical_decimal(mut raw: i128, mut scale: u8) -> SqlHashKey {
@@ -445,7 +479,7 @@ impl SqlHashKey {
                 }
             }
             Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
-                SqlHashKey::String(s.trim_end_matches(' ').to_lowercase())
+                folded_str_to_hash_key(s)
             }
             Value::Date(_)
             | Value::Time(_)
@@ -455,7 +489,7 @@ impl SqlHashKey {
                 if let Some(dt) = normalize_datetime(v) {
                     SqlHashKey::DateTime(dt)
                 } else {
-                    SqlHashKey::String(extract_string(v).trim_end_matches(' ').to_lowercase())
+                    folded_str_to_hash_key(&extract_string(v))
                 }
             }
             Value::DateTimeOffset(s) => SqlHashKey::DateTimeOffset(s.clone()),
@@ -472,7 +506,7 @@ impl SqlHashKey {
         match v {
             Value::SqlVariant(inner) => Self::from_value_with_collation(inner, flags),
             Value::Char(s) | Value::VarChar(s) | Value::NChar(s) | Value::NVarChar(s) => {
-                SqlHashKey::String(crate::executor::collation::fold_str(s, flags, true))
+                already_folded_to_hash_key(crate::executor::collation::fold_str(s, flags, true))
             }
             other => Self::from_value(other),
         }
@@ -483,7 +517,7 @@ impl SqlHashKey {
             SqlHashKey::Null => HashKeyFamily::Null,
             SqlHashKey::ExactNum(_, _) => HashKeyFamily::ExactNum,
             SqlHashKey::Float(_) => HashKeyFamily::Float,
-            SqlHashKey::String(_) => HashKeyFamily::String,
+            SqlHashKey::ShortString(_, _) | SqlHashKey::String(_) => HashKeyFamily::String,
             SqlHashKey::DateTime(_) => HashKeyFamily::DateTime,
             SqlHashKey::DateTimeOffset(_) => HashKeyFamily::DateTimeOffset,
             SqlHashKey::Binary(_) => HashKeyFamily::Binary,

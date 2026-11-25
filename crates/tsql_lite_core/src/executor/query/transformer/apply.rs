@@ -59,10 +59,10 @@ pub(crate) fn execute_apply(
                 combined.push(ContextTable {
                     table: std::sync::Arc::clone(&apply_table),
                     alias: std::sync::Arc::clone(&apply_alias),
-                    row: Some(StoredRow {
+                    row: Some(std::sync::Arc::new(StoredRow {
                         values: sub_row_values.clone(),
                         deleted: false,
-                    }),
+                    })),
                     storage_index: Some(idx),
                     source_aliases: Vec::new(),
                 });

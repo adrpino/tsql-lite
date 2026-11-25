@@ -1,9 +1,18 @@
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tsql_lite_core::{Database, PersistentDatabase};
 use tsql_lite_server::{playground, Credentials, ServerConfig, TdsServer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Handle --healthcheck synchronously before starting the Tokio runtime
+    // so container probes finish in <1 ms without spawning worker threads.
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    if raw_args.iter().any(|a| a == "--healthcheck") {
+        run_healthcheck(&raw_args);
+    }
+
     // Deeply nested SQL batches and dynamic EXEC(...) scripts need more than
     // the default 2 MiB worker stack used by #[tokio::main].
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -11,6 +20,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .thread_stack_size(16 * 1024 * 1024)
         .build()?;
     rt.block_on(async_main())
+}
+
+fn run_healthcheck(args: &[String]) -> ! {
+    let mut host = "127.0.0.1".to_string();
+    let mut port: u16 = 1433;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--host" | "-h" => {
+                i += 1;
+                if let Some(h) = args.get(i) {
+                    host = h.clone();
+                }
+            }
+            "--port" | "-p" => {
+                i += 1;
+                if let Some(p) = args.get(i).and_then(|s| s.parse::<u16>().ok()) {
+                    port = p;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let ok = (host.as_str(), port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+        .is_some_and(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok());
+
+    std::process::exit(if ok { 0 } else { 1 });
 }
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
@@ -299,6 +340,7 @@ fn print_help() {
     println!("  --tls-gen               Generate self-signed TLS certificate");
     println!("  --playground            Start with sample tables, views, and data");
     println!("  --memory                Use ephemeral in-memory storage instead of disk");
+    println!("  --healthcheck           Probe TCP connectivity to --host/--port and exit 0/1");
     println!("  --help                  Show this help message");
     println!();
     println!("EXAMPLES:");

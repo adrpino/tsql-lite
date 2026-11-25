@@ -31,8 +31,13 @@ uuid = { version = "1", features = ["js"] }
 js-sys = "0.3"
 
 [dev-dependencies]
+divan = "0.1"
 winnow = "0.7"
 tempfile = "3"
 tiberius = { version = "0.12.3", default-features = false, features = ["tokio", "tds73", "chrono"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+
+[[bench]]
+name = "engine_bench"
+harness = false

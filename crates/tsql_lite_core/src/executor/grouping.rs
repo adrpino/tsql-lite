@@ -187,37 +187,112 @@ impl<'a> GroupExecutor<'a> {
         if group_by.is_empty() {
             return Ok(vec![Group { key: vec![], rows }]);
         }
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let slots: Vec<Option<(usize, usize)>> = group_by
+            .iter()
+            .map(|e| super::identifier::resolve_column_slot(e, &rows[0]))
+            .collect();
+        let collations: Vec<Option<super::collation::CollationFlags>> = group_by
+            .iter()
+            .map(super::collation::expr_collation)
+            .collect();
+
+        // Single-key GROUP BY fast path: zero Vec<Value> / Vec<SqlHashKey> / Value::clone
+        // allocations on existing-group hits.
+        if group_by.len() == 1 {
+            let slot = slots[0];
+            let expr = &group_by[0];
+            let collation = collations[0];
+            let mut map: HashMap<super::value_ops::SqlHashKey, usize> = HashMap::new();
+            let mut groups: Vec<Group> = Vec::new();
+            for row in rows {
+                let evaluated: Option<Value>;
+                let hash_key = {
+                    let val_ref: &Value = if let Some(s) = slot {
+                        evaluated = None;
+                        super::identifier::value_at_slot(&row, s)
+                    } else {
+                        evaluated = Some(eval_expr(
+                            expr,
+                            &row,
+                            ctx,
+                            self.catalog,
+                            self.storage,
+                            self.clock,
+                        )?);
+                        evaluated.as_ref().unwrap()
+                    };
+                    if let Some(flags) = collation {
+                        super::value_ops::SqlHashKey::from_value_with_collation(val_ref, flags)
+                    } else {
+                        super::value_ops::SqlHashKey::from_value(val_ref)
+                    }
+                };
+                if let Some(&idx) = map.get(&hash_key) {
+                    groups[idx].rows.push(row);
+                } else {
+                    let idx = groups.len();
+                    let key_val = evaluated.unwrap_or_else(|| {
+                        super::identifier::value_at_slot(&row, slot.unwrap()).clone()
+                    });
+                    map.insert(hash_key, idx);
+                    groups.push(Group {
+                        key: vec![key_val],
+                        rows: vec![row],
+                    });
+                }
+            }
+            return Ok(groups);
+        }
+
         let mut map: HashMap<Vec<super::value_ops::SqlHashKey>, usize> = HashMap::new();
         let mut groups: Vec<Group> = Vec::new();
+        let mut scratch_hash: Vec<super::value_ops::SqlHashKey> = Vec::with_capacity(group_by.len());
+        let mut scratch_vals: Vec<Option<Value>> = Vec::with_capacity(group_by.len());
         for row in rows {
-            let mut key = Vec::new();
-            for expr in group_by {
-                key.push(eval_expr(
-                    expr,
-                    &row,
-                    ctx,
-                    self.catalog,
-                    self.storage,
-                    self.clock,
-                )?);
+            scratch_hash.clear();
+            scratch_vals.clear();
+            for (i, expr) in group_by.iter().enumerate() {
+                let evaluated = if slots[i].is_some() {
+                    None
+                } else {
+                    Some(eval_expr(
+                        expr,
+                        &row,
+                        ctx,
+                        self.catalog,
+                        self.storage,
+                        self.clock,
+                    )?)
+                };
+                let val_ref: &Value = match (&slots[i], &evaluated) {
+                    (Some(s), _) => super::identifier::value_at_slot(&row, *s),
+                    (_, Some(v)) => v,
+                    _ => unreachable!(),
+                };
+                let hk = if let Some(flags) = collations[i] {
+                    super::value_ops::SqlHashKey::from_value_with_collation(val_ref, flags)
+                } else {
+                    super::value_ops::SqlHashKey::from_value(val_ref)
+                };
+                scratch_hash.push(hk);
+                scratch_vals.push(evaluated);
             }
-            let hash_key: Vec<super::value_ops::SqlHashKey> = group_by
-                .iter()
-                .zip(key.iter())
-                .map(|(expr, v)| {
-                    if let Some(flags) = super::collation::expr_collation(expr) {
-                        super::value_ops::SqlHashKey::from_value_with_collation(v, flags)
-                    } else {
-                        super::value_ops::SqlHashKey::from_value(v)
-                    }
-                })
-                .collect();
 
-            if let Some(&idx) = map.get(&hash_key) {
+            if let Some(&idx) = map.get(&scratch_hash) {
                 groups[idx].rows.push(row);
             } else {
                 let idx = groups.len();
-                map.insert(hash_key, idx);
+                let mut key = Vec::with_capacity(group_by.len());
+                for (i, ev) in scratch_vals.drain(..).enumerate() {
+                    key.push(ev.unwrap_or_else(|| {
+                        super::identifier::value_at_slot(&row, slots[i].unwrap()).clone()
+                    }));
+                }
+                map.insert(scratch_hash.clone(), idx);
                 groups.push(Group {
                     key,
                     rows: vec![row],

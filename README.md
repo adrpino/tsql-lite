@@ -69,7 +69,7 @@ wasm-pack build crates/tsql_lite_wasm --target web --out-dir crates/tsql_lite_wa
 | Crate | Path | Purpose |
 |---|---|---|
 | `tsql-lite-core` | `crates/tsql_lite_core` | T-SQL lexer, parser, binder, executor, MVCC/locking, `redb` persistence, catalog |
-| `tsql-lite-server` | `crates/tsql_lite_server` | TDS 7.4 wire server (`tsql-lite-server`, `tsql-lite-healthcheck`) |
+| `tsql-lite-server` | `crates/tsql_lite_server` | TDS 7.4 wire server (`tsql-lite-server`) |
 | `tsql-lite-wasm` | `crates/tsql_lite_wasm` | WebAssembly bindings |
 
 ---

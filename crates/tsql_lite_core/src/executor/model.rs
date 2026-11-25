@@ -20,7 +20,7 @@ pub(crate) struct BoundTable {
 pub struct ContextTable {
     pub table: Arc<TableDef>,
     pub alias: Arc<str>,
-    pub row: Option<StoredRow>,
+    pub row: Option<Arc<StoredRow>>,
     pub storage_index: Option<usize>,
     pub source_aliases: Vec<String>,
 }
@@ -47,7 +47,7 @@ pub(crate) fn single_row_context_arc(
     vec![ContextTable {
         table,
         alias,
-        row: Some(row),
+        row: Some(Arc::new(row)),
         storage_index: None,
         source_aliases: Vec::new(),
     }]

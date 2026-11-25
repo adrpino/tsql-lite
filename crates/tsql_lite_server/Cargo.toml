@@ -10,7 +10,7 @@ keywords = ["tds", "sql-server", "tsql", "database", "server"]
 categories = ["database", "network-programming"]
 
 [dependencies]
-tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.0" }
+tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.1" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }
@@ -33,11 +33,3 @@ serde_json = "1"
 [[bin]]
 name = "tsql-lite-server"
 path = "bin/main.rs"
-
-[[bin]]
-name = "compat-query"
-path = "bin/compat-query.rs"
-
-[[bin]]
-name = "tsql-lite-healthcheck"
-path = "bin/healthcheck.rs"

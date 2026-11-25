@@ -75,7 +75,7 @@ pub fn cte_to_context_rows(cte: &CteTable, alias: &str) -> Vec<crate::executor::
             vec![crate::executor::model::ContextTable {
                 table: std::sync::Arc::clone(&table_arc),
                 alias: std::sync::Arc::clone(&alias_arc),
-                row: Some(row.clone()),
+                row: Some(std::sync::Arc::new(row.clone())),
                 storage_index: Some(i),
                 source_aliases: Vec::new(),
             }]

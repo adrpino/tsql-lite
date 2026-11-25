@@ -359,7 +359,7 @@ pub(crate) fn apply_dynamic_masking_to_rows<'a>(
         for &(b_idx, c_idx, ref dt, func) in &plan {
             if let Some(binding) = row.get_mut(b_idx) {
                 if let Some(ref mut stored) = binding.row {
-                    if let Some(val) = stored.values.get_mut(c_idx) {
+                    if let Some(val) = std::sync::Arc::make_mut(stored).values.get_mut(c_idx) {
                         *val = apply_mask_function(val, dt, func);
                     }
                 }

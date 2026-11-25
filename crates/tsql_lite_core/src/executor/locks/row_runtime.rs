@@ -235,8 +235,8 @@ impl RowLockRuntime {
                                 skip_row = true;
                                 break;
                             }
-                            if ct.row.as_ref() != Some(&fresh) {
-                                ct.row = Some(fresh);
+                            if ct.row.as_deref() != Some(&fresh) {
+                                ct.row = Some(std::sync::Arc::new(fresh));
                                 row_refreshed = true;
                             }
                         }

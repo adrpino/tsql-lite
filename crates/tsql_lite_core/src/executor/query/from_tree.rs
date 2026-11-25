@@ -3,7 +3,7 @@ use crate::catalog::{Catalog, ColumnDef, TableDef};
 use crate::error::DbError;
 use crate::executor::clock::Clock;
 use crate::storage::{Storage, StoredRow};
-use std::collections::HashMap;
+use crate::types::{DataType, Value};
 
 use super::super::context::ExecutionContext;
 use super::super::model::{ContextTable, JoinedRow};
@@ -20,6 +20,26 @@ use super::QueryExecutor;
 pub(crate) struct FromEval {
     pub(crate) iter: Box<dyn RowIterator>,
     pub(crate) shape: Vec<ContextTable>,
+    /// Top-level WHERE conjuncts already strictly enforced inside this `FromEval` tree
+    /// (on non-null-producing sides of joins or exact same-family `TableScanIterator.fast_filter`),
+    /// so `execute_where_stage` and parent joins don't re-evaluate them redundantly.
+    pub(crate) enforced_predicates: Vec<crate::ast::Expr>,
+}
+
+fn is_exact_same_family(col_type: &DataType, val: &Value) -> bool {
+    matches!(
+        (col_type, val),
+        (
+            DataType::Char { .. }
+                | DataType::VarChar { .. }
+                | DataType::NChar { .. }
+                | DataType::NVarChar { .. },
+            Value::Char(_) | Value::VarChar(_) | Value::NChar(_) | Value::NVarChar(_)
+        ) | (
+            DataType::TinyInt | DataType::SmallInt | DataType::Int | DataType::BigInt,
+            Value::TinyInt(_) | Value::SmallInt(_) | Value::Int(_) | Value::BigInt(_)
+        ) | (DataType::Bit, Value::Bit(_))
+    )
 }
 
 impl FromEval {
@@ -114,7 +134,15 @@ pub(crate) fn execute_from_clause_with_predicate(
                 execute_from_clause_with_predicate(executor, *right, push_right_pred, false, ctx)?;
 
             // Push single-side WHERE conjuncts into FilterIterators on the lazy join inputs
-            // before HashJoin builds/probes or NestedLoop iterates.
+            // before HashJoin builds/probes or NestedLoop iterates, skipping conjuncts already
+            // strictly enforced by a child's exact `fast_filter` or nested pushdown.
+            let mut enforced_predicates = Vec::new();
+            if push_left_pred.is_some() {
+                enforced_predicates.extend(left_eval.enforced_predicates.iter().cloned());
+            }
+            if push_right_pred.is_some() {
+                enforced_predicates.extend(right_eval.enforced_predicates.iter().cloned());
+            }
             if let Some(pred) = predicate {
                 let mut conjuncts = Vec::new();
                 crate::executor::joins::collect_and_conjuncts(pred, &mut conjuncts);
@@ -126,11 +154,19 @@ pub(crate) fn execute_from_clause_with_predicate(
                         &left_eval.shape,
                         &right_eval.shape,
                     ) {
-                        crate::executor::joins::JoinSide::Left if push_left_pred.is_some() => {
+                        crate::executor::joins::JoinSide::Left
+                            if push_left_pred.is_some()
+                                && !left_eval.enforced_predicates.contains(c) =>
+                        {
                             left_filters.push(c.clone());
+                            enforced_predicates.push(c.clone());
                         }
-                        crate::executor::joins::JoinSide::Right if push_right_pred.is_some() => {
+                        crate::executor::joins::JoinSide::Right
+                            if push_right_pred.is_some()
+                                && !right_eval.enforced_predicates.contains(c) =>
+                        {
                             right_filters.push(c.clone());
+                            enforced_predicates.push(c.clone());
                         }
                         _ => {}
                     }
@@ -177,29 +213,18 @@ pub(crate) fn execute_from_clause_with_predicate(
                     )
                 {
                     return Ok(FromEval {
-                        iter: Box::new(HashJoinIterator {
-                            left: left_eval.iter,
-                            right: right_eval.iter,
+                        iter: Box::new(HashJoinIterator::new(
+                            left_eval.iter,
+                            right_eval.iter,
                             left_keys,
                             right_keys,
                             residual_on,
                             join_type,
-                            left_shape: left_eval.shape,
-                            right_shape: right_eval.shape,
-                            build_done: false,
-                            right_materialized: Vec::new(),
-                            right_raw_keys: Vec::new(),
-                            right_key_families: Vec::new(),
-                            hash_map: HashMap::new(),
-                            right_matched: Vec::new(),
-                            current_left: None,
-                            current_matches: Vec::new(),
-                            current_match_idx: 0,
-                            matched_current_left: false,
-                            finishing_right: false,
-                            finishing_idx: 0,
-                        }),
+                            left_eval.shape,
+                            right_eval.shape,
+                        )),
                         shape,
+                        enforced_predicates,
                     });
                 }
             } else if join_type == crate::ast::JoinType::Cross {
@@ -222,29 +247,18 @@ pub(crate) fn execute_from_clause_with_predicate(
                     }
                     if !left_keys.is_empty() {
                         return Ok(FromEval {
-                            iter: Box::new(HashJoinIterator {
-                                left: left_eval.iter,
-                                right: right_eval.iter,
+                            iter: Box::new(HashJoinIterator::new(
+                                left_eval.iter,
+                                right_eval.iter,
                                 left_keys,
                                 right_keys,
-                                residual_on: None,
-                                join_type: crate::ast::JoinType::Inner,
-                                left_shape: left_eval.shape,
-                                right_shape: right_eval.shape,
-                                build_done: false,
-                                right_materialized: Vec::new(),
-                                right_raw_keys: Vec::new(),
-                                right_key_families: Vec::new(),
-                                hash_map: HashMap::new(),
-                                right_matched: Vec::new(),
-                                current_left: None,
-                                current_matches: Vec::new(),
-                                current_match_idx: 0,
-                                matched_current_left: false,
-                                finishing_right: false,
-                                finishing_idx: 0,
-                            }),
+                                None,
+                                crate::ast::JoinType::Inner,
+                                left_eval.shape,
+                                right_eval.shape,
+                            )),
                             shape,
+                            enforced_predicates,
                         });
                     }
                 }
@@ -262,6 +276,7 @@ pub(crate) fn execute_from_clause_with_predicate(
                     matched_current_left: false,
                 }),
                 shape,
+                enforced_predicates,
             })
         }
     }
@@ -343,6 +358,7 @@ fn execute_table_ref_with_predicate(
         return Ok(FromEval {
             iter: Box::new(ScanIterator::new(rows)),
             shape,
+            enforced_predicates: Vec::new(),
         });
     }
 
@@ -355,7 +371,7 @@ fn execute_table_ref_with_predicate(
                 vec![ContextTable {
                     table: bound.table.clone(),
                     alias: bound.alias.clone(),
-                    row: Some(row.clone()),
+                    row: Some(std::sync::Arc::new(row.clone())),
                     storage_index: Some(i),
                     source_aliases: Vec::new(),
                 }]
@@ -425,6 +441,7 @@ fn execute_table_ref_with_predicate(
         return Ok(FromEval {
             iter: Box::new(ScanIterator::new(rows)),
             shape,
+            enforced_predicates: Vec::new(),
         });
     }
 
@@ -440,6 +457,7 @@ fn execute_table_ref_with_predicate(
         && table_ref.pivot.is_none()
         && table_ref.unpivot.is_none()
     {
+        let mut enforced_predicates = Vec::new();
         let fast_filter = if ctx.options.ansi_nulls {
             predicate.and_then(|pred| {
                 let (col_idx, op, rhs_expr) =
@@ -455,6 +473,24 @@ fn execute_table_ref_with_predicate(
                 .ok()?;
                 if rhs_val.is_null() {
                     return None;
+                }
+                if let Some(col) = bound.table.columns.get(col_idx) {
+                    if is_exact_same_family(&col.data_type, &rhs_val) {
+                        let mut conjuncts = Vec::new();
+                        crate::executor::joins::collect_and_conjuncts(pred, &mut conjuncts);
+                        for c in conjuncts {
+                            if let Some((ci, cop, crhs)) = super::scan::extract_fast_scan_predicate(
+                                c,
+                                &bound,
+                                allow_unqualified,
+                            ) {
+                                if ci == col_idx && cop == op && crhs == rhs_expr {
+                                    enforced_predicates.push(c.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
                 Some((col_idx, op, rhs_val))
             })
@@ -479,6 +515,7 @@ fn execute_table_ref_with_predicate(
         return Ok(FromEval {
             iter: Box::new(table_iter),
             shape,
+            enforced_predicates,
         });
     }
 
@@ -557,6 +594,7 @@ fn execute_table_ref_with_predicate(
     Ok(FromEval {
         iter: Box::new(ScanIterator::new(rows)),
         shape,
+        enforced_predicates: Vec::new(),
     })
 }
 
@@ -616,10 +654,10 @@ fn apply_from_alias(
         aliased_rows.push(vec![ContextTable {
             table: alias_table.clone(),
             alias: std::sync::Arc::clone(&alias_arc),
-            row: Some(StoredRow {
+            row: Some(std::sync::Arc::new(StoredRow {
                 values,
                 deleted: false,
-            }),
+            })),
             storage_index: None,
             source_aliases: Vec::new(),
         }]);
@@ -637,6 +675,7 @@ fn apply_from_alias(
     Ok(FromEval {
         iter: Box::new(ScanIterator::new(aliased_rows)),
         shape,
+        enforced_predicates: Vec::new(),
     })
 }
 

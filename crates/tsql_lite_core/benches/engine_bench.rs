@@ -200,3 +200,25 @@ fn bench_08_for_json_path(bencher: divan::Bencher) {
         ))
     });
 }
+
+#[divan::bench]
+fn bench_09_read_committed_select_in_tx(bencher: divan::Bencher) {
+    let (db, sid) = new_db_and_session();
+    let mut ddl = String::new();
+    for i in 0..200 {
+        ddl.push_str(&format!(
+            "CREATE TABLE dbo.CatalogTable_{i} (Id INT PRIMARY KEY, Val INT);\n"
+        ));
+    }
+    ddl.push_str("INSERT INTO dbo.CatalogTable_0 VALUES (1, 42);");
+    exec_sql(&db, sid, &ddl);
+    exec_sql(&db, sid, "BEGIN TRANSACTION;");
+    bencher.bench_local(|| {
+        black_box(query_rows(
+            &db,
+            sid,
+            "SELECT Val FROM dbo.CatalogTable_0 WHERE Id = 1;",
+        ))
+    });
+    exec_sql(&db, sid, "ROLLBACK TRANSACTION;");
+}

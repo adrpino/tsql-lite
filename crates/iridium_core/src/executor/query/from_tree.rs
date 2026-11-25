@@ -202,6 +202,52 @@ pub(crate) fn execute_from_clause_with_predicate(
                         shape,
                     });
                 }
+            } else if join_type == crate::ast::JoinType::Cross {
+                // Promote N-way comma-join WHERE equi-predicates (`FROM a, b, c WHERE a.id = b.id AND b.id = c.id`)
+                // into chained O(N+M) HashJoinIterators at every join level.
+                if let Some(pred) = predicate {
+                    let mut conjuncts = Vec::new();
+                    crate::executor::joins::collect_and_conjuncts(pred, &mut conjuncts);
+                    let mut left_keys = Vec::new();
+                    let mut right_keys = Vec::new();
+                    for c in conjuncts {
+                        if let Some((lk, rk)) = crate::executor::joins::find_equi_join_conditions(
+                            c,
+                            &left_eval.shape,
+                            &right_eval.shape,
+                        ) {
+                            left_keys.extend(lk);
+                            right_keys.extend(rk);
+                        }
+                    }
+                    if !left_keys.is_empty() {
+                        return Ok(FromEval {
+                            iter: Box::new(HashJoinIterator {
+                                left: left_eval.iter,
+                                right: right_eval.iter,
+                                left_keys,
+                                right_keys,
+                                residual_on: None,
+                                join_type: crate::ast::JoinType::Inner,
+                                left_shape: left_eval.shape,
+                                right_shape: right_eval.shape,
+                                build_done: false,
+                                right_materialized: Vec::new(),
+                                right_raw_keys: Vec::new(),
+                                right_key_families: Vec::new(),
+                                hash_map: HashMap::new(),
+                                right_matched: Vec::new(),
+                                current_left: None,
+                                current_matches: Vec::new(),
+                                current_match_idx: 0,
+                                matched_current_left: false,
+                                finishing_right: false,
+                                finishing_idx: 0,
+                            }),
+                            shape,
+                        });
+                    }
+                }
             }
 
             // Fallback to Nested Loop Join

@@ -28,6 +28,7 @@ use super::model::ContextTable;
 use super::string_norm::normalize_identifier;
 use builtin_registry::{lookup_builtin_handler, lookup_system_variable};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn eval_function(
     name: &str,
     args: &[Expr],

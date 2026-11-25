@@ -185,8 +185,7 @@ impl<'a> XmlCursor<'a> {
                 } else {
                     return Err(DbError::Execution("OPENXML: unclosed XML comment".into()));
                 }
-            } else if r.starts_with("<![CDATA[") {
-                let after = &r[9..];
+            } else if let Some(after) = r.strip_prefix("<![CDATA[") {
                 if let Some(end) = after.find("]]>") {
                     text.push_str(&after[..end]);
                     self.pos += 9 + end + 3;

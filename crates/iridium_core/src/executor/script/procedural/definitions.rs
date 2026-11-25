@@ -38,7 +38,7 @@ impl<'a> ScriptExecutor<'a> {
             kind: crate::catalog::RoutineKind::Procedure {
                 body: std::sync::Arc::new(stmt.body),
             },
-            definition_sql: String::new(),
+            definition_sql: stmt.definition_sql.unwrap_or_default(),
             is_schema_bound: false,
         };
         if stmt.or_alter {
@@ -71,7 +71,7 @@ impl<'a> ScriptExecutor<'a> {
                 returns: stmt.returns,
                 body: Box::new(stmt.body),
             },
-            definition_sql: String::new(),
+            definition_sql: stmt.definition_sql.unwrap_or_default(),
             is_schema_bound: stmt.is_schema_bound,
         };
         if stmt.or_alter {
@@ -107,7 +107,7 @@ impl<'a> ScriptExecutor<'a> {
             is_database_scope: stmt.is_database_scope,
             ddl_events: stmt.ddl_events,
             body: std::sync::Arc::new(stmt.body),
-            definition_sql: String::new(),
+            definition_sql: stmt.definition_sql.unwrap_or_default(),
         };
         if stmt.or_alter {
             self.catalog.replace_trigger(trigger)?;

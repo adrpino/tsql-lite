@@ -417,10 +417,8 @@ fn infer_expr_nullable(expr: &Expr, sample: Option<&JoinedRow>) -> bool {
                 infer_expr_nullable(&args[0], sample) && infer_expr_nullable(&args[1], sample)
             } else if upper == "COALESCE" && !args.is_empty() {
                 args.iter().all(|a| infer_expr_nullable(a, sample))
-            } else if matches!(upper.as_str(), "COUNT" | "COUNT_BIG") {
-                false
             } else {
-                true
+                !matches!(upper.as_str(), "COUNT" | "COUNT_BIG")
             }
         }
         _ => true,

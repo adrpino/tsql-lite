@@ -805,7 +805,8 @@ fn showplan_xml_for_stmt(_stmt: &Statement, include_stats: bool) -> String {
     let estimated_io = 0.0;
     let estimated_cpu = 0.001;
     let estimated_subtree_cost = 0.001;
-    let elapsed = if include_stats { 0.0 } else { 0.0 };
+    let _ = include_stats;
+    let elapsed = 0.0;
 
     format!(
         r#"<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.2" Build="16.0.0.0"><BatchSequence><Batch><CompiledPlan><QueryPlan CachedPlanSize="8" CompileTime="0" CompileCPU="0" CompileMemory="0"><RelOp NodeId="0" PhysicalOp="TableScan" LogicalOp="Table Scan" EstimateRows="{estimated_rows}" EstimateIO="{estimated_io}" EstimateCPU="{estimated_cpu}" AvgRowSize="0" EstimatedTotalSubtreeCost="{estimated_subtree_cost}" EstimatedExecutionMode="Row" Parallel="0" EstimateRebinds="0"><OutputList><ColumnReference Database="" Schema="" Table="" Column="*" /></OutputList><RunTimeInformation><RunTimeCountersPerThread Thread="0" ActualRows="0" Batches="0" ActualExecutionTimems="{elapsed}" /></RunTimeInformation></RelOp></QueryPlan></CompiledPlan><Statements><StmtSimple StatementText="" StatementId="{stmt_id}" StatementType="SELECT" StatementSubTreeCost="{estimated_subtree_cost}" StatementEstRows="{estimated_rows}" /></Statements></Batch></BatchSequence></ShowPlanXML>"#

@@ -413,15 +413,16 @@ pub(crate) fn eval_in_subquery(
     clock: &dyn Clock,
 ) -> Result<Value, DbError> {
     let val = eval_expr(in_expr, row, ctx, catalog, storage, clock)?;
-    if val.is_null() {
-        return Ok(Value::Null);
-    }
 
     let mut sub_ctx = ctx.with_outer_row(row.to_vec());
     let query_result = execute_subquery_select(stmt, &mut sub_ctx, catalog, storage, clock)?;
 
     if query_result.rows.is_empty() {
         return Ok(Value::Bit(negated));
+    }
+
+    if val.is_null() {
+        return Ok(Value::Null);
     }
 
     let mut found = false;
@@ -450,7 +451,7 @@ pub(crate) fn eval_in_subquery(
         }
     }
 
-    if !found && has_null && !negated {
+    if !found && has_null {
         return Ok(Value::Null);
     }
 

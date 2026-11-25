@@ -113,9 +113,17 @@ pub(crate) fn execute_sp_helptext(
             "sp_helptext requires 1 argument: object name".into(),
         ));
     }
-    let obj_name = &args[0];
+    let raw_obj = args[0].trim();
+    let (schema, obj_name) = if let Some((s, n)) = raw_obj.split_once('.') {
+        (
+            s.trim().trim_matches(['[', ']']),
+            n.trim().trim_matches(['[', ']']),
+        )
+    } else {
+        ("dbo", raw_obj.trim_matches(['[', ']']))
+    };
 
-    if let Some(view) = exec.catalog.find_view("dbo", obj_name) {
+    if let Some(view) = exec.catalog.find_view(schema, obj_name) {
         let text = if !view.definition_sql.is_empty() {
             view.definition_sql.clone()
         } else {
@@ -130,7 +138,7 @@ pub(crate) fn execute_sp_helptext(
         });
     }
 
-    if let Some(routine) = exec.catalog.find_routine("dbo", obj_name).cloned() {
+    if let Some(routine) = exec.catalog.find_routine(schema, obj_name).cloned() {
         let text = if !routine.definition_sql.is_empty() {
             routine.definition_sql.clone()
         } else {
@@ -145,9 +153,28 @@ pub(crate) fn execute_sp_helptext(
         });
     }
 
+    if let Some(trigger) =
+        exec.catalog.get_triggers().into_iter().find(|t| {
+            t.schema.eq_ignore_ascii_case(schema) && t.name.eq_ignore_ascii_case(obj_name)
+        })
+    {
+        let text = if !trigger.definition_sql.is_empty() {
+            trigger.definition_sql.clone()
+        } else {
+            crate::executor::tooling::format_trigger_definition(trigger)
+        };
+        return Ok(QueryResult {
+            columns: vec!["Text".into()],
+            column_types: vec![DataType::NVarChar { max_len: 4000 }],
+            column_nullabilities: vec![false],
+            rows: vec![vec![Value::NVarChar(text)]],
+            ..Default::default()
+        });
+    }
+
     Err(DbError::object_not_found(format!(
         "object '{}' does not exist or is not a valid object for sp_helptext",
-        obj_name
+        raw_obj
     )))
 }
 

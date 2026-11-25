@@ -171,7 +171,7 @@ fn metadata_sys_all_objects() {
 fn metadata_database_principals() {
     let mut e = Engine::new();
     let r = query(&mut e, "SELECT name, type FROM sys.database_principals");
-    assert!(r.rows.len() > 0);
+    assert!(!r.rows.is_empty());
 }
 
 #[test]

@@ -76,9 +76,8 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                     }
                     if is_varying {
                         Ok(DataType::VarChar(size))
-                    } else if is_char {
-                        Ok(DataType::Char(size))
                     } else {
+                        let _ = is_char;
                         Ok(DataType::Char(size))
                     }
                 }
@@ -101,9 +100,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
                     Ok(DataType::Float)
                 }
                 "NATIONAL" => {
-                    if parser.at_keyword(Keyword::Character) {
-                        let _ = parser.next();
-                    } else if parser.at_keyword(Keyword::Char) {
+                    if parser.at_keyword(Keyword::Character) || parser.at_keyword(Keyword::Char) {
                         let _ = parser.next();
                     } else if parser.at_keyword(Keyword::Varchar) {
                         let _ = parser.next();
@@ -348,9 +345,7 @@ pub fn parse_data_type(parser: &mut Parser) -> ParseResult<DataType> {
             Keyword::NChar | Keyword::National => {
                 let mut is_varying = false;
                 if *kw == Keyword::National {
-                    if parser.at_keyword(Keyword::Character) {
-                        let _ = parser.next();
-                    } else if parser.at_keyword(Keyword::Char) {
+                    if parser.at_keyword(Keyword::Character) || parser.at_keyword(Keyword::Char) {
                         let _ = parser.next();
                     } else if parser.at_keyword(Keyword::Varchar) {
                         let _ = parser.next();

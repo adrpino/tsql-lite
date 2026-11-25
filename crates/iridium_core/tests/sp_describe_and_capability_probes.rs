@@ -81,7 +81,7 @@ fn test_sp_describe_undeclared_parameters_empty() {
 fn test_fn_my_permissions_returns_rows() {
     let mut engine = Engine::new();
     let r = query(&mut engine, "SELECT * FROM fn_my_permissions()");
-    assert!(r.rows.len() > 0);
+    assert!(!r.rows.is_empty());
     assert_eq!(r.columns.len(), 2);
     assert_eq!(r.columns[0], "subentity_name");
     assert_eq!(r.columns[1], "permission_name");
@@ -122,7 +122,7 @@ fn test_fn_my_permissions_with_alias() {
         &mut engine,
         "SELECT permission_name FROM fn_my_permissions() p",
     );
-    assert!(r.rows.len() > 0);
+    assert!(!r.rows.is_empty());
 }
 
 // ─── Capability probes (SERVERPROPERTY, HAS_PERMS_BY_NAME) ─────────────────

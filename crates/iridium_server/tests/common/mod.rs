@@ -126,7 +126,7 @@ pub async fn query_sql(
     let stream = client
         .query(sql, &[])
         .await
-        .expect(&format!("Query failed: {}", sql));
+        .unwrap_or_else(|e| panic!("Query failed: {sql}: {e}"));
     let rows: Vec<Row> = stream
         .into_first_result()
         .await
@@ -149,5 +149,5 @@ pub async fn exec_sql(client: &mut Client<tokio_util::compat::Compat<TcpStream>>
     client
         .execute(sql, &[])
         .await
-        .expect(&format!("Execute failed: {}", sql));
+        .unwrap_or_else(|e| panic!("Execute failed: {sql}: {e}"));
 }

@@ -487,6 +487,7 @@ pub trait SequenceRegistry {
     fn get_sequences(&self) -> &[SequenceDef];
     fn find_sequence(&self, schema: &str, name: &str) -> Option<&SequenceDef>;
     fn create_sequence(&mut self, sequence: SequenceDef) -> Result<(), DbError>;
+    #[allow(clippy::too_many_arguments)]
     fn alter_sequence(
         &mut self,
         schema: &str,

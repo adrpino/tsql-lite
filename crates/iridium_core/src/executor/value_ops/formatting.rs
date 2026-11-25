@@ -132,7 +132,11 @@ pub fn format_datetime(dt: &NaiveDateTime, style: i32) -> String {
         14 => dt.format("%H:%M:%S:%f").to_string(),
         20 | 120 => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
         21 | 25 | 121 => {
-            if dt.and_utc().timestamp_subsec_nanos() % 1_000_000 == 0 {
+            if dt
+                .and_utc()
+                .timestamp_subsec_nanos()
+                .is_multiple_of(1_000_000)
+            {
                 dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
             } else {
                 dt.format("%Y-%m-%d %H:%M:%S%.f").to_string()

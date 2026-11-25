@@ -78,7 +78,7 @@ pub(crate) fn eval_user_scalar_function(
         }
     }
     let scope_depth = ctx.frame.scope_vars.len();
-    let out = (|| {
+    let out = {
         ctx.enter_scope();
         for (param_name, ty, coerced) in evaluated_params {
             ctx.session
@@ -100,7 +100,7 @@ pub(crate) fn eval_user_scalar_function(
         };
         ctx.leave_scope();
         out
-    })();
+    };
     while ctx.frame.scope_vars.len() > scope_depth {
         ctx.leave_scope();
     }

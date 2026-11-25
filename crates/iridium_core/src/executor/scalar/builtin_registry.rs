@@ -791,7 +791,7 @@ fn eval_json_object_fn(
     storage: &dyn Storage,
     clock: &dyn Clock,
 ) -> Result<Value, DbError> {
-    if args.len() % 2 != 0 {
+    if !args.len().is_multiple_of(2) {
         return Err(DbError::Execution(
             "JSON_OBJECT requires key:value pairs".into(),
         ));

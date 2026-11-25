@@ -64,7 +64,7 @@ fn test_database_principals_view() {
         &mut engine,
         "SELECT name, type, type_desc FROM sys.database_principals",
     );
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn test_builtin_logins_view() {
         &mut engine,
         "SELECT name, type_desc FROM sys.server_principals",
     );
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 }
 
 #[test]

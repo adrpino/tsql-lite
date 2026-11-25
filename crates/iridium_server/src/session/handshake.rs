@@ -1159,10 +1159,7 @@ impl TdsSession {
                         .map(|_opts| self.db.get_bulk_load_state(session_id))
                         .unwrap_or((false, None, None, false));
 
-                    if active && target.is_some() && columns.is_some() {
-                        let target = target.unwrap();
-                        let columns = columns.unwrap();
-
+                    if let (true, Some(target), Some(columns)) = (active, target, columns) {
                         let mut reader = packet::PacketReader::new(&data);
                         let mut column_types = Vec::new();
 

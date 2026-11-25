@@ -66,6 +66,7 @@ pub(crate) fn ddl_event_matches(registered: &str, actual: &str) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_eventdata_xml(
     event_type: &str,
     db_name: &str,

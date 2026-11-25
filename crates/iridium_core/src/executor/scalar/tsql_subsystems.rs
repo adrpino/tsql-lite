@@ -57,7 +57,7 @@ pub(crate) fn eval_partition_function(
         )?;
         boundaries.push(b_val);
     }
-    boundaries.sort_by(|a, b| compare_values(a, b));
+    boundaries.sort_by(compare_values);
 
     let mut part: i32 = 1;
     for b in &boundaries {
@@ -474,7 +474,7 @@ pub(crate) fn eval_spatial_distance(
     }
     let dist = if p1.is_geography {
         // WGS84 mean spherical radius (6371008.7714 m) Haversine
-        const EARTH_RADIUS_M: f64 = 6_371_008.7714;
+        const EARTH_RADIUS_M: f64 = 6_371_008.771_4;
         let lat1 = p1.a.to_radians();
         let lat2 = p2.a.to_radians();
         let dlat = (p2.a - p1.a).to_radians();

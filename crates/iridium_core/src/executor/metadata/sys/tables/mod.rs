@@ -3,6 +3,7 @@ mod databases;
 mod encryption;
 mod identity_columns;
 mod objects_misc;
+#[allow(clippy::module_inception)]
 mod tables;
 mod types;
 

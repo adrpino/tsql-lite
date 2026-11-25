@@ -1201,9 +1201,7 @@ fn eval_xml_value(xml: &str, xpath: &str) -> Option<String> {
             1
         };
         let matches = find_matching_xml_elements(slice, tag);
-        let Some(&(_, elem_open, elem_inner)) = matches.get(target_ord - 1) else {
-            return None;
-        };
+        let &(_, elem_open, elem_inner) = matches.get(target_ord - 1)?;
         matched_open_tag = elem_open;
         matched_inner = elem_inner;
         slice = elem_inner;

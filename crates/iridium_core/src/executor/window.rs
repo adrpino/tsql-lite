@@ -678,11 +678,11 @@ impl<'a> WindowExecutor<'a> {
 
         let col_count = columns.len();
         let mut column_types = vec![crate::types::DataType::VarChar { max_len: 4000 }; col_count];
-        for col_idx in 0..col_count {
+        for (col_idx, col_ty) in column_types.iter_mut().enumerate().take(col_count) {
             for row in &final_projected_rows {
                 if let Some(val) = row.get(col_idx) {
                     if !val.is_null() {
-                        column_types[col_idx] = val
+                        *col_ty = val
                             .data_type()
                             .unwrap_or(crate::types::DataType::VarChar { max_len: 4000 });
                         break;
@@ -714,6 +714,7 @@ impl<'a> WindowExecutor<'a> {
         true
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_window_exprs(&self, expr: &Expr, window_specs: &mut Vec<(WindowSpec, Vec<Expr>)>) {
         match expr {
             Expr::WindowFunction(wf) => {

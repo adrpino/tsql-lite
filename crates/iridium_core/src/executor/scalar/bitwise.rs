@@ -18,25 +18,25 @@ fn eval_shift_binary(bytes: &[u8], shift: usize, left: bool) -> Vec<u8> {
     let bit_shift = shift % 8;
     let mut out = vec![0u8; bytes.len()];
     if left {
-        for i in 0..bytes.len() {
+        for (i, slot) in out.iter_mut().enumerate() {
             let src = i + byte_shift;
             if src < bytes.len() {
                 let mut val = bytes[src] << bit_shift;
                 if bit_shift > 0 && src + 1 < bytes.len() {
                     val |= bytes[src + 1] >> (8 - bit_shift);
                 }
-                out[i] = val;
+                *slot = val;
             }
         }
     } else {
-        for i in 0..bytes.len() {
+        for (i, slot) in out.iter_mut().enumerate() {
             if i >= byte_shift {
                 let src = i - byte_shift;
                 let mut val = bytes[src] >> bit_shift;
                 if bit_shift > 0 && src > 0 {
                     val |= bytes[src - 1] << (8 - bit_shift);
                 }
-                out[i] = val;
+                *slot = val;
             }
         }
     }

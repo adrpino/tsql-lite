@@ -181,20 +181,24 @@ fn test_has_dbaccess() {
 // ── W4.6: Advanced Table Designer families / unsupported DDL ──
 
 #[test]
-fn test_create_database_unsupported() {
+fn test_create_database_supported() {
     let mut engine = Engine::new();
     assert!(
-        try_exec(&mut engine, "CREATE DATABASE test_db"),
-        "CREATE DATABASE should fail (single-db mode)"
+        !try_exec(&mut engine, "CREATE DATABASE test_db"),
+        "CREATE DATABASE is now supported in multi-DB mode"
     );
 }
 
 #[test]
-fn test_alter_database_set_unsupported() {
+fn test_alter_database_set_supported() {
     let mut engine = Engine::new();
     assert!(
-        try_exec(&mut engine, "ALTER DATABASE master SET READ_ONLY"),
-        "ALTER DATABASE SET should fail"
+        !try_exec(&mut engine, "CREATE DATABASE alter_set_db"),
+        "CREATE DATABASE should succeed"
+    );
+    assert!(
+        !try_exec(&mut engine, "ALTER DATABASE alter_set_db SET READ_ONLY"),
+        "ALTER DATABASE SET READ_ONLY is now supported"
     );
 }
 

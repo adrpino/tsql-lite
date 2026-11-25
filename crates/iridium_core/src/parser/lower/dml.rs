@@ -115,18 +115,17 @@ pub fn lower_dml(dml: ast::DmlStatement) -> Result<executor_ast::Statement, DbEr
     }
 }
 
+type ResolvedWindowSpec = (
+    Vec<ast::Expr>,
+    Vec<ast::OrderByExpr>,
+    Option<ast::WindowFrame>,
+);
+
 fn resolve_window_def(
     name: &str,
     windows: &[ast::NamedWindowDef],
     depth: usize,
-) -> Result<
-    (
-        Vec<ast::Expr>,
-        Vec<ast::OrderByExpr>,
-        Option<ast::WindowFrame>,
-    ),
-    DbError,
-> {
+) -> Result<ResolvedWindowSpec, DbError> {
     if depth > 16 {
         return Err(DbError::Execution(format!(
             "Circular WINDOW reference involving '{}'",

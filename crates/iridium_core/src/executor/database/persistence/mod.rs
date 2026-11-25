@@ -515,6 +515,55 @@ where
     }
 }
 
+fn rebuild_all_indexes_from_catalog<C, S>(catalog: &C, storage: &mut S)
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    let tables = catalog.get_tables();
+    let indexes = catalog.get_indexes();
+    for index_def in indexes {
+        let rows = match storage.get_rows(index_def.table_id) {
+            Ok(rows) => rows,
+            Err(_) => continue,
+        };
+        let col_positions: Vec<u32> = tables
+            .iter()
+            .find(|t| t.id == index_def.table_id)
+            .map(|tbl| {
+                index_def
+                    .column_ids
+                    .iter()
+                    .filter_map(|&cid| {
+                        tbl.columns
+                            .iter()
+                            .position(|c| c.id == cid)
+                            .map(|p| p as u32)
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| index_def.column_ids.clone());
+        if let Some(index_storage) = storage.as_index_storage_mut() {
+            index_storage.register_index(
+                index_def.table_id,
+                index_def.id,
+                col_positions,
+                index_def.is_unique,
+                index_def.is_clustered,
+            );
+            if let Some(idx) = index_storage.get_index_mut(index_def.table_id, index_def.id) {
+                let row_refs: Vec<(usize, &[crate::types::Value])> = rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| !r.deleted)
+                    .map(|(i, r)| (i, r.values.as_slice()))
+                    .collect();
+                let _ = idx.rebuild_from_rows(&row_refs);
+            }
+        }
+    }
+}
+
 impl<C, S> SharedState<C, S>
 where
     C: EngineCatalog,
@@ -526,6 +575,7 @@ where
         mut storage: S,
     ) -> Self {
         let _ = storage.restore_from_checkpoint(checkpoint.storage_data);
+        rebuild_all_indexes_from_catalog(&checkpoint.catalog, &mut storage);
         Self {
             storage: std::sync::Arc::new(parking_lot::RwLock::new(SharedStorage {
                 catalog: checkpoint.catalog,
@@ -583,6 +633,7 @@ where
     pub fn from_checkpoint_internal(checkpoint: RecoveryCheckpoint<C>) -> Self {
         let mut storage = S::default();
         let _ = storage.restore_from_checkpoint(checkpoint.storage_data);
+        rebuild_all_indexes_from_catalog(&checkpoint.catalog, &mut storage);
         Self::from_parts_internal(
             checkpoint.catalog,
             storage,
@@ -597,8 +648,10 @@ where
         let _ = storage
             .storage
             .restore_from_checkpoint(checkpoint.storage_data);
-        storage.commit_ts = checkpoint.commit_ts;
-        storage.table_versions = checkpoint.table_versions;
+        let shared = &mut *storage;
+        rebuild_all_indexes_from_catalog(&shared.catalog, &mut shared.storage);
+        shared.commit_ts = checkpoint.commit_ts;
+        shared.table_versions = checkpoint.table_versions;
         self.table_locks.lock().clear();
         for mut session_lock in self.sessions.iter_mut() {
             session_lock.value_mut().get_mut().reset();

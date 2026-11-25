@@ -15,6 +15,7 @@ pub(crate) fn rebuild_index_for_table(
     let row_refs: Vec<(usize, &[Value])> = rows
         .iter()
         .enumerate()
+        .filter(|(_, r)| !r.deleted)
         .map(|(i, r)| (i, r.values.as_slice()))
         .collect();
 
@@ -27,14 +28,33 @@ pub(crate) fn rebuild_index_for_table(
             .cloned();
 
         if let Some(index_def) = index_def {
+            let col_positions: Vec<u32> = executor
+                .catalog
+                .get_tables()
+                .iter()
+                .find(|t| t.id == table_id)
+                .map(|tbl| {
+                    index_def
+                        .column_ids
+                        .iter()
+                        .filter_map(|&cid| {
+                            tbl.columns
+                                .iter()
+                                .position(|c| c.id == cid)
+                                .map(|p| p as u32)
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| index_def.column_ids.clone());
             index_storage.register_index(
+                table_id,
                 index_def_id,
-                index_def.column_ids.clone(),
+                col_positions,
                 index_def.is_unique,
                 index_def.is_clustered,
             );
 
-            if let Some(idx) = index_storage.get_index_mut(index_def_id) {
+            if let Some(idx) = index_storage.get_index_mut(table_id, index_def_id) {
                 let _ = idx.rebuild_from_rows(row_refs.as_slice());
             }
         }

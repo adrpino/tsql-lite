@@ -244,6 +244,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_transaction_state<C, S>(
     out: &crate::error::StmtResult<Option<QueryResult>>,
     tx_manager: &mut TransactionManager<C, S, SessionSnapshot>,

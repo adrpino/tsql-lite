@@ -1,6 +1,4 @@
-use super::harness::{
-    DiffStep, DiffSuite, MultiSessionDiffSuite, MultiSessionStep, SessionSlot,
-};
+use super::harness::{DiffStep, DiffSuite, MultiSessionDiffSuite, MultiSessionStep, SessionSlot};
 
 pub fn all_multi_session_suites() -> Vec<MultiSessionDiffSuite> {
     vec![
@@ -31,6 +29,7 @@ pub fn all_suites() -> Vec<DiffSuite> {
         security_governance_and_query_fidelity(),
         error_number_parity_sql2019(),
         sp_msforeachtable_test_reset_parity(),
+        verbatim_definitions_strict_checks_and_hash_in_parity(),
     ]
 }
 
@@ -1819,6 +1818,111 @@ fn snapshot_isolation_disallowed_3952_parity() -> MultiSessionDiffSuite {
                 session: SessionSlot::A,
                 label: "cleanup_trancount",
                 sql: "IF @@TRANCOUNT > 0 ROLLBACK TRAN;",
+            },
+        ],
+    }
+}
+
+fn verbatim_definitions_strict_checks_and_hash_in_parity() -> DiffSuite {
+    DiffSuite {
+        name: "verbatim_definitions_strict_checks_and_hash_in_parity",
+        category: "Verbatim Definitions, Strict Parity & Hash Subqueries",
+        min_sql_version: 15,
+        setup_batches: &[
+            "CREATE TABLE dbo.ModSrc (Id INT NOT NULL PRIMARY KEY, Note NVARCHAR(50));
+             CREATE TABLE dbo.HashL (Id INT, Score INT);
+             CREATE TABLE dbo.HashR (Id INT);
+             CREATE TABLE dbo.HashREmpty (Id INT);
+             CREATE TABLE dbo.HashRNull (Id INT);
+             INSERT INTO dbo.HashL VALUES (1, 100), (2, 200), (3, 300), (NULL, 400);
+             INSERT INTO dbo.HashR VALUES (1), (3);
+             INSERT INTO dbo.HashRNull VALUES (1), (NULL);",
+            "-- leading view comment\nCREATE VIEW dbo.v_DiffVerbatim\nAS\n    SELECT   Id, /* inline */ Note\n    FROM dbo.ModSrc; -- trailing",
+            "/* proc header */\nCREATE PROCEDURE dbo.usp_DiffVerbatim\n    @Val INT = 1\nAS\nBEGIN\n    -- body comment\n    SELECT @Val AS ResultVal;\nEND;",
+            "CREATE FUNCTION dbo.ufn_DiffVerbatim(@x INT)\nRETURNS INT\nAS\nBEGIN\n    -- double it\n    RETURN @x * 2;\nEND;",
+            "CREATE TRIGGER dbo.trg_DiffVerbatim\nON dbo.ModSrc\nAFTER INSERT\nAS\nBEGIN\n    -- noop trigger\n    SET NOCOUNT ON;\nEND;",
+        ],
+        steps: &[
+            DiffStep::Query {
+                label: "verbatim_object_definition_and_sql_modules_view",
+                sql: "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.v_DiffVerbatim')),
+                             (SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID('dbo.v_DiffVerbatim'));",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "verbatim_object_definition_and_sql_modules_proc",
+                sql: "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.usp_DiffVerbatim')),
+                             (SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID('dbo.usp_DiffVerbatim'));",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "verbatim_object_definition_and_sql_modules_func",
+                sql: "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.ufn_DiffVerbatim')),
+                             (SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID('dbo.ufn_DiffVerbatim'));",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "verbatim_object_definition_and_sql_modules_trigger",
+                sql: "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.trg_DiffVerbatim')),
+                             (SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID('dbo.trg_DiffVerbatim'));",
+                ordered: true,
+            },
+            DiffStep::ExecOk {
+                label: "alter_view_verbatim",
+                sql: "ALTER VIEW dbo.v_DiffVerbatim\nAS\n    SELECT Id FROM dbo.ModSrc; -- altered",
+            },
+            DiffStep::Query {
+                label: "verbatim_altered_view_definition",
+                sql: "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.v_DiffVerbatim'));",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "hash_in_subquery_three_valued_nulls_and_empty_set",
+                sql: "SELECT
+                          (SELECT COUNT(*) FROM dbo.HashL WHERE Id IN (SELECT Id FROM dbo.HashR)) AS InCnt,
+                          (SELECT COUNT(*) FROM dbo.HashL WHERE Id NOT IN (SELECT Id FROM dbo.HashR)) AS NotInCnt,
+                          (SELECT COUNT(*) FROM dbo.HashL WHERE Id NOT IN (SELECT Id FROM dbo.HashRNull)) AS NotInNullCnt,
+                          (SELECT COUNT(*) FROM dbo.HashL WHERE Id IN (SELECT Id FROM dbo.HashRNull)) AS InNullCnt,
+                          (SELECT COUNT(*) FROM dbo.HashL WHERE Id NOT IN (SELECT Id FROM dbo.HashREmpty)) AS NotInEmptyCnt;",
+                ordered: true,
+            },
+            DiffStep::Query {
+                label: "three_way_comma_join_and_order_by",
+                sql: "SELECT a.Id, a.Score
+                      FROM dbo.HashL a, dbo.HashR b, dbo.HashR c
+                      WHERE a.Id = b.Id AND b.Id = c.Id
+                      ORDER BY a.Score DESC;",
+                ordered: true,
+            },
+            DiffStep::ExpectErrCode {
+                label: "xml_explicit_int_conversion_error_529",
+                sql: "SELECT CAST(42 AS XML);",
+                expected_code: Some(529),
+            },
+            DiffStep::ExpectErrCode {
+                label: "xml_implicit_var_conversion_error_257",
+                sql: "DECLARE @x XML = '<a/>'; DECLARE @s VARCHAR(50) = @x;",
+                expected_code: Some(257),
+            },
+            DiffStep::ExpectErrCode {
+                label: "xml_malformed_fragment_error_9436",
+                sql: "DECLARE @x XML = '<a></b>';",
+                expected_code: Some(9436),
+            },
+            DiffStep::ExpectErrCode {
+                label: "schemabinding_star_error_1054",
+                sql: "CREATE VIEW dbo.v_BadStar WITH SCHEMABINDING AS SELECT * FROM dbo.ModSrc;",
+                expected_code: Some(1054),
+            },
+            DiffStep::ExpectErrCode {
+                label: "schemabinding_one_part_name_error_4512",
+                sql: "CREATE VIEW dbo.v_BadOnePart WITH SCHEMABINDING AS SELECT Id FROM ModSrc;",
+                expected_code: Some(4512),
+            },
+            DiffStep::ExpectErrCode {
+                label: "identifier_over_128_chars_error_103",
+                sql: "CREATE TABLE dbo.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (Id INT);",
+                expected_code: Some(103),
             },
         ],
     }

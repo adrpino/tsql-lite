@@ -16,6 +16,8 @@ pub const SMP_DATA: u8 = 0x08;
 
 const DEFAULT_WINDOW_CREDIT: u32 = 4;
 
+pub type SmpDataResult = (Option<(PacketHeader, Vec<u8>)>, Option<SmpHeader>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SmpHeader {
     pub flags: u8,
@@ -178,11 +180,7 @@ impl SmpMultiplexer {
     /// Feed an `SMP_DATA` payload (one TDS packet). Returns:
     /// - `Ok(Some((tds_header, full_message)))` when `STATUS_EOM` completes the TDS message,
     /// - `Ok(None)` when more fragments are expected (caller should send the optional ACK).
-    pub fn on_data(
-        &mut self,
-        hdr: SmpHeader,
-        payload: &[u8],
-    ) -> io::Result<(Option<(PacketHeader, Vec<u8>)>, Option<SmpHeader>)> {
+    pub fn on_data(&mut self, hdr: SmpHeader, payload: &[u8]) -> io::Result<SmpDataResult> {
         let sess = self
             .sessions
             .entry(hdr.sid)

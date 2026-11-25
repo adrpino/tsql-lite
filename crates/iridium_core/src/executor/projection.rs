@@ -48,7 +48,7 @@ pub fn eval_top_count(
             Value::SmallInt(v) => Ok(v.max(0) as usize),
             Value::Int(v) => Ok(v.max(0) as usize),
             Value::BigInt(v) => Ok(v.max(0) as usize),
-            Value::Decimal(unscaled, scale) if scale == 0 => Ok(unscaled.max(0) as usize),
+            Value::Decimal(unscaled, 0) => Ok(unscaled.max(0) as usize),
             _ => Err(DbError::Execution(
                 "TOP currently requires an integer expression".into(),
             )),

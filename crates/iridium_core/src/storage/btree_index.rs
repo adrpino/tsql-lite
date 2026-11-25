@@ -47,34 +47,38 @@ impl BTreeIndex {
         }
     }
 
-    pub fn insert(&mut self, row_index: usize, row_values: &[Value]) -> Result<(), DbError> {
-        let key = IndexKey::from_row(row_values, &self.column_ids)
-            .ok_or_else(|| DbError::Storage("failed to extract index key from row".into()))?;
-
+    pub fn insert_key(&mut self, row_index: usize, key: IndexKey) -> Result<(), DbError> {
         if self.is_unique && self.tree.contains_key(&key) {
             return Err(DbError::Execution(
                 "Cannot insert duplicate key in unique index".into(),
             ));
         }
-
         self.tree.entry(key).or_default().push(row_index);
         Ok(())
+    }
+
+    pub fn delete_key(&mut self, row_index: usize, key: &IndexKey) -> Result<(), DbError> {
+        if let Some(indices) = self.tree.get_mut(key) {
+            if let Some(pos) = indices.iter().position(|&i| i == row_index) {
+                indices.remove(pos);
+                if indices.is_empty() {
+                    self.tree.remove(key);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn insert(&mut self, row_index: usize, row_values: &[Value]) -> Result<(), DbError> {
+        let key = IndexKey::from_row(row_values, &self.column_ids)
+            .ok_or_else(|| DbError::Storage("failed to extract index key from row".into()))?;
+        self.insert_key(row_index, key)
     }
 
     pub fn delete(&mut self, row_index: usize, row_values: &[Value]) -> Result<(), DbError> {
         let key = IndexKey::from_row(row_values, &self.column_ids)
             .ok_or_else(|| DbError::Storage("failed to extract index key from row".into()))?;
-
-        if let Some(indices) = self.tree.get_mut(&key) {
-            if let Some(pos) = indices.iter().position(|&i| i == row_index) {
-                indices.remove(pos);
-                if indices.is_empty() {
-                    self.tree.remove(&key);
-                }
-                return Ok(());
-            }
-        }
-        Ok(())
+        self.delete_key(row_index, &key)
     }
 
     pub fn update(
@@ -162,32 +166,40 @@ impl BTreeIndex {
 pub trait IndexStorage: Send + Sync {
     fn register_index(
         &mut self,
+        table_id: u32,
         index_id: u32,
         column_ids: Vec<u32>,
         is_unique: bool,
         is_clustered: bool,
     );
-    fn get_index(&self, index_id: u32) -> Option<&BTreeIndex>;
-    fn get_index_mut(&mut self, index_id: u32) -> Option<&mut BTreeIndex>;
-    fn seek_index(&self, index_id: u32, key: &Value) -> Result<Vec<usize>, DbError>;
+    fn get_index(&self, table_id: u32, index_id: u32) -> Option<&BTreeIndex>;
+    fn get_index_mut(&mut self, table_id: u32, index_id: u32) -> Option<&mut BTreeIndex>;
+    fn seek_index(&self, table_id: u32, index_id: u32, key: &Value) -> Result<Vec<usize>, DbError>;
     fn seek_index_range(
         &self,
+        table_id: u32,
         index_id: u32,
         lower: Option<&Value>,
         upper: Option<&Value>,
     ) -> Result<Vec<(Value, Vec<usize>)>, DbError>;
     fn insert_index_entry(
         &mut self,
+        table_id: u32,
         index_id: u32,
         key: Value,
         row_index: usize,
     ) -> Result<(), DbError>;
     fn delete_index_entry(
         &mut self,
+        table_id: u32,
         index_id: u32,
         key: &Value,
         row_index: usize,
     ) -> Result<(), DbError>;
-    fn rebuild_index(&mut self, index_id: u32, entries: Vec<(Value, usize)>)
-        -> Result<(), DbError>;
+    fn rebuild_index(
+        &mut self,
+        table_id: u32,
+        index_id: u32,
+        entries: Vec<(Value, usize)>,
+    ) -> Result<(), DbError>;
 }

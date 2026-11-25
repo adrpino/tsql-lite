@@ -325,7 +325,7 @@ impl<'a> MutationExecutor<'a> {
                 if let Some(index_storage) = self.storage.as_index_storage_mut() {
                     if let Some(values) = deleted_values.get(i) {
                         for &idx_id in &table_indexes {
-                            if let Some(bi) = index_storage.get_index_mut(idx_id) {
+                            if let Some(bi) = index_storage.get_index_mut(table_id, idx_id) {
                                 let _ = bi.delete(*idx, values);
                             }
                         }

@@ -352,6 +352,17 @@ pub(crate) fn create_table(
         }
     }
 
+    let created_index_ids: Vec<u32> = executor
+        .catalog
+        .get_indexes()
+        .iter()
+        .filter(|idx| idx.table_id == table_id)
+        .map(|idx| idx.id)
+        .collect();
+    for idx_id in created_index_ids {
+        schema_physical::rebuild_index_for_table(executor, idx_id, table_id);
+    }
+
     Ok(())
 }
 
@@ -432,7 +443,7 @@ pub(crate) fn create_view(
         name: view_name,
         schema_id,
         query: std::sync::Arc::new(view_stmt),
-        definition_sql: String::new(),
+        definition_sql: stmt.definition_sql.unwrap_or_default(),
         is_schema_bound: stmt.is_schema_bound,
         with_check_option: stmt.with_check_option,
     };

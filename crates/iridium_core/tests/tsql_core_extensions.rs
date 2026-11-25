@@ -14,8 +14,6 @@ fn query(engine: &mut Engine, sql: &str) -> QueryResult {
     engine
         .execute_batch(stmts)
         .unwrap_or_else(|e| panic!("SQL failed: {sql}\nerror: {e}"))
-        .into_iter()
-        .last()
         .unwrap_or_default()
 }
 
@@ -998,10 +996,12 @@ fn spaced_comparison_ops_comma_after_join_switch_partition_and_double_colon() {
     assert_eq!(r_join.rows[0][0].to_integer_i64(), Some(7));
     assert_eq!(r_join.rows[0][1].to_integer_i64(), Some(7));
 
-    // 3. ALTER TABLE ... SWITCH PARTITION
+    // 3. ALTER TABLE ... SWITCH PARTITION (SQL Server requires target table to be empty)
     exec(
         &mut e,
-        "ALTER TABLE dbo.LeftItems SWITCH PARTITION 1 TO dbo.RightItems;
+        "TRUNCATE TABLE dbo.RightItems;
+         ALTER TABLE dbo.LeftItems SWITCH PARTITION 1 TO dbo.RightItems;
+         TRUNCATE TABLE dbo.RightItems;
          ALTER TABLE dbo.LeftItems SWITCH PARTITION 2 TO dbo.RightItems PARTITION 2;",
     );
 

@@ -572,7 +572,7 @@ fn read_tvp_col_meta(r: &mut PacketReader, type_id: u8) -> io::Result<TvpColMeta
             }
         }
         0x28 => {} // DATE has no extra TYPE_INFO bytes
-        0x29 | 0x2A | 0x2B => {
+        0x29..=0x2B => {
             if r.remaining() >= 1 {
                 meta.scale = r.read_u8()?;
             }

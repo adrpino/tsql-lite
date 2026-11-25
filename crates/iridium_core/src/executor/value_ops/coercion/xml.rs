@@ -228,10 +228,14 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                     match stack.pop() {
                         Some(open) if open == tag_name => {}
                         Some(open) => {
-                            return Err(xml_parse_err(format!(
-                                "end tag '{}' does not match start tag '{}'",
-                                tag_name, open
-                            )));
+                            return Err(DbError::Custom {
+                                class: 16,
+                                number: 9436,
+                                message: format!(
+                                    "XML parsing: end tag '{}' does not match start tag '{}'",
+                                    tag_name, open
+                                ),
+                            });
                         }
                         None => {
                             return Err(xml_parse_err(format!(

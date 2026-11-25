@@ -155,6 +155,61 @@ pub fn parse_batch(sql: &str) -> Result<Vec<Statement>, DbError> {
     parse_batch_with_quoted_ident(sql, true)
 }
 
+/// Preserves verbatim SQL module text (including leading/inline/trailing comments and whitespace),
+/// normalizing only a leading `ALTER` keyword to `CREATE` to match SQL Server's `sys.sql_modules`
+/// / `OBJECT_DEFINITION()` storage behavior.
+fn normalize_module_definition_sql(sql: &str) -> String {
+    let bytes = sql.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        // Skip ASCII whitespace & BOM/zero-width
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        // Skip -- line comments
+        if i + 1 < len && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < len && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip /* ... */ nested block comments
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            let mut depth = 1usize;
+            while i + 1 < len && depth > 0 {
+                if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        break;
+    }
+    if i + 5 <= len
+        && sql.is_char_boundary(i)
+        && sql.is_char_boundary(i + 5)
+        && sql[i..i + 5].eq_ignore_ascii_case("ALTER")
+        && (i + 5 == len || !bytes[i + 5].is_ascii_alphanumeric() && bytes[i + 5] != b'_')
+    {
+        let mut out = String::with_capacity(sql.len() + 1);
+        out.push_str(&sql[..i]);
+        out.push_str("CREATE");
+        out.push_str(&sql[i + 5..]);
+        return out;
+    }
+    sql.to_string()
+}
+
 pub fn parse_batch_with_quoted_ident(
     sql: &str,
     quoted_identifier: bool,
@@ -165,7 +220,27 @@ pub fn parse_batch_with_quoted_ident(
     validate_identifier_lengths(&tokens)?;
     let mut parser = Parser::new(tokens);
     let stmts = inner_parse::parse_batch(&mut parser).map_err(|e| DbError::Parse(e.to_string()))?;
-    lower::lower_batch(stmts)
+    let mut lowered = lower::lower_batch(stmts)?;
+    if lowered.len() == 1 {
+        if let Some(Statement::Procedural(proc_stmt)) = lowered.first_mut() {
+            match proc_stmt {
+                crate::ast::ProceduralStatement::CreateView(v) => {
+                    v.definition_sql = Some(normalize_module_definition_sql(sql));
+                }
+                crate::ast::ProceduralStatement::CreateProcedure(p) => {
+                    p.definition_sql = Some(normalize_module_definition_sql(sql));
+                }
+                crate::ast::ProceduralStatement::CreateFunction(f) => {
+                    f.definition_sql = Some(normalize_module_definition_sql(sql));
+                }
+                crate::ast::ProceduralStatement::CreateTrigger(t) => {
+                    t.definition_sql = Some(normalize_module_definition_sql(sql));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(lowered)
 }
 
 pub fn parse_sql(sql: &str) -> Result<Statement, DbError> {

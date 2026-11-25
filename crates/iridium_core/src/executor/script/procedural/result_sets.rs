@@ -31,10 +31,12 @@ fn truncate_result_string(val: Value, ty: &DataType) -> Value {
     }
 }
 
+type ResolvedResultSetColumns = Vec<(String, DataType, Option<bool>)>;
+
 fn resolve_result_set_columns(
     def: &ResultSetDefinition,
     catalog: &dyn Catalog,
-) -> Result<Option<Vec<(String, DataType, Option<bool>)>>, DbError> {
+) -> Result<Option<ResolvedResultSetColumns>, DbError> {
     match def {
         ResultSetDefinition::Columns(cols) => {
             let mut out = Vec::with_capacity(cols.len());

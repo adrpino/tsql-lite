@@ -14,7 +14,7 @@ pub(crate) const TABLE_META: TableDefinition<u32, u64> = TableDefinition::new("r
 #[derive(Debug, Clone, Default)]
 pub struct RedbStorage {
     db: Option<Arc<Database>>,
-    pub(crate) indexes: BTreeMap<u32, BTreeIndex>,
+    pub(crate) indexes: BTreeMap<(u32, u32), BTreeIndex>,
 }
 
 impl Serialize for RedbStorage {

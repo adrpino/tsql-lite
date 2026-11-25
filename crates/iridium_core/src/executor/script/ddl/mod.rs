@@ -1057,26 +1057,32 @@ impl<'a> ScriptExecutor<'a> {
                                 .scan_rows(tbl.id)?
                                 .collect::<Result<Vec<_>, _>>()?;
                             if let Some(idx_stor) = self.storage.as_index_storage_mut() {
-                                if let Some(first_col_id) = idx.column_ids.first().copied() {
-                                    if let Some(pos) =
-                                        tbl.columns.iter().position(|c| c.id == first_col_id)
-                                    {
-                                        idx_stor.register_index(
-                                            idx.id,
-                                            idx.column_ids.clone(),
-                                            idx.is_unique,
-                                            idx.is_clustered,
-                                        );
-                                        for (row_idx, row) in rows.iter().enumerate() {
-                                            if row.deleted {
-                                                continue;
-                                            }
-                                            let _ = idx_stor.insert_index_entry(
-                                                idx.id,
-                                                row.values[pos].clone(),
-                                                row_idx,
-                                            );
-                                        }
+                                let col_positions: Vec<u32> = idx
+                                    .column_ids
+                                    .iter()
+                                    .filter_map(|&cid| {
+                                        tbl.columns
+                                            .iter()
+                                            .position(|c| c.id == cid)
+                                            .map(|p| p as u32)
+                                    })
+                                    .collect();
+                                if !col_positions.is_empty() {
+                                    idx_stor.register_index(
+                                        tbl.id,
+                                        idx.id,
+                                        col_positions,
+                                        idx.is_unique,
+                                        idx.is_clustered,
+                                    );
+                                    if let Some(bi) = idx_stor.get_index_mut(tbl.id, idx.id) {
+                                        let row_refs: Vec<(usize, &[crate::types::Value])> = rows
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, r)| !r.deleted)
+                                            .map(|(i, r)| (i, r.values.as_slice()))
+                                            .collect();
+                                        let _ = bi.rebuild_from_rows(&row_refs);
                                     }
                                 }
                             }

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use crate::ast::{BinaryOp, Expr};
@@ -5,10 +6,12 @@ use crate::catalog::Catalog;
 use crate::error::DbError;
 use crate::executor::clock::Clock;
 use crate::executor::context::ExecutionContext;
+use crate::executor::evaluator::eval_expr;
 use crate::executor::joins::{eval_key, get_expr_side, JoinSide};
 use crate::executor::model::{ContextTable, JoinedRow};
-use crate::executor::value_ops::{HashKeyFamily, SqlHashKey};
+use crate::executor::value_ops::{compare_values, HashKeyFamily, SqlHashKey};
 use crate::storage::Storage;
+use crate::types::Value;
 
 use super::super::from_tree::{self, FromEval, RowIterator};
 use super::super::plan::RelationalQuery;
@@ -48,6 +51,289 @@ impl RowIterator for HashSemiJoinIterator {
     fn reset(&mut self) -> Result<(), DbError> {
         self.source.reset()
     }
+}
+
+struct HashInSubqueryIterator {
+    source: Box<dyn RowIterator>,
+    lhs_expr: Expr,
+    inner_set: HashSet<SqlHashKey>,
+    inner_raw: Vec<Value>,
+    inner_family: Option<HashKeyFamily>,
+    has_null: bool,
+    is_empty: bool,
+    negated: bool,
+}
+
+impl RowIterator for HashInSubqueryIterator {
+    fn next_row(
+        &mut self,
+        ctx: &mut ExecutionContext,
+        catalog: &dyn Catalog,
+        storage: &dyn Storage,
+        clock: &dyn Clock,
+    ) -> Result<Option<JoinedRow>, DbError> {
+        while let Some(row) = self.source.next_row(ctx, catalog, storage, clock)? {
+            let lhs = eval_expr(&self.lhs_expr, &row, ctx, catalog, storage, clock)?;
+            let matched = if self.is_empty {
+                self.negated
+            } else if lhs.is_null() {
+                false
+            } else {
+                let hk = SqlHashKey::from_value(&lhs);
+                let found = matches!(
+                    self.inner_family,
+                    Some(fam) if fam == hk.family() && fam != HashKeyFamily::Mixed
+                )
+                .then(|| self.inner_set.contains(&hk))
+                .unwrap_or_else(|| {
+                    self.inner_raw
+                        .iter()
+                        .any(|rv| compare_values(&lhs, rv) == Ordering::Equal)
+                });
+                if self.negated {
+                    !found && !self.has_null
+                } else {
+                    found
+                }
+            };
+            if matched {
+                return Ok(Some(row));
+            }
+        }
+        Ok(None)
+    }
+
+    fn reset(&mut self) -> Result<(), DbError> {
+        self.source.reset()
+    }
+}
+
+fn expr_references_outer(
+    expr: &Expr,
+    inner_shape: &[ContextTable],
+    outer_shape: &[ContextTable],
+) -> bool {
+    match expr {
+        Expr::Identifier(name) => {
+            if name.starts_with('@') {
+                return false;
+            }
+            let in_inner = inner_shape.iter().any(|b| {
+                b.table
+                    .columns
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(name))
+            });
+            if in_inner {
+                return false;
+            }
+            outer_shape.iter().any(|b| {
+                b.table
+                    .columns
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(name))
+            })
+        }
+        Expr::QualifiedIdentifier(parts) => {
+            if parts.len() < 2 {
+                return true;
+            }
+            let tbl = &parts[parts.len() - 2];
+            !inner_shape.iter().any(|b| {
+                b.alias.eq_ignore_ascii_case(tbl)
+                    || b.table.name.eq_ignore_ascii_case(tbl)
+                    || b.source_aliases.iter().any(|a| a.eq_ignore_ascii_case(tbl))
+            })
+        }
+        Expr::Binary { left, right, .. } => {
+            expr_references_outer(left, inner_shape, outer_shape)
+                || expr_references_outer(right, inner_shape, outer_shape)
+        }
+        Expr::Unary { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::TryCast { expr: inner, .. }
+        | Expr::Convert { expr: inner, .. }
+        | Expr::TryConvert { expr: inner, .. }
+        | Expr::IsNull(inner)
+        | Expr::IsNotNull(inner) => expr_references_outer(inner, inner_shape, outer_shape),
+        Expr::FunctionCall { args, .. } => args
+            .iter()
+            .any(|a| expr_references_outer(a, inner_shape, outer_shape)),
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            operand
+                .as_deref()
+                .is_some_and(|o| expr_references_outer(o, inner_shape, outer_shape))
+                || when_clauses.iter().any(|wc| {
+                    expr_references_outer(&wc.condition, inner_shape, outer_shape)
+                        || expr_references_outer(&wc.result, inner_shape, outer_shape)
+                })
+                || else_result
+                    .as_deref()
+                    .is_some_and(|e| expr_references_outer(e, inner_shape, outer_shape))
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            expr_references_outer(expr, inner_shape, outer_shape)
+                || expr_references_outer(low, inner_shape, outer_shape)
+                || expr_references_outer(high, inner_shape, outer_shape)
+        }
+        Expr::InList { expr, list, .. } => {
+            expr_references_outer(expr, inner_shape, outer_shape)
+                || list
+                    .iter()
+                    .any(|i| expr_references_outer(i, inner_shape, outer_shape))
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            expr_references_outer(expr, inner_shape, outer_shape)
+                || expr_references_outer(pattern, inner_shape, outer_shape)
+                || escape
+                    .as_deref()
+                    .is_some_and(|e| expr_references_outer(e, inner_shape, outer_shape))
+        }
+        Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => true,
+        _ => false,
+    }
+}
+
+fn select_is_uncorrelated(
+    executor: &QueryExecutor<'_>,
+    subquery: &crate::ast::SelectStmt,
+    outer_shape: &[ContextTable],
+    ctx: &mut ExecutionContext,
+) -> Result<bool, DbError> {
+    if subquery.set_op.is_some()
+        || !subquery.applies.is_empty()
+        || subquery.projection.len() != 1
+        || subquery.from_clause.is_none()
+    {
+        return Ok(false);
+    }
+    let probe_query = RelationalQuery {
+        from_clause: subquery.from_clause.clone(),
+        applies: Vec::new(),
+        projection: crate::executor::query::plan::ProjectionPlan {
+            items: Vec::new(),
+            distinct: false,
+        },
+        filter: crate::executor::query::plan::FilterPlan {
+            selection: None,
+            group_by: Vec::new(),
+            grouping_sets: Vec::new(),
+            having: None,
+        },
+        sort: crate::executor::query::plan::SortPlan {
+            order_by: Vec::new(),
+        },
+        pagination: crate::executor::query::plan::PaginationPlan {
+            top: None,
+            offset: None,
+            fetch: None,
+        },
+        into_table: None,
+        set_op: None,
+        for_xml: None,
+        for_json: None,
+    };
+    let probe_from = from::execute_from_stage(executor, &probe_query, ctx)?;
+    let inner_shape = &probe_from.shape;
+
+    if expr_references_outer(&subquery.projection[0].expr, inner_shape, outer_shape) {
+        return Ok(false);
+    }
+    if subquery
+        .selection
+        .as_ref()
+        .is_some_and(|e| expr_references_outer(e, inner_shape, outer_shape))
+    {
+        return Ok(false);
+    }
+    if subquery
+        .group_by
+        .iter()
+        .any(|e| expr_references_outer(e, inner_shape, outer_shape))
+    {
+        return Ok(false);
+    }
+    if subquery
+        .having
+        .as_ref()
+        .is_some_and(|e| expr_references_outer(e, inner_shape, outer_shape))
+    {
+        return Ok(false);
+    }
+    if subquery
+        .order_by
+        .iter()
+        .any(|o| expr_references_outer(&o.expr, inner_shape, outer_shape))
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn try_build_hash_in_subquery(
+    executor: &QueryExecutor<'_>,
+    lhs_expr: &Expr,
+    subquery: &crate::ast::SelectStmt,
+    negated: bool,
+    outer_shape: &[ContextTable],
+    ctx: &mut ExecutionContext,
+) -> Result<Option<HashInSubqueryIterator>, DbError> {
+    if expr_contains_subquery(lhs_expr)
+        || !select_is_uncorrelated(executor, subquery, outer_shape, ctx)?
+    {
+        return Ok(None);
+    }
+    let sub_query = RelationalQuery::from(subquery.clone());
+    let result = executor.execute_select(sub_query, ctx)?;
+    if result.columns.len() != 1 {
+        return Ok(None);
+    }
+
+    let is_empty = result.rows.is_empty();
+    let mut has_null = false;
+    let mut inner_set = HashSet::with_capacity(result.rows.len());
+    let mut inner_raw = Vec::with_capacity(result.rows.len());
+    let mut inner_family: Option<HashKeyFamily> = None;
+
+    for row in result.rows {
+        let val = row.into_iter().next().unwrap_or(Value::Null);
+        if val.is_null() {
+            has_null = true;
+            continue;
+        }
+        let hk = SqlHashKey::from_value(&val);
+        let fam = hk.family();
+        inner_family = match inner_family {
+            None => Some(fam),
+            Some(prev) if prev == fam => Some(prev),
+            Some(_) => Some(HashKeyFamily::Mixed),
+        };
+        inner_set.insert(hk);
+        inner_raw.push(val);
+    }
+
+    Ok(Some(HashInSubqueryIterator {
+        // Placeholder; caller attaches actual `source` iterator immediately.
+        source: Box::new(from_tree::ScanIterator::new(Vec::new())),
+        lhs_expr: lhs_expr.clone(),
+        inner_set,
+        inner_raw,
+        inner_family,
+        has_null,
+        is_empty,
+        negated,
+    }))
 }
 
 fn expr_contains_subquery(expr: &Expr) -> bool {
@@ -121,13 +407,15 @@ fn combine_and(exprs: Vec<Expr>) -> Option<Expr> {
     })
 }
 
+type SemiJoinProbe = (Vec<Expr>, HashSet<Vec<SqlHashKey>>, bool);
+
 fn try_build_hash_semi_join(
     executor: &QueryExecutor<'_>,
     subquery: &crate::ast::SelectStmt,
     negated: bool,
     outer_shape: &[ContextTable],
     ctx: &mut ExecutionContext,
-) -> Result<Option<(Vec<Expr>, HashSet<Vec<SqlHashKey>>, bool)>, DbError> {
+) -> Result<Option<SemiJoinProbe>, DbError> {
     if !subquery.group_by.is_empty()
         || subquery.having.is_some()
         || subquery.set_op.is_some()
@@ -285,6 +573,20 @@ pub(crate) fn execute_where_stage(
                         inner_keys,
                         negated: neg,
                     });
+                    continue;
+                }
+            }
+            if let Expr::InSubquery {
+                ref expr,
+                ref subquery,
+                negated,
+            } = c
+            {
+                if let Some(mut hash_in) =
+                    try_build_hash_in_subquery(executor, expr, subquery, negated, &shape, ctx)?
+                {
+                    hash_in.source = source_eval.iter;
+                    source_eval.iter = Box::new(hash_in);
                     continue;
                 }
             }

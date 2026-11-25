@@ -306,6 +306,8 @@ pub struct CreateViewStmt {
     pub is_schema_bound: bool,
     #[serde(default)]
     pub with_check_option: bool,
+    #[serde(default)]
+    pub definition_sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

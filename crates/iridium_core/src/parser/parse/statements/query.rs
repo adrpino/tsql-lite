@@ -1262,12 +1262,12 @@ fn parse_optional_alias(parser: &mut Parser) -> Option<String> {
             }
         }
         Some(Token::Identifier(alias))
-            if !crate::parser::parse::expressions::is_stop_keyword(alias)
-                && !(alias.eq_ignore_ascii_case("OPTION")
+            if !(crate::parser::parse::expressions::is_stop_keyword(alias)
+                || (alias.eq_ignore_ascii_case("OPTION")
                     && matches!(parser.peek_at(1), Some(Token::LParen)))
-                && !(alias.eq_ignore_ascii_case("WINDOW")
+                || (alias.eq_ignore_ascii_case("WINDOW")
                     && matches!(parser.peek_at(1), Some(Token::Identifier(_)))
-                    && matches!(parser.peek_at(2), Some(Token::Keyword(Keyword::As)))) =>
+                    && matches!(parser.peek_at(2), Some(Token::Keyword(Keyword::As))))) =>
         {
             let alias = alias.clone();
             let _ = parser.next();

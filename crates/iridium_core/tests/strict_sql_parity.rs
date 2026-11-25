@@ -98,19 +98,19 @@ fn xml_validates_well_formedness_for_documents_and_fragments() {
             .unwrap_or_else(|e| panic!("valid XML `{valid}` failed: {e}"));
     }
 
-    // Invalid XML forms must fail with error 9400.
-    for invalid in [
-        "<a>",
-        "<a></b>",
-        "</a>",
-        "<a x=1/>",
-        "<a x=\"1\" x=\"2\"/>",
-        "<a x=\"1<2\"/>",
-        "a & b",
-        "<a/>&unknown;",
-        "<!-- unclosed",
-        "<!-- bad -- comment -->",
-        "<![CDATA[unclosed",
+    // Invalid XML forms must fail with XML parsing errors (9436 for mismatched end tag, 9400 otherwise).
+    for (invalid, expected_code) in [
+        ("<a>", 9400),
+        ("<a></b>", 9436),
+        ("</a>", 9400),
+        ("<a x=1/>", 9400),
+        ("<a x=\"1\" x=\"2\"/>", 9400),
+        ("<a x=\"1<2\"/>", 9400),
+        ("a & b", 9400),
+        ("<a/>&unknown;", 9400),
+        ("<!-- unclosed", 9400),
+        ("<!-- bad -- comment -->", 9400),
+        ("<![CDATA[unclosed", 9400),
     ] {
         let sql = format!("DECLARE @x XML = '{}';", invalid.replace('\'', "''"));
         let err = engine
@@ -118,7 +118,7 @@ fn xml_validates_well_formedness_for_documents_and_fragments() {
             .expect_err(&format!("invalid XML `{invalid}` should have failed"));
         assert_eq!(
             err.number(),
-            9400,
+            expected_code,
             "invalid XML `{invalid}` gave wrong error: {err}"
         );
     }
@@ -230,4 +230,130 @@ fn schemabinding_creation_checks_reject_star_one_part_and_self_ref() {
     engine
         .exec("CREATE VIEW dbo.vLoose AS SELECT * FROM Items;")
         .expect("non-SCHEMABINDING view must allow SELECT * and 1-part names");
+}
+
+#[test]
+fn verbatim_definition_sql_preserved_for_view_proc_func_and_trigger() {
+    let engine = Engine::new();
+    engine
+        .exec("CREATE TABLE dbo.AuditTarget (Id INT NOT NULL PRIMARY KEY, Note NVARCHAR(50));")
+        .unwrap();
+
+    let view_sql = "-- leading view comment\nCREATE VIEW dbo.v_Verbatim\nAS\n    SELECT   Id, /* inline */ Note\n    FROM dbo.AuditTarget; -- trailing";
+    let proc_sql = "/* proc header */\nCREATE PROCEDURE dbo.usp_Verbatim\n    @Val INT = 1\nAS\nBEGIN\n    -- body comment\n    SELECT @Val AS ResultVal;\nEND;";
+    let fn_sql = "CREATE FUNCTION dbo.ufn_Verbatim(@x INT)\nRETURNS INT\nAS\nBEGIN\n    -- double it\n    RETURN @x * 2;\nEND;";
+    let trig_sql = "CREATE TRIGGER dbo.trg_Verbatim\nON dbo.AuditTarget\nAFTER INSERT\nAS\nBEGIN\n    -- noop trigger\n    SET NOCOUNT ON;\nEND;";
+
+    engine.exec(view_sql).unwrap();
+    engine.exec(proc_sql).unwrap();
+    engine.exec(fn_sql).unwrap();
+    engine.exec(trig_sql).unwrap();
+
+    for (obj, expected) in [
+        ("dbo.v_Verbatim", view_sql),
+        ("dbo.usp_Verbatim", proc_sql),
+        ("dbo.ufn_Verbatim", fn_sql),
+        ("dbo.trg_Verbatim", trig_sql),
+    ] {
+        let q1 = engine
+            .query(&format!("SELECT OBJECT_DEFINITION(OBJECT_ID('{obj}'));"))
+            .unwrap();
+        assert_eq!(q1.rows[0][0].to_string_value(), expected);
+
+        let q2 = engine
+            .query(&format!(
+                "SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID('{obj}');"
+            ))
+            .unwrap();
+        assert_eq!(q2.rows[0][0].to_string_value(), expected);
+
+        let q3 = engine.query(&format!("EXEC sp_helptext '{obj}';")).unwrap();
+        assert_eq!(q3.rows[0][0].to_string_value(), expected);
+    }
+
+    // ALTER updates verbatim definition and normalizes leading ALTER -> CREATE like SQL Server.
+    let altered_view =
+        "-- v2 header\nALTER VIEW dbo.v_Verbatim AS SELECT Id FROM dbo.AuditTarget; -- v2";
+    engine.exec(altered_view).unwrap();
+    let q_alt = engine
+        .query("SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.v_Verbatim'));")
+        .unwrap();
+    assert_eq!(
+        q_alt.rows[0][0].to_string_value(),
+        "-- v2 header\nCREATE VIEW dbo.v_Verbatim AS SELECT Id FROM dbo.AuditTarget; -- v2"
+    );
+}
+
+#[test]
+fn hash_in_subquery_three_valued_nulls_and_large_join_ordering_performance() {
+    let engine = Engine::new();
+    run_batch(
+        &engine,
+        "CREATE TABLE dbo.L (Id INT, Val INT);
+         CREATE TABLE dbo.R (Id INT);
+         CREATE TABLE dbo.REmpty (Id INT);
+         CREATE TABLE dbo.RWithNull (Id INT);
+         INSERT INTO dbo.L VALUES (1, 10), (2, 20), (3, 30), (NULL, 40);
+         INSERT INTO dbo.R VALUES (1), (3);
+         INSERT INTO dbo.RWithNull VALUES (1), (NULL);",
+    )
+    .unwrap();
+
+    // Standard IN
+    let qr = engine
+        .query("SELECT Id FROM dbo.L WHERE Id IN (SELECT Id FROM dbo.R) ORDER BY Id;")
+        .unwrap();
+    assert_eq!(qr.rows, vec![vec![Value::Int(1)], vec![Value::Int(3)]]);
+
+    // Standard NOT IN (excludes NULL lhs)
+    let qr = engine
+        .query("SELECT Id FROM dbo.L WHERE Id NOT IN (SELECT Id FROM dbo.R) ORDER BY Id;")
+        .unwrap();
+    assert_eq!(qr.rows, vec![vec![Value::Int(2)]]);
+
+    // NOT IN with NULL in subquery returns 0 rows
+    let qr = engine
+        .query("SELECT Id FROM dbo.L WHERE Id NOT IN (SELECT Id FROM dbo.RWithNull);")
+        .unwrap();
+    assert!(qr.rows.is_empty());
+
+    // IN with NULL in subquery still matches non-null hits
+    let qr = engine
+        .query("SELECT Id FROM dbo.L WHERE Id IN (SELECT Id FROM dbo.RWithNull);")
+        .unwrap();
+    assert_eq!(qr.rows, vec![vec![Value::Int(1)]]);
+
+    // NOT IN empty set returns ALL rows, including NULL lhs!
+    let qr = engine
+        .query("SELECT COUNT(*) FROM dbo.L WHERE Id NOT IN (SELECT Id FROM dbo.REmpty);")
+        .unwrap();
+    assert!(matches!(qr.rows[0][0], Value::Int(4) | Value::BigInt(4)));
+
+    // 3-way comma join + IN subquery + ORDER BY on 2,000 rows (must stay O(N+M), sub-second)
+    run_batch(
+        &engine,
+        "CREATE TABLE dbo.BigA (Id INT, Score INT);
+         CREATE TABLE dbo.BigB (Id INT, Tag INT);
+         CREATE TABLE dbo.BigC (Id INT, Extra INT);
+         INSERT INTO dbo.BigA SELECT value, 2000 - value FROM GENERATE_SERIES(1, 2000);
+         INSERT INTO dbo.BigB SELECT value, value % 10 FROM GENERATE_SERIES(1, 2000);
+         INSERT INTO dbo.BigC SELECT value, value * 2 FROM GENERATE_SERIES(500, 1500);",
+    )
+    .unwrap();
+
+    let qr = engine
+        .query(
+            "SELECT TOP (5) a.Id, c.Extra
+             FROM dbo.BigA a, dbo.BigB b, dbo.BigC c
+             WHERE a.Id = b.Id
+               AND b.Id = c.Id
+               AND a.Id IN (SELECT Id FROM dbo.BigC WHERE Id <= 600)
+             ORDER BY a.Score DESC;",
+        )
+        .unwrap();
+    assert_eq!(qr.rows.len(), 5);
+    assert_eq!(qr.rows[0][0].to_integer_i64(), Some(500));
+    assert_eq!(qr.rows[0][1].to_integer_i64(), Some(1000));
+    assert_eq!(qr.rows[4][0].to_integer_i64(), Some(504));
+    assert_eq!(qr.rows[4][1].to_integer_i64(), Some(1008));
 }

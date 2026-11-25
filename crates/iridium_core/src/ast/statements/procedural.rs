@@ -108,6 +108,8 @@ pub struct CreateProcedureStmt {
     pub body: Vec<crate::ast::Statement>,
     #[serde(default)]
     pub or_alter: bool,
+    #[serde(default)]
+    pub definition_sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +143,8 @@ pub struct CreateFunctionStmt {
     pub or_alter: bool,
     #[serde(default)]
     pub is_schema_bound: bool,
+    #[serde(default)]
+    pub definition_sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +256,8 @@ pub struct CreateTriggerStmt {
     pub is_database_scope: bool,
     #[serde(default)]
     pub ddl_events: Vec<String>,
+    #[serde(default)]
+    pub definition_sql: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -247,9 +247,16 @@ fn apply_index_strategy_indexed(
                 return Ok(None);
             };
             match op {
-                BinaryOp::Eq => index_storage.seek_index(index_id, &rhs_val)?,
+                BinaryOp::Eq => {
+                    index_storage.seek_index(scan.bound.table.id, index_id, &rhs_val)?
+                }
                 BinaryOp::Gt => {
-                    let results = index_storage.seek_index_range(index_id, Some(&rhs_val), None)?;
+                    let results = index_storage.seek_index_range(
+                        scan.bound.table.id,
+                        index_id,
+                        Some(&rhs_val),
+                        None,
+                    )?;
                     results
                         .into_iter()
                         .filter(|(k, _)| compare_values(k, &rhs_val) == Ordering::Greater)
@@ -257,14 +264,24 @@ fn apply_index_strategy_indexed(
                         .collect()
                 }
                 BinaryOp::Gte => {
-                    let results = index_storage.seek_index_range(index_id, Some(&rhs_val), None)?;
+                    let results = index_storage.seek_index_range(
+                        scan.bound.table.id,
+                        index_id,
+                        Some(&rhs_val),
+                        None,
+                    )?;
                     results
                         .into_iter()
                         .flat_map(|(_, indices)| indices)
                         .collect()
                 }
                 BinaryOp::Lt => {
-                    let results = index_storage.seek_index_range(index_id, None, Some(&rhs_val))?;
+                    let results = index_storage.seek_index_range(
+                        scan.bound.table.id,
+                        index_id,
+                        None,
+                        Some(&rhs_val),
+                    )?;
                     results
                         .into_iter()
                         .filter(|(k, _)| compare_values(k, &rhs_val) == Ordering::Less)
@@ -272,7 +289,12 @@ fn apply_index_strategy_indexed(
                         .collect()
                 }
                 BinaryOp::Lte => {
-                    let results = index_storage.seek_index_range(index_id, None, Some(&rhs_val))?;
+                    let results = index_storage.seek_index_range(
+                        scan.bound.table.id,
+                        index_id,
+                        None,
+                        Some(&rhs_val),
+                    )?;
                     results
                         .into_iter()
                         .flat_map(|(_, indices)| indices)
@@ -284,7 +306,7 @@ fn apply_index_strategy_indexed(
             return Ok(None);
         }
     } else {
-        let all = index_storage.seek_index_range(index_id, None, None)?;
+        let all = index_storage.seek_index_range(scan.bound.table.id, index_id, None, None)?;
         all.into_iter().flat_map(|(_, indices)| indices).collect()
     };
 

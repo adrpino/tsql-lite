@@ -493,7 +493,7 @@ fn test_sys_index_columns_with_alias() {
         &mut e,
         "SELECT ic.column_id, ic.object_id FROM sys.index_columns ic WHERE ic.object_id = OBJECT_ID('dbo.t1')",
     );
-    assert!(r.rows.len() >= 1, "t1 should have at least 1 index column");
+    assert!(!r.rows.is_empty(), "t1 should have at least 1 index column");
 }
 
 #[test]
@@ -509,7 +509,7 @@ fn test_sys_index_columns_no_alias() {
         &mut e,
         "SELECT object_id FROM sys.index_columns WHERE object_id = OBJECT_ID('dbo.t1')",
     );
-    assert!(r.rows.len() >= 1, "t1 should have at least 1 index column");
+    assert!(!r.rows.is_empty(), "t1 should have at least 1 index column");
 }
 
 #[test]
@@ -524,7 +524,7 @@ fn test_sys_indexes_with_alias_where() {
         &mut e,
         "SELECT i.name, i.object_id FROM sys.indexes AS i WHERE i.object_id = OBJECT_ID('dbo.t1')",
     );
-    assert!(r.rows.len() >= 1, "t1 should have at least 1 index");
+    assert!(!r.rows.is_empty(), "t1 should have at least 1 index");
 }
 
 // ─── sys.all_objects ──────────────────────────────────────────────────────
@@ -733,7 +733,7 @@ fn test_sys_partitions() {
         &mut e,
         "SELECT object_id, index_id, partition_number FROM sys.partitions WHERE object_id = OBJECT_ID('dbo.t1')",
     );
-    assert!(r.rows.len() >= 1);
+    assert!(!r.rows.is_empty());
     assert_eq!(val(&r, 0, 2), "1");
 }
 
@@ -748,7 +748,7 @@ fn test_sys_allocation_units() {
         "SELECT type_desc, container_id FROM sys.allocation_units
          WHERE container_id IN (SELECT partition_id FROM sys.partitions WHERE object_id = OBJECT_ID('dbo.t1'))",
     );
-    assert!(r.rows.len() >= 1);
+    assert!(!r.rows.is_empty());
     assert_eq!(val(&r, 0, 0), "IN_ROW_DATA");
 }
 
@@ -763,7 +763,7 @@ fn test_sys_stats_columns() {
         "SELECT object_id, stats_id, stats_column_id, column_id FROM sys.stats_columns
          WHERE stats_id = (SELECT stats_id FROM sys.stats WHERE object_id = OBJECT_ID('dbo.t1'))",
     );
-    assert!(r.rows.len() >= 1);
+    assert!(!r.rows.is_empty());
     assert_eq!(val(&r, 0, 2), "1");
 }
 

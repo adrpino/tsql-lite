@@ -18,31 +18,28 @@ pub(crate) fn apply_source_ordering(
     source_rows: &mut [JoinedRow],
     ctx: &mut ExecutionContext,
 ) -> Result<(), DbError> {
+    if source_rows.len() <= 1 {
+        return Ok(());
+    }
     let order_by = &query.sort.order_by;
-    source_rows.sort_by(|a, b| {
-        for item in order_by {
-            let va = crate::executor::evaluator::eval_expr(
-                &item.expr,
-                a,
-                ctx,
-                executor.catalog,
-                executor.storage,
-                executor.clock,
-            )
-            .unwrap_or(Value::Null);
-            let vb = crate::executor::evaluator::eval_expr(
-                &item.expr,
-                b,
-                ctx,
-                executor.catalog,
-                executor.storage,
-                executor.clock,
-            )
-            .unwrap_or(Value::Null);
-            let ord = if let Some(flags) = crate::executor::collation::expr_collation(&item.expr) {
-                crate::executor::collation::compare_values_with_collation(&va, &vb, flags)
+    // Schwartzian transform: evaluate each row's sort keys once (N evals) rather than inside
+    // the comparator (2 * N log N evals).
+    let collations: Vec<Option<crate::executor::collation::CollationFlags>> = order_by
+        .iter()
+        .map(|item| crate::executor::collation::expr_collation(&item.expr))
+        .collect();
+    let keys: Vec<Vec<Value>> = extract_source_order_keys(executor, query, source_rows, ctx);
+    let mut indices: Vec<usize> = (0..source_rows.len()).collect();
+    indices.sort_by(|&ia, &ib| {
+        let ka = &keys[ia];
+        let kb = &keys[ib];
+        for (idx, item) in order_by.iter().enumerate() {
+            let va = &ka[idx];
+            let vb = &kb[idx];
+            let ord = if let Some(flags) = collations[idx] {
+                crate::executor::collation::compare_values_with_collation(va, vb, flags)
             } else {
-                value_ops::compare_values(&va, &vb)
+                value_ops::compare_values(va, vb)
             };
             if ord != Ordering::Equal {
                 return if item.asc { ord } else { ord.reverse() };
@@ -50,6 +47,11 @@ pub(crate) fn apply_source_ordering(
         }
         Ordering::Equal
     });
+    let mut reordered: Vec<JoinedRow> = Vec::with_capacity(source_rows.len());
+    for &i in &indices {
+        reordered.push(std::mem::take(&mut source_rows[i]));
+    }
+    source_rows.swap_with_slice(&mut reordered);
     Ok(())
 }
 

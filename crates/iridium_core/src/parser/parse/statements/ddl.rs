@@ -886,9 +886,7 @@ pub fn parse_create_sequence(parser: &mut Parser) -> ParseResult<Statement> {
             max_value = Some(parse_signed_int(parser)?);
         } else if parser.at_keyword(Keyword::No) {
             let _ = parser.next();
-            if parser.at_keyword(Keyword::Minvalue) {
-                let _ = parser.next();
-            } else if parser.at_keyword(Keyword::Maxvalue) {
+            if parser.at_keyword(Keyword::Minvalue) || parser.at_keyword(Keyword::Maxvalue) {
                 let _ = parser.next();
             } else if parser.at_keyword(Keyword::Cycle) {
                 let _ = parser.next();

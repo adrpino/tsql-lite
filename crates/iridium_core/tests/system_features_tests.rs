@@ -10,7 +10,7 @@ fn test_sp_helpindex() {
     let res = engine.query("EXEC sp_helpindex 'T1'").unwrap();
     // Clustered PK index should be there.
     // Unique constraints also create indexes.
-    assert!(res.rows.len() >= 1);
+    assert!(!res.rows.is_empty());
 }
 
 #[test]

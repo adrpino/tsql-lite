@@ -303,6 +303,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         or_alter,
                         is_schema_bound,
                         with_check_option,
+                        definition_sql: None,
                     },
                 )),
             ))
@@ -325,6 +326,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                         .map(lower_statement)
                         .collect::<Result<Vec<_>, _>>()?,
                     or_alter,
+                    definition_sql: None,
                 },
             )),
         )),
@@ -346,6 +348,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                     returns: returns.map(lower_data_type).transpose()?,
                     or_alter,
                     is_schema_bound,
+                    definition_sql: None,
                     body: match body {
                         ast::FunctionBody::ScalarReturn(e) => {
                             executor_ast::statements::procedural::FunctionBody::ScalarReturn(
@@ -446,6 +449,7 @@ pub fn lower_create(s: ast::CreateStmt) -> Result<executor_ast::Statement, DbErr
                     or_alter,
                     is_database_scope,
                     ddl_events,
+                    definition_sql: None,
                 },
             )),
         )),

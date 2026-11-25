@@ -1,6 +1,6 @@
 # Docker and Testcontainers
 
-The official Iridium SQL image uses the native Rust TDS server on TCP port
+The official tsql-lite image uses the native Rust TDS server on TCP port
 `1433`. It is intended for local development and isolated integration tests;
 it is **not** a complete Microsoft SQL Server implementation. Check the
 [compatibility matrix](compatibility-matrix.md) for supported T-SQL and TDS
@@ -12,15 +12,15 @@ After the [Docker image workflow](../.github/workflows/docker-image.yml) has
 successfully published the image, start an ephemeral instance:
 
 ```sh
-docker run --rm --name iridium-sql -p 127.0.0.1:1433:1433 \
-  ghcr.io/celsowm/iridium-sql:latest --memory
+docker run --rm --name tsql-lite -p 127.0.0.1:1433:1433 \
+  ghcr.io/adrpino/tsql-lite:latest --memory
 ```
 
 To build and run from this checkout instead of pulling a published image:
 
 ```sh
-docker build -t iridium-sql:local .
-docker run --rm -p 127.0.0.1:1433:1433 iridium-sql:local --memory
+docker build -t tsql-lite:local .
+docker run --rm -p 127.0.0.1:1433:1433 tsql-lite:local --memory
 ```
 
 The container listens on `0.0.0.0:1433` internally. Bind the published port
@@ -38,14 +38,14 @@ production passwords in container command-line arguments.
 
 ## Persist data
 
-The image defaults to native persistent storage in `/var/lib/iridium`.
+The image defaults to native persistent storage in `/var/lib/tsql-lite`.
 Mount a named volume when data must survive container removal:
 
 ```sh
-docker volume create iridium-data
-docker run --rm --name iridium-sql -p 127.0.0.1:1433:1433 \
-  -v iridium-data:/var/lib/iridium \
-  ghcr.io/celsowm/iridium-sql:latest
+docker volume create tsql-lite-data
+docker run --rm --name tsql-lite -p 127.0.0.1:1433:1433 \
+  -v tsql-lite-data:/var/lib/tsql-lite \
+  ghcr.io/adrpino/tsql-lite:latest
 ```
 
 For disposable tests, pass `--memory`: no database files are created. The
@@ -68,7 +68,7 @@ using DotNet.Testcontainers.Builders;
 using Microsoft.Data.SqlClient;
 
 await using var container = new ContainerBuilder()
-    .WithImage("ghcr.io/celsowm/iridium-sql:latest")
+    .WithImage("ghcr.io/adrpino/tsql-lite:latest")
     .WithPortBinding(1433, true)
     .WithCommand("--memory")
     .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(1433))
@@ -86,7 +86,7 @@ await connection.OpenAsync();
 await using var command = new SqlCommand("SELECT 1", connection);
 var value = await command.ExecuteScalarAsync();
 if (Convert.ToInt32(value) != 1)
-    throw new Exception("Iridium SQL smoke query failed");
+    throw new Exception("tsql-lite smoke query failed");
 ```
 
 The password above is illustrative: the default image does not validate it.
@@ -97,7 +97,7 @@ Port readiness alone does not guarantee a query will work.
 ## Image tags and checks
 
 The workflow builds and tests the image on pull requests and publishes
-`ghcr.io/celsowm/iridium-sql:latest` and a `sha-<12-character-sha>` tag
+`ghcr.io/adrpino/tsql-lite:latest` and a `sha-<12-character-sha>` tag
 for successful builds on `main`. Git version tags are published with their
 same tag name. The workflow exercises a real `Microsoft.Data.SqlClient`
 `SELECT 1` against both persistent and `--memory` container modes before

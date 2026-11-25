@@ -6,8 +6,8 @@ Set-Location $RepoRoot
 
 $Image = if ($env:SQLSERVER_IMAGE) { $env:SQLSERVER_IMAGE } else { "mcr.microsoft.com/mssql/server:2022-latest" }
 $Port = if ($env:SQLSERVER_PORT) { $env:SQLSERVER_PORT } else { "11433" }
-$Password = if ($env:SQLSERVER_PASSWORD) { $env:SQLSERVER_PASSWORD } else { "IridiumTest!2026" }
-$ContainerName = "iridium_diff_sqlserver_$PID"
+$Password = if ($env:SQLSERVER_PASSWORD) { $env:SQLSERVER_PASSWORD } else { "TsqlLiteTest!2026" }
+$ContainerName = "tsql_lite_diff_sqlserver_$PID"
 $ManagedContainer = $false
 $Runtime = $null
 
@@ -57,7 +57,7 @@ try {
     $env:SQLSERVER_USER = if ($env:SQLSERVER_USER) { $env:SQLSERVER_USER } else { "sa" }
     $env:SQLSERVER_PASSWORD = $Password
 
-    & cargo test -p iridium_core --test sqlserver_differential -- --ignored --nocapture @args
+    & cargo test -p tsql_lite_core --test sqlserver_differential -- --ignored --nocapture @args
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

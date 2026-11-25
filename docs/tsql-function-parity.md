@@ -1,12 +1,12 @@
 # T-SQL Function & System Surface Parity Reference
 
-This document is the **code-verified** function-level parity reference for `iridium_core`.
+This document is the **code-verified** function-level parity reference for `tsql_lite_core`.
 
 Every `✅` / `❌` row in the function tables below is verified automatically by
-`crates/iridium_core/tests/tsql_function_parity_doc.rs` against the live engine
+`crates/tsql_lite_core/tests/tsql_function_parity_doc.rs` against the live engine
 registries (`builtin_registry`, `AggregateFn`, `WindowFunc`, built-in TVFs, and
 `system_vars`). If a function is added or removed without updating this file,
-`cargo test -p iridium_core --test tsql_function_parity_doc` fails.
+`cargo test -p tsql_lite_core --test tsql_function_parity_doc` fails.
 
 For the high-level subsystem scoreboard (DDL, DML, Transactions, Metadata, TDS,
 Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
@@ -344,11 +344,11 @@ Security), see [`docs/compatibility-matrix.md`](compatibility-matrix.md).
 
 ## System Stored Procedures (`sp_*` / `xp_*`)
 
-Implemented in `crates/iridium_core/src/executor/script/procedural/system_procedures/`:
+Implemented in `crates/tsql_lite_core/src/executor/script/procedural/system_procedures/`:
 
 - **Dynamic execution & metadata inspection:** `sp_executesql`, `sp_MSforeachtable`, `sp_describe_first_result_set`, `sp_describe_undeclared_parameters`, `sp_help`, `sp_helptext`, `sp_columns`, `sp_tables`, `sp_helpindex`, `sp_helpconstraint`, `sp_rename`, `sp_refreshsqlmodule`, `sp_refreshview`, `sp_refresh_parameter_encryption`
 - **Extended properties & table options (persisted in catalog):** `sp_addextendedproperty`, `sp_updateextendedproperty`, `sp_dropextendedproperty`, `sp_tableoption`
 - **Session, XML & application locks:** `sp_set_session_context`, `sp_getapplock`, `sp_releaseapplock`, `sp_xml_preparedocument`, `sp_xml_removedocument`
 - **Database, security & server probes:** `sp_who`, `sp_databases`, `sp_helpdb`, `sp_server_info`, `sp_monitor`, `sp_helpuser`, `sp_helprole`, `sp_helprolemember`, `sp_helpsrvrole`, `sp_helpsrvrolemember`, `sp_helpfile`, `sp_helpfilegroup`, `sp_msgetversion`, `sp_MSIsContainedAGSession`, `xp_instance_regread`, `xp_msver`, `xp_qv`
-- **Prepared-statement & cursor RPCs (`iridium_server` TDS layer):** `sp_prepare`, `sp_prepexec`, `sp_execute`, `sp_unprepare`, `sp_cursoropen`, `sp_cursorprepare`, `sp_cursorexecute`, `sp_cursorprepexec`, `sp_cursorfetch`, `sp_cursoroption`, `sp_cursorclose`, `sp_cursorunprepare`, `sp_reset_connection`, `sp_pkeys`, `sp_sproc_columns`
+- **Prepared-statement & cursor RPCs (`tsql_lite_server` TDS layer):** `sp_prepare`, `sp_prepexec`, `sp_execute`, `sp_unprepare`, `sp_cursoropen`, `sp_cursorprepare`, `sp_cursorexecute`, `sp_cursorprepexec`, `sp_cursorfetch`, `sp_cursoroption`, `sp_cursorclose`, `sp_cursorunprepare`, `sp_reset_connection`, `sp_pkeys`, `sp_sproc_columns`
 - **Out of scope for embedded engine:** SQL Server Agent (`sp_add_job`, etc.), Replication (`sp_addpublication`, etc.), Database Mail, Service Broker, and Availability Groups (`sp_add_ag_*`).

@@ -525,12 +525,10 @@ fn parse_offset_minutes(raw: &str) -> Option<i64> {
     if s.eq_ignore_ascii_case("Z") {
         return Some(0);
     }
-    let (sign, rest) = if let Some(r) = s.strip_prefix('+') {
-        (1i64, r)
-    } else if let Some(r) = s.strip_prefix('-') {
-        (-1i64, r)
-    } else {
-        return None;
+    let (sign, rest) = match s.as_bytes().first() {
+        Some(b'+') => (1i64, &s[1..]),
+        Some(b'-') => (-1i64, &s[1..]),
+        _ => return None,
     };
     let (h_str, m_str) = rest.split_once(':')?;
     let h: i64 = h_str.parse().ok()?;
@@ -828,10 +826,7 @@ fn remove_xml_elements_by_tag(xml: &str, tag: &str) -> String {
     let open_prefix = format!("<{}", tag);
     let close_tag = format!("</{}>", tag);
     let mut result = xml.to_string();
-    loop {
-        let Some(start) = result.find(&open_prefix) else {
-            break;
-        };
+    while let Some(start) = result.find(&open_prefix) {
         let after_name = start + open_prefix.len();
         let next_ch = result.as_bytes().get(after_name).copied();
         if !matches!(

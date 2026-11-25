@@ -412,23 +412,15 @@ fn json_value_at_path<'a>(json: &'a JsonValue, path: &str) -> Option<&'a JsonVal
 
         if let Some(idx) = index {
             match current {
-                JsonValue::Array(arr) => {
-                    if idx < arr.len() {
-                        current = &arr[idx];
-                    } else {
-                        return None;
-                    }
+                JsonValue::Array(arr) if idx < arr.len() => {
+                    current = &arr[idx];
                 }
                 _ => return None,
             }
         } else {
             match current {
                 JsonValue::Object(map) => {
-                    if let Some(val) = map.get(&key) {
-                        current = val;
-                    } else {
-                        return None;
-                    }
+                    current = map.get(&key)?;
                 }
                 _ => return None,
             }

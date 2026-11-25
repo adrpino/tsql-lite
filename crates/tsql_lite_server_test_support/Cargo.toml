@@ -5,7 +5,6 @@ edition.workspace = true
 description = "Internal test support helpers for tsql-lite-server integration tests"
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 publish = false
 keywords = ["sql-server", "tds", "tests"]
 categories = ["database", "development-tools::testing"]

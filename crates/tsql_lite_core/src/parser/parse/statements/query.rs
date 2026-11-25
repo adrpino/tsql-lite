@@ -805,9 +805,7 @@ pub fn parse_table_ref(parser: &mut Parser) -> ParseResult<TableRef> {
                             }
                         })?;
                     parser.expect_rparen()?;
-                    for (item, col_alias) in
-                        subquery.projection.iter_mut().zip(col_aliases.into_iter())
-                    {
+                    for (item, col_alias) in subquery.projection.iter_mut().zip(col_aliases) {
                         item.alias = Some(col_alias);
                     }
                 }

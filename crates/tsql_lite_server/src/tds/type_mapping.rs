@@ -957,8 +957,10 @@ pub fn read_value(reader: &mut PacketReader, ti: &TypeInfo) -> io::Result<Value>
                 return match read_bulk_plp(reader)? {
                     Some(bytes) => {
                         let u16s: Vec<u16> = bytes
-                            .chunks_exact(2)
-                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|&c| u16::from_le_bytes(c))
                             .collect();
                         Ok(Value::NVarChar(String::from_utf16_lossy(&u16s)))
                     }

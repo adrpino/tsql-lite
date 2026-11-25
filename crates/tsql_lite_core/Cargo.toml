@@ -5,7 +5,6 @@ edition.workspace = true
 description = "Embedded SQL Server-compatible T-SQL engine core in pure Rust"
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 readme = "../../README.md"
 keywords = ["sql-server", "tsql", "tds", "database", "embedded"]
 categories = ["database", "web-programming"]

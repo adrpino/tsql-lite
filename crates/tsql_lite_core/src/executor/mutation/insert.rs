@@ -203,7 +203,7 @@ impl<'a> MutationExecutor<'a> {
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<StoredRow, DbError> {
         let mut final_values = vec![crate::types::Value::Null; table.columns.len()];
-        for (&col_idx, mut value) in col_indices.iter().zip(row_values.into_iter()) {
+        for (&col_idx, mut value) in col_indices.iter().zip(row_values) {
             let col = &table.columns[col_idx];
             if col.computed_expr.is_some() {
                 return Err(DbError::Execution(format!(

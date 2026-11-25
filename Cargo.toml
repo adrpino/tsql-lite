@@ -12,5 +12,4 @@ version = "0.3.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/adrpino/tsql-lite"
-homepage = "https://github.com/adrpino/tsql-lite"
 

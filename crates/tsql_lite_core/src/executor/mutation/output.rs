@@ -84,10 +84,10 @@ fn build_output_eval_env(
         env.push(ContextTable {
             table: std::sync::Arc::new(action_table),
             alias: std::sync::Arc::from("__output_meta"),
-            row: Some(StoredRow {
+            row: Some(std::sync::Arc::new(StoredRow {
                 values: vec![Value::VarChar(act.to_string())],
                 deleted: false,
-            }),
+            })),
             storage_index: None,
             source_aliases: Vec::new(),
         });
@@ -96,9 +96,11 @@ fn build_output_eval_env(
     env.push(ContextTable {
         table: std::sync::Arc::clone(&table_arc),
         alias: std::sync::Arc::from("INSERTED"),
-        row: inserted.map(|vals| StoredRow {
-            values: vals.to_vec(),
-            deleted: false,
+        row: inserted.map(|vals| {
+            std::sync::Arc::new(StoredRow {
+                values: vals.to_vec(),
+                deleted: false,
+            })
         }),
         storage_index: None,
         source_aliases: Vec::new(),
@@ -106,9 +108,11 @@ fn build_output_eval_env(
     env.push(ContextTable {
         table: table_arc,
         alias: std::sync::Arc::from("DELETED"),
-        row: deleted.map(|vals| StoredRow {
-            values: vals.to_vec(),
-            deleted: false,
+        row: deleted.map(|vals| {
+            std::sync::Arc::new(StoredRow {
+                values: vals.to_vec(),
+                deleted: false,
+            })
         }),
         storage_index: None,
         source_aliases: Vec::new(),

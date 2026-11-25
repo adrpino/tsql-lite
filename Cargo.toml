@@ -13,3 +13,20 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/adrpino/tsql-lite"
 
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+strip = true
+

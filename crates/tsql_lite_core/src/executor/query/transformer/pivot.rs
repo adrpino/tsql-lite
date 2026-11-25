@@ -178,10 +178,10 @@ pub(crate) fn execute_pivot(
         result_rows.push(vec![ContextTable {
             table: pivot_table_def.clone(),
             alias: std::sync::Arc::from(pivot.alias.as_str()),
-            row: Some(StoredRow {
+            row: Some(std::sync::Arc::new(StoredRow {
                 values: row_values,
                 deleted: false,
-            }),
+            })),
             storage_index: Some(0),
             source_aliases: Vec::new(),
         }]);

@@ -89,7 +89,7 @@ fn bind_table_rows(
                 vec![crate::executor::model::ContextTable {
                     table: bound.table.clone(),
                     alias: bound.alias.clone(),
-                    row: Some(row.clone()),
+                    row: Some(std::sync::Arc::new(row.clone())),
                     storage_index: Some(i),
                     source_aliases: Vec::new(),
                 }]
@@ -108,7 +108,7 @@ fn bind_table_rows(
         rows.push(vec![crate::executor::model::ContextTable {
             table: bound.table.clone(),
             alias: bound.alias.clone(),
-            row: Some(row),
+            row: Some(std::sync::Arc::new(row)),
             storage_index: Some(i),
             source_aliases: Vec::new(),
         }]);
@@ -317,7 +317,7 @@ fn apply_index_strategy_indexed(
                 out.push(vec![crate::executor::model::ContextTable {
                     table: scan.bound.table.clone(),
                     alias: scan.bound.alias.clone(),
-                    row: Some(stored),
+                    row: Some(std::sync::Arc::new(stored)),
                     storage_index: Some(idx),
                     source_aliases: Vec::new(),
                 }]);

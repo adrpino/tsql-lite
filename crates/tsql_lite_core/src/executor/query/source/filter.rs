@@ -554,11 +554,15 @@ pub(crate) fn execute_where_stage(
 ) -> Result<FromEval, DbError> {
     if let Some(where_clause) = &query.filter.selection {
         let shape = source_eval.shape.clone();
+        let enforced = std::mem::take(&mut source_eval.enforced_predicates);
         // Decorrelate top-level `[NOT] EXISTS (...)` conjuncts into O(N+M) HashSemiJoinIterators.
         let mut conjuncts = Vec::new();
         split_and_owned(where_clause, &mut conjuncts);
         let mut remaining = Vec::new();
         for c in conjuncts {
+            if enforced.contains(&c) {
+                continue;
+            }
             if let Expr::Exists {
                 ref subquery,
                 negated,
@@ -597,11 +601,16 @@ pub(crate) fn execute_where_stage(
                 source: source_eval.iter,
                 predicate: pred,
             });
-            Ok(FromEval { iter, shape })
+            Ok(FromEval {
+                iter,
+                shape,
+                enforced_predicates: Vec::new(),
+            })
         } else {
             Ok(FromEval {
                 iter: source_eval.iter,
                 shape,
+                enforced_predicates: Vec::new(),
             })
         }
     } else {

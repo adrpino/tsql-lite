@@ -33,11 +33,3 @@ serde_json = "1"
 [[bin]]
 name = "tsql-lite-server"
 path = "bin/main.rs"
-
-[[bin]]
-name = "compat-query"
-path = "bin/compat-query.rs"
-
-[[bin]]
-name = "tsql-lite-healthcheck"
-path = "bin/healthcheck.rs"

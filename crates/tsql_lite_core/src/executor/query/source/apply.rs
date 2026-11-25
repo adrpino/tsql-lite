@@ -23,5 +23,6 @@ pub(crate) fn execute_apply_stage(
     Ok(FromEval {
         iter: Box::new(super::super::from_tree::ScanIterator::new(rows)),
         shape,
+        enforced_predicates: Vec::new(),
     })
 }

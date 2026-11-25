@@ -71,6 +71,9 @@ pub(crate) fn execute_from_stage(
                         }
                     }
                 }
+                let mut enforced_predicates = Vec::new();
+                enforced_predicates.extend(left_filters.iter().cloned());
+                enforced_predicates.extend(right_filters.iter().cloned());
                 if let Some(lf) = left_filters.into_iter().reduce(|a, b| Expr::Binary {
                     left: Box::new(a),
                     op: BinaryOp::And,
@@ -95,29 +98,18 @@ pub(crate) fn execute_from_stage(
                 shape.extend(right_eval.shape.clone());
                 if !left_keys.is_empty() {
                     return Ok(FromEval {
-                        iter: Box::new(from_tree::HashJoinIterator {
-                            left: left_eval.iter,
-                            right: right_eval.iter,
+                        iter: Box::new(from_tree::HashJoinIterator::new(
+                            left_eval.iter,
+                            right_eval.iter,
                             left_keys,
                             right_keys,
-                            residual_on: None,
-                            join_type: JoinType::Inner,
-                            left_shape: left_eval.shape,
-                            right_shape: right_eval.shape,
-                            build_done: false,
-                            right_materialized: Vec::new(),
-                            right_raw_keys: Vec::new(),
-                            right_key_families: Vec::new(),
-                            hash_map: std::collections::HashMap::new(),
-                            right_matched: Vec::new(),
-                            current_left: None,
-                            current_matches: Vec::new(),
-                            current_match_idx: 0,
-                            matched_current_left: false,
-                            finishing_right: false,
-                            finishing_idx: 0,
-                        }),
+                            None,
+                            JoinType::Inner,
+                            left_eval.shape,
+                            right_eval.shape,
+                        )),
                         shape,
+                        enforced_predicates,
                     });
                 }
                 return Ok(FromEval {
@@ -131,6 +123,7 @@ pub(crate) fn execute_from_stage(
                         matched_current_left: false,
                     }),
                     shape,
+                    enforced_predicates,
                 });
             }
         }
@@ -151,6 +144,7 @@ pub(crate) fn execute_from_stage(
         Ok(FromEval {
             iter: Box::new(from_tree::ScanIterator::new(vec![vec![]])),
             shape: vec![],
+            enforced_predicates: Vec::new(),
         })
     }
 }

@@ -237,6 +237,44 @@ pub fn collect_group_values<'a>(
         .collect()
 }
 
+/// Streams non-NULL values for `expr` over `group.rows` into `visitor` without allocating
+/// a temporary `Vec<Value>`, using a pre-resolved `(table_idx, col_idx)` slot whenever
+/// `expr` is a simple column reference.
+#[inline]
+fn visit_group_values<F>(
+    expr: &Expr,
+    group: &Group,
+    ctx: &mut ExecutionContext,
+    catalog: &dyn Catalog,
+    storage: &dyn Storage,
+    clock: &dyn Clock,
+    mut visitor: F,
+) -> Result<(), DbError>
+where
+    F: FnMut(&Value) -> Result<(), DbError>,
+{
+    if group.rows.is_empty() {
+        return Ok(());
+    }
+    if let Some(slot) = super::identifier::resolve_column_slot(expr, &group.rows[0]) {
+        for row in &group.rows {
+            let v = super::identifier::value_at_slot(row, slot);
+            if !v.is_null() {
+                visitor(v)?;
+            }
+        }
+        return Ok(());
+    }
+    for row in &group.rows {
+        if let Ok(v) = eval_expr(expr, row, ctx, catalog, storage, clock) {
+            if !v.is_null() {
+                visitor(&v)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn eval_aggregate_count(
     args: &[Expr],
     group: &Group,
@@ -248,7 +286,12 @@ pub fn eval_aggregate_count(
     let count = if args.first().is_some_and(|a| matches!(a, Expr::Wildcard)) {
         group.rows.len() as i64
     } else if let Some(expr) = args.first() {
-        collect_group_values(expr, group, ctx, catalog, storage, clock).len() as i64
+        let mut cnt = 0i64;
+        let _ = visit_group_values(expr, group, ctx, catalog, storage, clock, |_| {
+            cnt += 1;
+            Ok(())
+        });
+        cnt
     } else {
         group.rows.len() as i64
     };
@@ -289,6 +332,113 @@ fn dedup_aggregate_values(values: Vec<Value>) -> Vec<Value> {
     out
 }
 
+#[derive(Default)]
+struct SumAcc {
+    sum_i64: i64,
+    sum_f64: f64,
+    sum_i128: i128,
+    current_scale: u8,
+    count: usize,
+    is_decimal: bool,
+    is_float: bool,
+    is_money: bool,
+    first_kind: u8, // 1=TinyInt, 2=SmallInt, 3=Int, 4=BigInt
+}
+
+impl SumAcc {
+    #[inline]
+    fn push(&mut self, val: &Value) -> Result<(), DbError> {
+        if self.count == 0 {
+            match val {
+                Value::Decimal(_, s) => {
+                    self.is_decimal = true;
+                    self.current_scale = *s;
+                }
+                Value::Float(_) => self.is_float = true,
+                Value::Money(_) | Value::SmallMoney(_) => self.is_money = true,
+                Value::TinyInt(_) => self.first_kind = 1,
+                Value::SmallInt(_) => self.first_kind = 2,
+                Value::Int(_) => self.first_kind = 3,
+                Value::BigInt(_) => self.first_kind = 4,
+                _ => {}
+            }
+        }
+        self.count += 1;
+
+        match val {
+            Value::Float(v) => {
+                self.is_float = true;
+                self.sum_f64 += f64::from_bits(*v);
+            }
+            Value::Decimal(raw, scale) => {
+                self.is_decimal = true;
+                if *scale == self.current_scale {
+                    self.sum_i128 += *raw;
+                } else {
+                    let max_scale = self.current_scale.max(*scale);
+                    self.sum_i128 =
+                        super::value_helpers::rescale_raw(self.sum_i128, self.current_scale, max_scale)
+                            + super::value_helpers::rescale_raw(*raw, *scale, max_scale);
+                    self.current_scale = max_scale;
+                }
+            }
+            Value::Money(v) => {
+                self.is_money = true;
+                self.sum_i128 += *v;
+            }
+            Value::SmallMoney(v) => {
+                self.is_money = true;
+                self.sum_i128 += *v as i128;
+            }
+            Value::TinyInt(v) => self.sum_i64 += *v as i64,
+            Value::SmallInt(v) => self.sum_i64 += *v as i64,
+            Value::Int(v) => self.sum_i64 += *v as i64,
+            Value::BigInt(v) => self.sum_i64 += *v,
+            _ => return Err(DbError::Execution("SUM requires numeric argument".into())),
+        }
+        Ok(())
+    }
+
+    fn finish_sum(&self) -> Value {
+        if self.count == 0 {
+            return Value::Null;
+        }
+        if self.is_float {
+            Value::Float(self.sum_f64.to_bits())
+        } else if self.is_money {
+            Value::Money(self.sum_i128)
+        } else if self.is_decimal {
+            Value::Decimal(self.sum_i128, self.current_scale)
+        } else {
+            Value::BigInt(self.sum_i64)
+        }
+    }
+
+    fn finish_avg(&self) -> Value {
+        if self.count == 0 {
+            return Value::Null;
+        }
+        let n = self.count as i128;
+        if self.is_float {
+            Value::Float((self.sum_f64 / self.count as f64).to_bits())
+        } else if self.is_money {
+            Value::Money(self.sum_i128 / n)
+        } else if self.is_decimal {
+            let result_scale = self.current_scale.max(6);
+            let dividend = rescale_raw(self.sum_i128, self.current_scale, result_scale);
+            Value::Decimal(dividend / n, result_scale)
+        } else {
+            let res = self.sum_i64 / self.count as i64;
+            match self.first_kind {
+                1 => Value::TinyInt(res as u8),
+                2 => Value::SmallInt(res as i16),
+                3 => Value::Int(res as i32),
+                _ => Value::BigInt(res),
+            }
+        }
+    }
+}
+
 fn eval_aggregate_sum_inner(
     args: &[Expr],
     distinct: bool,
@@ -301,82 +451,19 @@ fn eval_aggregate_sum_inner(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("SUM requires 1 argument".into()))?;
-    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
-    if distinct {
-        values = dedup_aggregate_values(values);
+    if !distinct {
+        let mut acc = SumAcc::default();
+        visit_group_values(expr, group, ctx, catalog, storage, clock, |v| acc.push(v))?;
+        return Ok(acc.finish_sum());
     }
-    sum_values(&values)
-}
-
-fn sum_values(values: &[Value]) -> Result<Value, DbError> {
-    let mut sum_i64: i64 = 0;
-    let mut sum_f64: f64 = 0.0;
-    let mut sum_i128: i128 = 0;
-    let mut current_scale: u8 = 0;
-    let mut has_values = false;
-    let mut is_decimal = false;
-    let mut is_float = false;
-    let mut is_money = false;
-
-    for val in values {
-        if !has_values {
-            has_values = true;
-            match val {
-                Value::Decimal(_, s) => {
-                    is_decimal = true;
-                    current_scale = *s;
-                }
-                Value::Float(_) => {
-                    is_float = true;
-                }
-                Value::Money(_) | Value::SmallMoney(_) => {
-                    is_money = true;
-                }
-                _ => {}
-            }
-        }
-
-        match val {
-            Value::Float(v) => {
-                is_float = true;
-                sum_f64 += f64::from_bits(*v);
-            }
-            Value::Decimal(raw, scale) => {
-                is_decimal = true;
-                let max_scale = current_scale.max(*scale);
-                sum_i128 = super::value_helpers::rescale_raw(sum_i128, current_scale, max_scale)
-                    + super::value_helpers::rescale_raw(*raw, *scale, max_scale);
-                current_scale = max_scale;
-            }
-            Value::Money(v) => {
-                is_money = true;
-                sum_i128 += *v;
-            }
-            Value::SmallMoney(v) => {
-                is_money = true;
-                sum_i128 += *v as i128;
-            }
-            Value::TinyInt(v) => sum_i64 += *v as i64,
-            Value::SmallInt(v) => sum_i64 += *v as i64,
-            Value::Int(v) => sum_i64 += *v as i64,
-            Value::BigInt(v) => sum_i64 += *v,
-            _ => return Err(DbError::Execution("SUM requires numeric argument".into())),
-        }
+    let values = dedup_aggregate_values(collect_group_values(
+        expr, group, ctx, catalog, storage, clock,
+    ));
+    let mut acc = SumAcc::default();
+    for v in &values {
+        acc.push(v)?;
     }
-
-    if !has_values {
-        return Ok(Value::Null);
-    }
-
-    if is_float {
-        Ok(Value::Float(sum_f64.to_bits()))
-    } else if is_money {
-        Ok(Value::Money(sum_i128))
-    } else if is_decimal {
-        Ok(Value::Decimal(sum_i128, current_scale))
-    } else {
-        Ok(Value::BigInt(sum_i64))
-    }
+    Ok(acc.finish_sum())
 }
 
 fn eval_aggregate_avg_inner(
@@ -391,61 +478,19 @@ fn eval_aggregate_avg_inner(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("AVG requires 1 argument".into()))?;
-    let mut values = collect_group_values(expr, group, ctx, catalog, storage, clock);
-    if distinct {
-        values = dedup_aggregate_values(values);
+    if !distinct {
+        let mut acc = SumAcc::default();
+        visit_group_values(expr, group, ctx, catalog, storage, clock, |v| acc.push(v))?;
+        return Ok(acc.finish_avg());
     }
-    if values.is_empty() {
-        return Ok(Value::Null);
+    let values = dedup_aggregate_values(collect_group_values(
+        expr, group, ctx, catalog, storage, clock,
+    ));
+    let mut acc = SumAcc::default();
+    for v in &values {
+        acc.push(v)?;
     }
-    let first_val = &values[0];
-    let is_float = matches!(first_val, Value::Float(_));
-    let is_money = matches!(first_val, Value::Money(_) | Value::SmallMoney(_));
-
-    if is_float {
-        let mut sum_f64 = 0.0;
-        for val in &values {
-            if let Value::Float(v) = val {
-                sum_f64 += f64::from_bits(*v);
-            }
-        }
-        return Ok(Value::Float((sum_f64 / values.len() as f64).to_bits()));
-    }
-
-    if is_money {
-        let mut sum_i128: i128 = 0;
-        for val in &values {
-            match val {
-                Value::Money(v) => sum_i128 += *v,
-                Value::SmallMoney(v) => sum_i128 += *v as i128,
-                _ => {}
-            }
-        }
-        return Ok(Value::Money(sum_i128 / values.len() as i128));
-    }
-
-    let sum = sum_values(&values)?;
-    let n = values.len() as i128;
-    match sum {
-        Value::BigInt(v) => {
-            let res = v / n as i64;
-            match first_val {
-                Value::TinyInt(_) => Ok(Value::TinyInt(res as u8)),
-                Value::SmallInt(_) => Ok(Value::SmallInt(res as i16)),
-                Value::Int(_) => Ok(Value::Int(res as i32)),
-                _ => Ok(Value::BigInt(res)),
-            }
-        }
-        Value::Decimal(v, s) => {
-            let result_scale = s.max(6);
-            let dividend = rescale_raw(v, s, result_scale);
-            Ok(Value::Decimal(dividend / n, result_scale))
-        }
-        Value::Float(v) => Ok(Value::Float((f64::from_bits(v) / n as f64).to_bits())),
-        Value::Money(v) => Ok(Value::Money(v / n)),
-        Value::SmallMoney(v) => Ok(Value::SmallMoney((v as i128 / n) as i64)),
-        _ => Ok(Value::Null),
-    }
+    Ok(acc.finish_avg())
 }
 
 fn value_to_f64_numeric(val: &Value) -> Result<f64, DbError> {
@@ -536,11 +581,17 @@ pub fn eval_aggregate_min(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("MIN requires 1 argument".into()))?;
-    let values = collect_group_values(expr, group, ctx, catalog, storage, clock);
-    Ok(values
-        .into_iter()
-        .min_by(compare_values)
-        .unwrap_or(Value::Null))
+    let mut best: Option<Value> = None;
+    visit_group_values(expr, group, ctx, catalog, storage, clock, |v| {
+        if best
+            .as_ref()
+            .is_none_or(|b| compare_values(v, b) == std::cmp::Ordering::Less)
+        {
+            best = Some(v.clone());
+        }
+        Ok(())
+    })?;
+    Ok(best.unwrap_or(Value::Null))
 }
 
 pub fn eval_aggregate_max(
@@ -554,11 +605,17 @@ pub fn eval_aggregate_max(
     let expr = args
         .first()
         .ok_or_else(|| DbError::Execution("MAX requires 1 argument".into()))?;
-    let values = collect_group_values(expr, group, ctx, catalog, storage, clock);
-    Ok(values
-        .into_iter()
-        .max_by(compare_values)
-        .unwrap_or(Value::Null))
+    let mut best: Option<Value> = None;
+    visit_group_values(expr, group, ctx, catalog, storage, clock, |v| {
+        if best
+            .as_ref()
+            .is_none_or(|b| compare_values(v, b) == std::cmp::Ordering::Greater)
+        {
+            best = Some(v.clone());
+        }
+        Ok(())
+    })?;
+    Ok(best.unwrap_or(Value::Null))
 }
 
 pub fn eval_aggregate_string_agg(

@@ -142,10 +142,10 @@ pub(crate) fn execute_unpivot(
             result_rows.push(vec![ContextTable {
                 table: unpivot_table_def.clone(),
                 alias: std::sync::Arc::from(unpivot.alias.as_str()),
-                row: Some(StoredRow {
+                row: Some(std::sync::Arc::new(StoredRow {
                     values: new_values,
                     deleted: false,
-                }),
+                })),
                 storage_index: Some(0),
                 source_aliases: unpivot.source_aliases.clone(),
             }]);

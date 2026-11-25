@@ -317,17 +317,30 @@ impl<C, S> SharedStorage<C, S> {
     }
 }
 
+pub type SharedSessionMap<C, S> =
+    parking_lot::RwLock<HashMap<SessionId, std::sync::Arc<parking_lot::Mutex<SessionRuntime<C, S>>>>>;
+
 pub struct SharedState<C, S> {
     pub(crate) storage: std::sync::Arc<parking_lot::RwLock<SharedStorage<C, S>>>,
     pub(crate) table_locks: std::sync::Arc<parking_lot::Mutex<LockTable>>,
     pub(crate) durability: parking_lot::Mutex<Box<dyn DurabilitySink<C>>>,
     pub(crate) wal: parking_lot::Mutex<Option<Wal>>,
     pub(crate) next_tx_id: std::sync::atomic::AtomicU64,
-    pub(crate) sessions: dashmap::DashMap<SessionId, parking_lot::Mutex<SessionRuntime<C, S>>>,
-    pub(crate) deadlock_priorities: std::sync::Arc<dashmap::DashMap<SessionId, i32>>,
+    pub(crate) sessions: SharedSessionMap<C, S>,
+    pub(crate) deadlock_priorities: std::sync::Arc<parking_lot::RwLock<HashMap<SessionId, i32>>>,
     pub(crate) next_session_id: std::sync::atomic::AtomicU64,
     pub(crate) dirty_buffer: std::sync::Arc<parking_lot::Mutex<super::dirty_buffer::DirtyBuffer>>,
     pub(crate) app_locks: super::applock::SharedAppLocks,
+}
+
+impl<C, S> SharedState<C, S> {
+    #[inline]
+    pub(crate) fn get_session(
+        &self,
+        session_id: SessionId,
+    ) -> Option<std::sync::Arc<parking_lot::Mutex<SessionRuntime<C, S>>>> {
+        self.sessions.read().get(&session_id).cloned()
+    }
 }
 
 impl<C, S> SharedState<C, S>
@@ -347,8 +360,8 @@ where
             durability: parking_lot::Mutex::new(Box::new(NoopDurability::default())),
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
-            sessions: dashmap::DashMap::new(),
-            deadlock_priorities: std::sync::Arc::new(dashmap::DashMap::new()),
+            sessions: parking_lot::RwLock::new(HashMap::new()),
+            deadlock_priorities: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::new())),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::dirty_buffer::DirtyBuffer::new(),

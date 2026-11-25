@@ -65,14 +65,13 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
             .db
             .session_manager()
             .state
-            .sessions
-            .get(&self.default_session)
+            .get_session(self.default_session)
             .map(|s| s.lock().options.recursive_triggers)
             .unwrap_or(true);
         let db = self.db.fork_isolated();
         let default_session = db.session_manager().create_session();
         if !recursive_triggers {
-            if let Some(session) = db.session_manager().state.sessions.get(&default_session) {
+            if let Some(session) = db.session_manager().state.get_session(default_session) {
                 session.lock().options.recursive_triggers = false;
             }
         }
@@ -87,8 +86,7 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
             .db
             .session_manager()
             .state
-            .sessions
-            .get(&self.default_session)
+            .get_session(self.default_session)
         {
             session.lock().options.recursive_triggers = enabled;
         }

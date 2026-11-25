@@ -343,13 +343,13 @@ pub(crate) fn eval_encryptbypassphrase(
     let nonce_bytes: [u8; PASSPHRASE_NONCE_LEN] = entropy.as_bytes()[..PASSPHRASE_NONCE_LEN]
         .try_into()
         .expect("12-byte nonce");
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
     let plaintext = value_to_crypto_bytes(&plain_val);
     let aad = build_authenticator_aad(add_auth, auth_bytes.as_deref());
 
     let ciphertext = cipher
         .encrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &plaintext,
                 aad: &aad,
@@ -414,7 +414,9 @@ pub(crate) fn eval_decryptbypassphrase(
     if data.len() < header_len || &data[..4] != PASSPHRASE_ENVELOPE_MAGIC {
         return Ok(Value::Null);
     }
-    let nonce = Nonce::from_slice(&data[4..header_len]);
+    let Ok(nonce) = Nonce::try_from(&data[4..header_len]) else {
+        return Ok(Value::Null);
+    };
     let ciphertext = &data[header_len..];
 
     let key = derive_passphrase_key(&pass_val.to_string_value());
@@ -423,7 +425,7 @@ pub(crate) fn eval_decryptbypassphrase(
     };
     let aad = build_authenticator_aad(add_auth, auth_bytes.as_deref());
     match cipher.decrypt(
-        nonce,
+        &nonce,
         Payload {
             msg: ciphertext,
             aad: &aad,

@@ -9,9 +9,9 @@ pub mod types;
 pub use error::{DbError, ErrorClass, StmtOutcome, StmtResult};
 pub use executor::database::RandomSeed;
 pub use executor::database::{CheckpointManager, SqlAnalyzer, StatementExecutor};
-pub use executor::database::{
-    Database, DatabaseInner, Engine, EngineInner, PersistentDatabase, PersistentEngine,
-};
+pub use executor::database::{Database, DatabaseInner, Engine, EngineInner};
+#[cfg(feature = "persistence")]
+pub use executor::database::{PersistentDatabase, PersistentEngine};
 pub use executor::durability::{
     DurabilitySink, DurabilityWriter, InMemoryDurability, NoopDurability, RecoveryCheckpoint,
     RecoveryReader,

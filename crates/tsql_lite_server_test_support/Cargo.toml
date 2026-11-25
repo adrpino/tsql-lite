@@ -10,8 +10,8 @@ keywords = ["sql-server", "tds", "tests"]
 categories = ["database", "development-tools::testing"]
 
 [dependencies]
-tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.1" }
-tsql-lite-server = { path = "../tsql_lite_server", version = "0.3.1" }
+tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.2" }
+tsql-lite-server = { path = "../tsql_lite_server", version = "0.3.2" }
 tiberius = { version = "0.12", default-features = false, features = ["tokio", "tds73", "chrono", "rustls"] }
 tokio = { version = "1", features = ["net"] }
 tokio-util = { version = "0.7", features = ["compat"] }

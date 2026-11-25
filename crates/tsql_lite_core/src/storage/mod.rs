@@ -1,9 +1,14 @@
 pub mod btree_index;
+#[cfg(feature = "persistence")]
 mod redb_checkpoint;
+#[cfg(feature = "persistence")]
 mod redb_index_adapter;
+#[cfg(feature = "persistence")]
 mod redb_row_storage;
+#[cfg(feature = "persistence")]
 pub mod redb_storage;
 pub use btree_index::{BTreeIndex, IndexStorage};
+#[cfg(feature = "persistence")]
 pub use redb_storage::RedbStorage;
 
 use std::collections::HashMap;

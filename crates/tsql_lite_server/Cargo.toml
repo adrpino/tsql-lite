@@ -10,7 +10,7 @@ keywords = ["tds", "sql-server", "tsql", "database", "server"]
 categories = ["database", "network-programming"]
 
 [dependencies]
-tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.1" }
+tsql-lite-core = { path = "../tsql_lite_core", version = "0.3.2" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }

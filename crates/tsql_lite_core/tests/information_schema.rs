@@ -31,7 +31,7 @@ fn test_schemata_default() {
         "SELECT CATALOG_NAME, SCHEMA_NAME, SCHEMA_OWNER FROM INFORMATION_SCHEMA.SCHEMATA",
     );
     assert!(!r.rows.is_empty());
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "dbo");
     assert_eq!(val(&r, 0, 2), "dbo");
 }
@@ -56,7 +56,7 @@ fn test_tables_has_catalog() {
     exec(&mut e, "CREATE TABLE t1 (id INT)");
     let r = query(&mut e, "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 't1'");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "dbo");
     assert_eq!(val(&r, 0, 2), "t1");
     assert_eq!(val(&r, 0, 3), "BASE TABLE");
@@ -88,7 +88,7 @@ fn test_columns_full_columns() {
     let r = query(&mut e, "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't1' ORDER BY ORDINAL_POSITION");
     assert_eq!(r.rows.len(), 3);
     // id
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 3), "id");
     assert_eq!(val(&r, 0, 4), "1");
     assert_eq!(val(&r, 0, 5), "NO");
@@ -175,7 +175,7 @@ fn test_views() {
     exec(&mut e, "CREATE VIEW v1 AS SELECT id FROM t1");
     let r = query(&mut e, "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, CHECK_OPTION, IS_UPDATABLE FROM INFORMATION_SCHEMA.VIEWS");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 2), "v1");
     assert_eq!(val(&r, 0, 3), "NONE");
     assert_eq!(val(&r, 0, 4), "NO");
@@ -189,7 +189,7 @@ fn test_routines_procedure() {
     exec(&mut e, "CREATE PROCEDURE dbo.sp_test AS SELECT 1");
     let r = query(&mut e, "SELECT SPECIFIC_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_BODY, IS_DETERMINISTIC, SQL_DATA_ACCESS, SCHEMA_LEVEL_ROUTINE FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'sp_test'");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "dbo");
     assert_eq!(val(&r, 0, 2), "sp_test");
     assert_eq!(val(&r, 0, 3), "PROCEDURE");
@@ -267,7 +267,7 @@ fn test_table_constraints_pk() {
     );
     let r = query(&mut e, "SELECT CONSTRAINT_CATALOG, CONSTRAINT_NAME, TABLE_NAME, CONSTRAINT_TYPE, IS_DEFERRABLE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_NAME = 't1' AND CONSTRAINT_TYPE = 'PRIMARY KEY'");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "PK_t1");
     assert_eq!(val(&r, 0, 3), "PRIMARY KEY");
     assert_eq!(val(&r, 0, 4), "NO");
@@ -306,7 +306,7 @@ fn test_check_constraints() {
     );
     let r = query(&mut e, "SELECT CONSTRAINT_CATALOG, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS WHERE CONSTRAINT_NAME = 'CK_age'");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "CK_age");
 }
 
@@ -774,6 +774,6 @@ fn test_sys_database_files() {
     let mut e = Engine::new();
     let r = query(&mut e, "SELECT name, type_desc FROM sys.database_files");
     assert_eq!(r.rows.len(), 1);
-    assert_eq!(val(&r, 0, 0), "iridium_sql");
+    assert_eq!(val(&r, 0, 0), "tsql_lite");
     assert_eq!(val(&r, 0, 1), "ROWS");
 }

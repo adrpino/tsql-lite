@@ -37,7 +37,7 @@ pub(crate) fn resolve_virtual_table(
     vt.map(|v| (v.definition(), v.rows(catalog, ctx)))
 }
 
-pub(crate) const DB_CATALOG: &str = "iridium_sql";
+pub(crate) const DB_CATALOG: &str = "tsql_lite";
 
 pub(super) fn virtual_table_def(name: &str, cols: Vec<(&str, DataType, bool)>) -> TableDef {
     TableDef {

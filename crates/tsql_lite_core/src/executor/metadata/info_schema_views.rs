@@ -706,4 +706,4 @@ fn format_values(values: &[Value]) -> String {
         .join("\u{1f}")
 }
 
-const DB_CATALOG: &str = "iridium_sql";
+const DB_CATALOG: &str = "tsql_lite";

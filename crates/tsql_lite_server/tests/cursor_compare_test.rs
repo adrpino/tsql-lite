@@ -15,20 +15,20 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 /// Read Azure SQL Edge connection info from environment or defaults.
 fn azure_config() -> Config {
-    let host = std::env::var("IRIDIUM_AZURE_HOST")
+    let host = std::env::var("TSQL_LITE_AZURE_HOST")
         .or_else(|_| std::env::var("TSQL_AZURE_HOST"))
         .unwrap_or_else(|_| "[::1]".to_string());
-    let port: u16 = std::env::var("IRIDIUM_AZURE_PORT")
+    let port: u16 = std::env::var("TSQL_LITE_AZURE_PORT")
         .or_else(|_| std::env::var("TSQL_AZURE_PORT"))
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(11433);
-    let user = std::env::var("IRIDIUM_AZURE_USER")
+    let user = std::env::var("TSQL_LITE_AZURE_USER")
         .or_else(|_| std::env::var("TSQL_AZURE_USER"))
         .unwrap_or_else(|_| "sa".to_string());
-    let password = std::env::var("IRIDIUM_AZURE_PASSWORD")
+    let password = std::env::var("TSQL_LITE_AZURE_PASSWORD")
         .or_else(|_| std::env::var("TSQL_AZURE_PASSWORD"))
-        .unwrap_or_else(|_| "Iridium12345!".to_string());
+        .unwrap_or_else(|_| "TsqlLite12345!".to_string());
 
     let mut config = Config::new();
     config.host(&host);

@@ -159,7 +159,7 @@ impl DiffValue {
         }
     }
 
-    pub fn from_iridium(val: &Value) -> Self {
+    pub fn from_tsql_lite(val: &Value) -> Self {
         match val {
             Value::Null => DiffValue::Null,
             Value::Bit(b) => DiffValue::Bool(*b),
@@ -192,7 +192,7 @@ impl DiffValue {
             }
             Value::DateTimeOffset(s) => DiffValue::DateTime(Self::normalize_datetime_str(s)),
             Value::UniqueIdentifier(u) => DiffValue::Uuid(u.to_string().to_ascii_lowercase()),
-            Value::SqlVariant(inner) => Self::from_iridium(inner),
+            Value::SqlVariant(inner) => Self::from_tsql_lite(inner),
             other => DiffValue::Str(other.to_string_value()),
         }
     }
@@ -301,7 +301,7 @@ impl DiffValue {
         match (self, other) {
             (DiffValue::Null, DiffValue::Null) => true,
             (DiffValue::Bool(a), DiffValue::Bool(b)) => a == b,
-            // SQL Server often returns INT (0/1) for predicate/ISJSON/bit functions where Iridium returns BIT
+            // SQL Server often returns INT (0/1) for predicate/ISJSON/bit functions where tsql-lite returns BIT
             (DiffValue::Bool(a), DiffValue::Int(b)) => (*a && *b == 1) || (!*a && *b == 0),
             (DiffValue::Int(a), DiffValue::Bool(b)) => (*b && *a == 1) || (!*b && *a == 0),
             (DiffValue::Int(a), DiffValue::Int(b)) => a == b,
@@ -352,20 +352,20 @@ impl DiffValue {
 
 pub fn rows_match(
     sql_rows: &[Vec<DiffValue>],
-    iridium_rows: &[Vec<DiffValue>],
+    tsql_lite_rows: &[Vec<DiffValue>],
     ordered: bool,
 ) -> bool {
-    if sql_rows.len() != iridium_rows.len() {
+    if sql_rows.len() != tsql_lite_rows.len() {
         return false;
     }
     if ordered {
         sql_rows
             .iter()
-            .zip(iridium_rows.iter())
+            .zip(tsql_lite_rows.iter())
             .all(|(a, b)| a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.approx_eq(y)))
     } else {
         let mut s_sorted: Vec<&Vec<DiffValue>> = sql_rows.iter().collect();
-        let mut i_sorted: Vec<&Vec<DiffValue>> = iridium_rows.iter().collect();
+        let mut i_sorted: Vec<&Vec<DiffValue>> = tsql_lite_rows.iter().collect();
         let row_key = |r: &&Vec<DiffValue>| {
             r.iter()
                 .map(DiffValue::sort_key)
@@ -381,7 +381,7 @@ pub fn rows_match(
     }
 }
 
-pub fn run_iridium_batch_detailed(
+pub fn run_tsql_lite_batch_detailed(
     engine: &Engine,
     sql: &str,
 ) -> Result<Vec<Vec<DiffValue>>, BatchError> {
@@ -397,13 +397,13 @@ pub fn run_iridium_batch_detailed(
         .map(|qr| {
             qr.rows
                 .iter()
-                .map(|row| row.iter().map(DiffValue::from_iridium).collect())
+                .map(|row| row.iter().map(DiffValue::from_tsql_lite).collect())
                 .collect()
         })
         .unwrap_or_default())
 }
 
-pub fn run_iridium_session_batch_detailed(
+pub fn run_tsql_lite_session_batch_detailed(
     engine: &Engine,
     session_id: tsql_lite_core::SessionId,
     sql: &str,
@@ -418,14 +418,14 @@ pub fn run_iridium_session_batch_detailed(
         .map(|qr| {
             qr.rows
                 .iter()
-                .map(|row| row.iter().map(DiffValue::from_iridium).collect())
+                .map(|row| row.iter().map(DiffValue::from_tsql_lite).collect())
                 .collect()
         })
         .unwrap_or_default())
 }
 
-pub fn run_iridium_batch(engine: &Engine, sql: &str) -> Result<Vec<Vec<DiffValue>>, String> {
-    run_iridium_batch_detailed(engine, sql).map_err(|e| e.to_string())
+pub fn run_tsql_lite_batch(engine: &Engine, sql: &str) -> Result<Vec<Vec<DiffValue>>, String> {
+    run_tsql_lite_batch_detailed(engine, sql).map_err(|e| e.to_string())
 }
 
 pub struct LiveSqlServerConfig {
@@ -445,7 +445,7 @@ impl LiveSqlServerConfig {
                 .unwrap_or(11433),
             user: std::env::var("SQLSERVER_USER").unwrap_or_else(|_| "sa".to_string()),
             password: std::env::var("SQLSERVER_PASSWORD")
-                .unwrap_or_else(|_| "IridiumTest!2026".to_string()),
+                .unwrap_or_else(|_| "TsqlLiteTest!2026".to_string()),
         }
     }
 }
@@ -566,7 +566,7 @@ pub async fn run_differential_suite(
     };
 
     let db_name = format!(
-        "IridiumDiff_{}_{}",
+        "TsqlLiteDiff_{}_{}",
         std::process::id(),
         DB_SEQ.fetch_add(1, Ordering::Relaxed)
     );
@@ -592,14 +592,14 @@ pub async fn run_differential_suite(
         let mut setup_ok = true;
         for (i, batch) in suite.setup_batches.iter().enumerate() {
             let s_res = run_sqlserver_batch(&mut client, batch).await;
-            let i_res = run_iridium_batch(&engine, batch);
+            let i_res = run_tsql_lite_batch(&engine, batch);
             if let Err(e) = s_res {
                 failures.push(format!("setup[{}] SQL Server error: {}", i, e));
                 setup_ok = false;
                 break;
             }
             if let Err(e) = i_res {
-                failures.push(format!("setup[{}] Iridium error: {}", i, e));
+                failures.push(format!("setup[{}] tsql-lite error: {}", i, e));
                 setup_ok = false;
                 break;
             }
@@ -610,34 +610,34 @@ pub async fn run_differential_suite(
                 match step {
                     DiffStep::ExecOk { label, sql } => {
                         let s_res = run_sqlserver_batch(&mut client, sql).await;
-                        let i_res = run_iridium_batch(&engine, sql);
+                        let i_res = run_tsql_lite_batch(&engine, sql);
                         match (s_res, i_res) {
                             (Ok(_), Ok(_)) => passed += 1,
                             (Err(se), Ok(_)) => failures.push(format!(
-                                "[{}] SQL Server FAILED ({}) while Iridium succeeded",
+                                "[{}] SQL Server FAILED ({}) while tsql-lite succeeded",
                                 label, se
                             )),
                             (Ok(_), Err(ie)) => failures.push(format!(
-                                "[{}] Iridium FAILED ({}) while SQL Server succeeded",
+                                "[{}] tsql-lite FAILED ({}) while SQL Server succeeded",
                                 label, ie
                             )),
                             (Err(se), Err(ie)) => failures.push(format!(
-                                "[{}] BOTH failed (expected OK) — SQL Server: {} | Iridium: {}",
+                                "[{}] BOTH failed (expected OK) — SQL Server: {} | tsql-lite: {}",
                                 label, se, ie
                             )),
                         }
                     }
                     DiffStep::ExpectErr { label, sql } => {
                         let s_res = run_sqlserver_batch(&mut client, sql).await;
-                        let i_res = run_iridium_batch(&engine, sql);
+                        let i_res = run_tsql_lite_batch(&engine, sql);
                         match (s_res, i_res) {
                             (Err(_), Err(_)) => passed += 1,
                             (Ok(_), Err(_)) => failures.push(format!(
-                                "[{}] SQL Server SUCCEEDED while Iridium rejected (expected both to error)",
+                                "[{}] SQL Server SUCCEEDED while tsql-lite rejected (expected both to error)",
                                 label
                             )),
                             (Err(se), Ok(_)) => failures.push(format!(
-                                "[{}] Iridium SUCCEEDED while SQL Server rejected ({})",
+                                "[{}] tsql-lite SUCCEEDED while SQL Server rejected ({})",
                                 label, se
                             )),
                             (Ok(_), Ok(_)) => failures.push(format!(
@@ -652,7 +652,7 @@ pub async fn run_differential_suite(
                         expected_code,
                     } => {
                         let s_res = run_sqlserver_batch_detailed(&mut client, sql).await;
-                        let i_res = run_iridium_batch_detailed(&engine, sql);
+                        let i_res = run_tsql_lite_batch_detailed(&engine, sql);
                         match (s_res, i_res) {
                             (Err(se), Err(ie)) => {
                                 let codes_match = match (se.code, ie.code) {
@@ -666,17 +666,17 @@ pub async fn run_differential_suite(
                                     passed += 1;
                                 } else {
                                     failures.push(format!(
-                                        "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | Iridium {:?} ({})",
+                                        "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | tsql-lite {:?} ({})",
                                         label, expected_code, se.code, se.message, ie.code, ie.message
                                     ));
                                 }
                             }
                             (Ok(_), Err(ie)) => failures.push(format!(
-                                "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                                "[{}] SQL Server SUCCEEDED while tsql-lite errored ({})",
                                 label, ie
                             )),
                             (Err(se), Ok(_)) => failures.push(format!(
-                                "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                                "[{}] tsql-lite SUCCEEDED while SQL Server errored ({})",
                                 label, se
                             )),
                             (Ok(_), Ok(_)) => failures.push(format!(
@@ -691,14 +691,14 @@ pub async fn run_differential_suite(
                         ordered,
                     } => {
                         let s_res = run_sqlserver_batch(&mut client, sql).await;
-                        let i_res = run_iridium_batch(&engine, sql);
+                        let i_res = run_tsql_lite_batch(&engine, sql);
                         match (s_res, i_res) {
                             (Ok(s_rows), Ok(i_rows)) => {
                                 if rows_match(&s_rows, &i_rows, *ordered) {
                                     passed += 1;
                                 } else {
                                     failures.push(format!(
-                                        "[{}] RESULT MISMATCH:\n  SQL Server ({} rows): {:?}\n  Iridium    ({} rows): {:?}",
+                                        "[{}] RESULT MISMATCH:\n  SQL Server ({} rows): {:?}\n  tsql-lite    ({} rows): {:?}",
                                         label,
                                         s_rows.len(),
                                         s_rows,
@@ -708,15 +708,15 @@ pub async fn run_differential_suite(
                                 }
                             }
                             (Err(se), Ok(i_rows)) => failures.push(format!(
-                                "[{}] SQL Server ERROR ({}) while Iridium returned {:?}",
+                                "[{}] SQL Server ERROR ({}) while tsql-lite returned {:?}",
                                 label, se, i_rows
                             )),
                             (Ok(s_rows), Err(ie)) => failures.push(format!(
-                                "[{}] Iridium ERROR ({}) while SQL Server returned {:?}",
+                                "[{}] tsql-lite ERROR ({}) while SQL Server returned {:?}",
                                 label, ie, s_rows
                             )),
                             (Err(se), Err(ie)) => failures.push(format!(
-                                "[{}] BOTH errored on Query — SQL Server: {} | Iridium: {}",
+                                "[{}] BOTH errored on Query — SQL Server: {} | tsql-lite: {}",
                                 label, se, ie
                             )),
                         }
@@ -789,7 +789,7 @@ pub async fn run_multi_session_differential_suite(
     };
 
     let db_name = format!(
-        "IridiumDiffMS_{}_{}",
+        "TsqlLiteDiffMS_{}_{}",
         std::process::id(),
         DB_SEQ.fetch_add(1, Ordering::Relaxed)
     );
@@ -811,8 +811,8 @@ pub async fn run_multi_session_differential_suite(
     let sid_b = engine.create_session();
 
     let mut setup_ok = true;
-    if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_a, &create_sql) {
-        failures.push(format!("CREATE DATABASE failed on Iridium: {}", e));
+    if let Err(e) = run_tsql_lite_session_batch_detailed(&engine, sid_a, &create_sql) {
+        failures.push(format!("CREATE DATABASE failed on tsql-lite: {}", e));
         setup_ok = false;
     }
 
@@ -820,14 +820,14 @@ pub async fn run_multi_session_differential_suite(
         for (i, raw_opt) in suite.db_options_batches.iter().enumerate() {
             let opt_sql = raw_opt.replace("{db}", &db_name);
             let s_res = run_sqlserver_batch_detailed(&mut client_a, &opt_sql).await;
-            let i_res = run_iridium_session_batch_detailed(&engine, sid_a, &opt_sql);
+            let i_res = run_tsql_lite_session_batch_detailed(&engine, sid_a, &opt_sql);
             if let Err(e) = s_res {
                 failures.push(format!("db_options[{}] SQL Server error: {}", i, e));
                 setup_ok = false;
                 break;
             }
             if let Err(e) = i_res {
-                failures.push(format!("db_options[{}] Iridium error: {}", i, e));
+                failures.push(format!("db_options[{}] tsql-lite error: {}", i, e));
                 setup_ok = false;
                 break;
             }
@@ -844,12 +844,12 @@ pub async fn run_multi_session_differential_suite(
             failures.push(format!("USE {} on SQL Server B failed: {}", db_name, e));
             setup_ok = false;
         }
-        if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_a, &use_sql) {
-            failures.push(format!("USE {} on Iridium A failed: {}", db_name, e));
+        if let Err(e) = run_tsql_lite_session_batch_detailed(&engine, sid_a, &use_sql) {
+            failures.push(format!("USE {} on tsql-lite A failed: {}", db_name, e));
             setup_ok = false;
         }
-        if let Err(e) = run_iridium_session_batch_detailed(&engine, sid_b, &use_sql) {
-            failures.push(format!("USE {} on Iridium B failed: {}", db_name, e));
+        if let Err(e) = run_tsql_lite_session_batch_detailed(&engine, sid_b, &use_sql) {
+            failures.push(format!("USE {} on tsql-lite B failed: {}", db_name, e));
             setup_ok = false;
         }
     }
@@ -857,14 +857,14 @@ pub async fn run_multi_session_differential_suite(
     if setup_ok {
         for (i, batch) in suite.setup_batches.iter().enumerate() {
             let s_res = run_sqlserver_batch_detailed(&mut client_a, batch).await;
-            let i_res = run_iridium_session_batch_detailed(&engine, sid_a, batch);
+            let i_res = run_tsql_lite_session_batch_detailed(&engine, sid_a, batch);
             if let Err(e) = s_res {
                 failures.push(format!("setup[{}] SQL Server error: {}", i, e));
                 setup_ok = false;
                 break;
             }
             if let Err(e) = i_res {
-                failures.push(format!("setup[{}] Iridium error: {}", i, e));
+                failures.push(format!("setup[{}] tsql-lite error: {}", i, e));
                 setup_ok = false;
                 break;
             }
@@ -887,19 +887,19 @@ pub async fn run_multi_session_differential_suite(
                         SessionSlot::A => sid_a,
                         SessionSlot::B => sid_b,
                     };
-                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    let i_res = run_tsql_lite_session_batch_detailed(&engine, sid, sql);
                     match (s_res, i_res) {
                         (Ok(_), Ok(_)) => passed += 1,
                         (Err(se), Ok(_)) => failures.push(format!(
-                            "[{}] SQL Server FAILED ({}) while Iridium succeeded",
+                            "[{}] SQL Server FAILED ({}) while tsql-lite succeeded",
                             label, se
                         )),
                         (Ok(_), Err(ie)) => failures.push(format!(
-                            "[{}] Iridium FAILED ({}) while SQL Server succeeded",
+                            "[{}] tsql-lite FAILED ({}) while SQL Server succeeded",
                             label, ie
                         )),
                         (Err(se), Err(ie)) => failures.push(format!(
-                            "[{}] BOTH failed (expected OK) — SQL Server: {} | Iridium: {}",
+                            "[{}] BOTH failed (expected OK) — SQL Server: {} | tsql-lite: {}",
                             label, se, ie
                         )),
                     }
@@ -917,15 +917,15 @@ pub async fn run_multi_session_differential_suite(
                         SessionSlot::A => sid_a,
                         SessionSlot::B => sid_b,
                     };
-                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    let i_res = run_tsql_lite_session_batch_detailed(&engine, sid, sql);
                     match (s_res, i_res) {
                         (Err(_), Err(_)) => passed += 1,
                         (Ok(_), Err(ie)) => failures.push(format!(
-                            "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                            "[{}] SQL Server SUCCEEDED while tsql-lite errored ({})",
                             label, ie
                         )),
                         (Err(se), Ok(_)) => failures.push(format!(
-                            "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                            "[{}] tsql-lite SUCCEEDED while SQL Server errored ({})",
                             label, se
                         )),
                         (Ok(_), Ok(_)) => failures.push(format!(
@@ -948,7 +948,7 @@ pub async fn run_multi_session_differential_suite(
                         SessionSlot::A => sid_a,
                         SessionSlot::B => sid_b,
                     };
-                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    let i_res = run_tsql_lite_session_batch_detailed(&engine, sid, sql);
                     match (s_res, i_res) {
                         (Err(se), Err(ie)) => {
                             let codes_match = match (se.code, ie.code) {
@@ -961,17 +961,17 @@ pub async fn run_multi_session_differential_suite(
                                 passed += 1;
                             } else {
                                 failures.push(format!(
-                                    "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | Iridium {:?} ({})",
+                                    "[{}] ERROR CODE MISMATCH (expected {:?}): SQL Server {:?} ({}) | tsql-lite {:?} ({})",
                                     label, expected_code, se.code, se.message, ie.code, ie.message
                                 ));
                             }
                         }
                         (Ok(_), Err(ie)) => failures.push(format!(
-                            "[{}] SQL Server SUCCEEDED while Iridium errored ({})",
+                            "[{}] SQL Server SUCCEEDED while tsql-lite errored ({})",
                             label, ie
                         )),
                         (Err(se), Ok(_)) => failures.push(format!(
-                            "[{}] Iridium SUCCEEDED while SQL Server errored ({})",
+                            "[{}] tsql-lite SUCCEEDED while SQL Server errored ({})",
                             label, se
                         )),
                         (Ok(_), Ok(_)) => failures.push(format!(
@@ -994,14 +994,14 @@ pub async fn run_multi_session_differential_suite(
                         SessionSlot::A => sid_a,
                         SessionSlot::B => sid_b,
                     };
-                    let i_res = run_iridium_session_batch_detailed(&engine, sid, sql);
+                    let i_res = run_tsql_lite_session_batch_detailed(&engine, sid, sql);
                     match (s_res, i_res) {
                         (Ok(s_rows), Ok(i_rows)) => {
                             if rows_match(&s_rows, &i_rows, *ordered) {
                                 passed += 1;
                             } else {
                                 failures.push(format!(
-                                    "[{}] RESULT MISMATCH:\n  SQL Server ({} rows): {:?}\n  Iridium    ({} rows): {:?}",
+                                    "[{}] RESULT MISMATCH:\n  SQL Server ({} rows): {:?}\n  tsql-lite    ({} rows): {:?}",
                                     label,
                                     s_rows.len(),
                                     s_rows,
@@ -1011,15 +1011,15 @@ pub async fn run_multi_session_differential_suite(
                             }
                         }
                         (Err(se), Ok(i_rows)) => failures.push(format!(
-                            "[{}] SQL Server ERROR ({}) while Iridium returned {:?}",
+                            "[{}] SQL Server ERROR ({}) while tsql-lite returned {:?}",
                             label, se, i_rows
                         )),
                         (Ok(s_rows), Err(ie)) => failures.push(format!(
-                            "[{}] Iridium ERROR ({}) while SQL Server returned {:?}",
+                            "[{}] tsql-lite ERROR ({}) while SQL Server returned {:?}",
                             label, ie, s_rows
                         )),
                         (Err(se), Err(ie)) => failures.push(format!(
-                            "[{}] BOTH errored on Query — SQL Server: {} | Iridium: {}",
+                            "[{}] BOTH errored on Query — SQL Server: {} | tsql-lite: {}",
                             label, se, ie
                         )),
                     }

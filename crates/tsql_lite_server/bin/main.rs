@@ -152,10 +152,10 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     // In playground mode, default to a user database so SSMS Object Explorer
     // can enumerate it as a regular database node. Respect explicit --database.
     if playground_mode && !database_arg_provided {
-        config.database = "iridium_sql".to_string();
+        config.database = "tsql_lite".to_string();
     }
 
-    log::info!("iridium-server v{}", env!("CARGO_PKG_VERSION"));
+    log::info!("tsql-lite-server v{}", env!("CARGO_PKG_VERSION"));
     log::info!("Host: {}", config.host);
     log::info!("Port: {}", config.port);
     log::info!(
@@ -277,10 +277,10 @@ fn init_logger() {
 }
 
 fn print_help() {
-    println!("iridium-server - TDS 7.4 SQL Server emulator");
+    println!("tsql-lite-server - TDS 7.4 SQL Server emulator");
     println!();
     println!("USAGE:");
-    println!("  iridium-server [OPTIONS]");
+    println!("  tsql-lite-server [OPTIONS]");
     println!();
     println!("OPTIONS:");
     println!("  --host, -h <HOST>       Hostname to bind to (default: 127.0.0.1)");
@@ -302,13 +302,13 @@ fn print_help() {
     println!("  --help                  Show this help message");
     println!();
     println!("EXAMPLES:");
-    println!("  iridium-server                         # TLS enabled, no auth");
-    println!("  iridium-server --tls-gen               # Generate cert and start server");
-    println!("  iridium-server --port 14330            # No auth, port 14330");
-    println!("  iridium-server --pool-min 2 --pool-max 100 --pool-idle-timeout 60");
-    println!("  iridium-server -u sa -P Test@12345     # With auth");
-    println!("  iridium-server --playground            # Playground mode with sample data");
-    println!("  iridium-server --playground --no-tls   # Playground without TLS");
+    println!("  tsql-lite-server                         # TLS enabled, no auth");
+    println!("  tsql-lite-server --tls-gen               # Generate cert and start server");
+    println!("  tsql-lite-server --port 14330            # No auth, port 14330");
+    println!("  tsql-lite-server --pool-min 2 --pool-max 100 --pool-idle-timeout 60");
+    println!("  tsql-lite-server -u sa -P Test@12345     # With auth");
+    println!("  tsql-lite-server --playground            # Playground mode with sample data");
+    println!("  tsql-lite-server --playground --no-tls   # Playground without TLS");
     println!();
     println!("PLAYGROUND MODE:");
     println!("  When --playground is enabled, the server starts with pre-loaded");
@@ -317,7 +317,7 @@ fn print_help() {
     println!();
     println!("NOTES:");
     println!("  - TLS is enabled by default");
-    println!("  - Storage defaults to ProgramData on Windows and ./iridium_sql_data elsewhere");
+    println!("  - Storage defaults to ProgramData on Windows and ./tsql_lite_data elsewhere");
     println!("  - Use --data-dir to override the persistent storage path");
     println!("  - Use --tls-gen to generate a self-signed certificate for testing");
 }

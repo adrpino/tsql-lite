@@ -453,7 +453,7 @@ async fn test_compare_session_and_connection_probes() {
 #[ignore]
 async fn test_compare_contained_auth_probe_after_use() {
     compare_after_setup(
-        &["USE iridium_sql"],
+        &["USE tsql_lite"],
         "SELECT CASE WHEN authenticating_database_id = 1 THEN 0 ELSE 1 END \
          FROM sys.dm_exec_sessions \
          WHERE session_id = @@SPID",

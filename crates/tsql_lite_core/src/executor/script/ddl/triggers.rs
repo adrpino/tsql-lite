@@ -88,7 +88,7 @@ pub(crate) fn build_eventdata_xml(
          <EventType>{}</EventType>\
          <PostTime>{}</PostTime>\
          <SPID>{}</SPID>\
-         <ServerName>IRIDIUM-SQL</ServerName>\
+         <ServerName>TSQL-LITE</ServerName>\
          <LoginName>{}</LoginName>\
          <UserName>{}</UserName>\
          <DatabaseName>{}</DatabaseName>\

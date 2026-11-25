@@ -129,7 +129,7 @@ pub(crate) fn execute_sp_describe_undeclared_parameters(
         ));
     }
 
-    // Return empty result set — iridium does not use undeclared parameters
+    // Return empty result set — tsql-lite does not use undeclared parameters
     // in the same way as SQL Server's parameterized execution model.
     Ok(QueryResult {
         columns: vec![

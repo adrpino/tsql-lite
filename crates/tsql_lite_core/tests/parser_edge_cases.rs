@@ -105,11 +105,11 @@ fn parser_select_with_column_alias() {
 
 #[test]
 fn parser_use_statement_and_session_database_switch() {
-    let stmts = parse_batch("USE [iridium_sql]; SELECT DB_NAME()").unwrap();
+    let stmts = parse_batch("USE [tsql_lite]; SELECT DB_NAME()").unwrap();
     assert_eq!(stmts.len(), 2);
 
     let mut e = Engine::new();
-    exec(&mut e, "USE [iridium_sql]");
+    exec(&mut e, "USE [tsql_lite]");
     let r = query(&mut e, "SELECT DB_NAME()");
-    assert_eq!(r.rows[0][0], Value::NVarChar("iridium_sql".to_string()));
+    assert_eq!(r.rows[0][0], Value::NVarChar("tsql_lite".to_string()));
 }

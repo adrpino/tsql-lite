@@ -122,7 +122,7 @@ pub(crate) fn eval_app_name(args: &[Expr], ctx: &ExecutionContext) -> Result<Val
         ctx.metadata
             .app_name
             .clone()
-            .unwrap_or_else(|| "iridium_sql".to_string()),
+            .unwrap_or_else(|| "tsql_lite".to_string()),
     ))
 }
 
@@ -246,7 +246,7 @@ pub(crate) fn eval_has_dbaccess(
             || db_name.eq_ignore_ascii_case("tempdb")
             || db_name.eq_ignore_ascii_case("model")
             || db_name.eq_ignore_ascii_case("msdb")
-            || db_name.eq_ignore_ascii_case("iridium_sql")
+            || db_name.eq_ignore_ascii_case("tsql_lite")
         {
             1
         } else {

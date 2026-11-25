@@ -19,10 +19,10 @@ fn current_db_logical_name(ctx: &ExecutionContext) -> String {
 
 fn resolve_file_id(name: &str, db_name: &str) -> Option<i16> {
     let trimmed = name.trim();
-    if trimmed.eq_ignore_ascii_case(db_name) || trimmed.eq_ignore_ascii_case("iridium_sql") {
+    if trimmed.eq_ignore_ascii_case(db_name) || trimmed.eq_ignore_ascii_case("tsql_lite") {
         Some(1)
     } else if trimmed.eq_ignore_ascii_case(&format!("{db_name}_log"))
-        || trimmed.eq_ignore_ascii_case("iridium_sql_log")
+        || trimmed.eq_ignore_ascii_case("tsql_lite_log")
     {
         Some(2)
     } else {

@@ -51,7 +51,7 @@ const BUILTIN_DATABASES: &[DatabaseDef] = &[
     },
     DatabaseDef {
         id: 5,
-        name: "iridium_sql",
+        name: "tsql_lite",
         compatibility_level: 160,
         recovery_model: "FULL",
     },

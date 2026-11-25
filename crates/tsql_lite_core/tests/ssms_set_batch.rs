@@ -20,7 +20,7 @@ fn ssms_contained_auth_probe_batch_with_use_is_accepted() {
     let engine = Engine::new();
     let session_id = engine.create_session();
 
-    let sql = "use [iridium_sql];if (db_id() = 1) begin select case when is_srvrolemember('sysadmin')=1 then 0 else 1 end end else begin exec('select case when authenticating_database_id = 1 then 0 else 1 end from sys.dm_exec_sessions where session_id = @@SPID') end;use [iridium_sql];";
+    let sql = "use [tsql_lite];if (db_id() = 1) begin select case when is_srvrolemember('sysadmin')=1 then 0 else 1 end end else begin exec('select case when authenticating_database_id = 1 then 0 else 1 end from sys.dm_exec_sessions where session_id = @@SPID') end;use [tsql_lite];";
 
     let result = engine.execute_session_batch_sql(session_id, sql);
     assert!(
@@ -42,7 +42,7 @@ fn ssms_contained_auth_probe_batch_with_use_is_accepted() {
     assert_eq!(query_result.rows.len(), 1);
     assert_eq!(
         query_result.rows[0][0],
-        tsql_lite_core::types::Value::NVarChar("iridium_sql".to_string())
+        tsql_lite_core::types::Value::NVarChar("tsql_lite".to_string())
     );
     assert_eq!(query_result.rows[0][1], tsql_lite_core::types::Value::Int(5));
 }

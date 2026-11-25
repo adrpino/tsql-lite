@@ -128,10 +128,10 @@ fn table_designer_publish_alter_column_nullability() {
 
 #[test]
 fn table_designer_unsupported_table_family_probe() {
-    // Iridium does not model columnstore/temporal/graph/memory-optimized tables,
+    // tsql-lite does not model columnstore/temporal/graph/memory-optimized tables,
     // so the editability probe returns all-zero flags for any user table. The
     // deployment side is responsible for emitting UnsupportedFeatureError when
-    // any of these are non-zero (which never happens for Iridium tables).
+    // any of these are non-zero (which never happens for tsql-lite tables).
     let mut engine = Engine::new();
     exec(&mut engine, CREATE_TABLE);
     let r = query(

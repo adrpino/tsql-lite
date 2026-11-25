@@ -162,7 +162,7 @@ fn test_new_system_procedures_2025_extended() {
     assert!(res
         .rows
         .iter()
-        .any(|r| r[0].to_string_value() == "iridium_sql"));
+        .any(|r| r[0].to_string_value() == "tsql_lite"));
 
     // sp_helpfilegroup
     let res = engine.query("EXEC sp_helpfilegroup").unwrap();

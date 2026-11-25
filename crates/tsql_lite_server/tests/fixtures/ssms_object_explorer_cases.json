@@ -192,7 +192,7 @@
     {
       "name": "bootstrap_collation_property_probe",
       "scope": "bootstrap",
-      "sql": "DECLARE @dbname nvarchar(11) = N'iridium_sql'; SELECT COLLATIONPROPERTY((select collation_name from sys.databases where name = ISNULL(@dbname, db_name())), 'LCID') AS [Lcid], COLLATIONPROPERTY((select collation_name from sys.databases where name = ISNULL(@dbname, db_name())), 'ComparisonStyle') AS [ComparisonStyle]",
+      "sql": "DECLARE @dbname nvarchar(11) = N'tsql_lite'; SELECT COLLATIONPROPERTY((select collation_name from sys.databases where name = ISNULL(@dbname, db_name())), 'LCID') AS [Lcid], COLLATIONPROPERTY((select collation_name from sys.databases where name = ISNULL(@dbname, db_name())), 'ComparisonStyle') AS [ComparisonStyle]",
       "must_succeed": true,
       "result_set_count": 1,
       "result_sets": [
@@ -255,9 +255,9 @@
       ]
     },
     {
-      "name": "bootstrap_databases_contains_iridium_sql",
+      "name": "bootstrap_databases_contains_tsql_lite",
       "scope": "bootstrap",
-      "sql": "SELECT name, database_id FROM sys.databases WHERE name = 'iridium_sql'",
+      "sql": "SELECT name, database_id FROM sys.databases WHERE name = 'tsql_lite'",
       "must_succeed": true,
       "result_set_count": 1,
       "result_sets": [
@@ -271,7 +271,7 @@
       ]
     },
     {
-      "name": "bootstrap_user_databases_include_iridium_sql",
+      "name": "bootstrap_user_databases_include_tsql_lite",
       "scope": "bootstrap",
       "sql": "SELECT dtb.name AS [Database_Name] FROM sys.databases AS dtb WHERE (CAST(case when dtb.name in ('master','model','msdb','tempdb') then 1 else dtb.is_distributor end AS bit)=0) ORDER BY [Database_Name] ASC",
       "must_succeed": true,

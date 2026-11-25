@@ -100,7 +100,7 @@ impl VirtualTable for SysDmExecSessions {
                     .app_name
                     .as_ref()
                     .map(|s| Value::NVarChar(s.clone()))
-                    .unwrap_or(Value::NVarChar("iridium-sql".to_string())),
+                    .unwrap_or(Value::NVarChar("tsql-lite".to_string())),
                 Value::Int(1234), // host_process_id
                 Value::Int(1),    // client_version
                 Value::NVarChar("TDS".to_string()),

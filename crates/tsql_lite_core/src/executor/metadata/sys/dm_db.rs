@@ -50,7 +50,7 @@ impl VirtualTable for SysDmDbIndexUsageStats {
             let mut add_usage = |index_id: i32| {
                 rows.push(StoredRow {
                     values: vec![
-                        Value::Int(5), // iridium_sql
+                        Value::Int(5), // tsql_lite
                         Value::Int(t.id as i32),
                         Value::Int(index_id),
                         Value::BigInt(0),

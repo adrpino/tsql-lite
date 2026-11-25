@@ -412,8 +412,8 @@ mod sql_server_parity {
             .collect()
     }
 
-    /// Get all column names from sys.tables on Iridium
-    fn get_iridium_sys_tables_columns() -> Vec<String> {
+    /// Get all column names from sys.tables on tsql-lite
+    fn get_tsql_lite_sys_tables_columns() -> Vec<String> {
         let mut engine = Engine::new();
         let res = engine_exec(
             &mut engine,
@@ -437,12 +437,12 @@ mod sql_server_parity {
     #[ignore] // Requires running Podman with SQL Server
     async fn test_sys_tables_column_parity_with_sql_server() {
         let ss_columns = get_sqlserver_sys_tables_columns().await;
-        let iridium_columns = get_iridium_sys_tables_columns();
+        let tsql_lite_columns = get_tsql_lite_sys_tables_columns();
 
-        // Find columns in SQL Server that are missing in Iridium
+        // Find columns in SQL Server that are missing in tsql-lite
         let missing: Vec<&String> = ss_columns
             .iter()
-            .filter(|c| !iridium_columns.iter().any(|ic| ic.eq_ignore_ascii_case(c)))
+            .filter(|c| !tsql_lite_columns.iter().any(|ic| ic.eq_ignore_ascii_case(c)))
             .collect();
 
         if !missing.is_empty() {
@@ -508,7 +508,7 @@ mod sql_server_parity {
         let mut engine = Engine::new();
         let mut client = get_sqlserver_client().await;
 
-        // Iridium
+        // tsql-lite
         let engine_result =
             engine_exec(&mut engine, "SELECT * FROM sys.change_tracking_tables").unwrap();
 
@@ -525,7 +525,7 @@ mod sql_server_parity {
         // Both should return empty (no change tracking enabled)
         assert!(
             engine_result.rows.is_empty(),
-            "Iridium should have empty change_tracking_tables"
+            "tsql-lite should have empty change_tracking_tables"
         );
         assert!(
             ss_result.is_empty(),
@@ -540,7 +540,7 @@ mod sql_server_parity {
         let mut engine = Engine::new();
         let mut client = get_sqlserver_client().await;
 
-        // Iridium
+        // tsql-lite
         let engine_result = engine_exec(&mut engine, "SELECT * FROM sys.fulltext_indexes").unwrap();
 
         // SQL Server
@@ -556,7 +556,7 @@ mod sql_server_parity {
         // Both should return empty (no fulltext indexes)
         assert!(
             engine_result.rows.is_empty(),
-            "Iridium should have empty fulltext_indexes"
+            "tsql-lite should have empty fulltext_indexes"
         );
         assert!(
             ss_result.is_empty(),
@@ -571,7 +571,7 @@ mod sql_server_parity {
         let mut engine = Engine::new();
         let mut client = get_sqlserver_client().await;
 
-        // Iridium
+        // tsql-lite
         let engine_result =
             engine_exec(&mut engine, "SELECT * FROM sys.fulltext_catalogs").unwrap();
 
@@ -588,7 +588,7 @@ mod sql_server_parity {
         // Both should return empty (no fulltext catalogs)
         assert!(
             engine_result.rows.is_empty(),
-            "Iridium should have empty fulltext_catalogs"
+            "tsql-lite should have empty fulltext_catalogs"
         );
         assert!(
             ss_result.is_empty(),
@@ -646,9 +646,9 @@ mod sql_server_parity {
             table_name
         );
 
-        // Iridium
-        let engine_result = engine_exec(&mut engine, &query).expect("Iridium query failed");
-        assert_eq!(engine_result.rows.len(), 1, "Iridium should return 1 row");
+        // tsql-lite
+        let engine_result = engine_exec(&mut engine, &query).expect("tsql-lite query failed");
+        assert_eq!(engine_result.rows.len(), 1, "tsql-lite should return 1 row");
 
         // SQL Server
         let stream = client
@@ -687,7 +687,7 @@ mod sql_server_parity {
         };
         assert_eq!(
             engine_fg, ss_rows[0][0],
-            "TableFg mismatch between Iridium and SQL Server"
+            "TableFg mismatch between tsql-lite and SQL Server"
         );
 
         // Compare is_replicated (should be 0/false)
@@ -697,7 +697,7 @@ mod sql_server_parity {
         };
         assert_eq!(
             engine_replicated, ss_rows[0][3],
-            "is_replicated mismatch between Iridium and SQL Server"
+            "is_replicated mismatch between tsql-lite and SQL Server"
         );
 
         // Compare lock_escalation_desc (should be TABLE)
@@ -707,7 +707,7 @@ mod sql_server_parity {
         };
         assert_eq!(
             engine_lock, ss_rows[0][4],
-            "lock_escalation_desc mismatch between Iridium and SQL Server"
+            "lock_escalation_desc mismatch between tsql-lite and SQL Server"
         );
 
         // Compare IsChangeTracked (should be 0/false)
@@ -717,7 +717,7 @@ mod sql_server_parity {
         };
         assert_eq!(
             engine_ct, ss_rows[0][5],
-            "IsChangeTracked mismatch between Iridium and SQL Server"
+            "IsChangeTracked mismatch between tsql-lite and SQL Server"
         );
     }
 }

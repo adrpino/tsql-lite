@@ -2,8 +2,8 @@ mod sqlserver_diff;
 
 use tsql_lite_core::Engine;
 use sqlserver_diff::harness::{
-    connect_sqlserver, detect_sqlserver_major_version, run_differential_suite, run_iridium_batch,
-    run_iridium_batch_detailed, run_iridium_session_batch_detailed,
+    connect_sqlserver, detect_sqlserver_major_version, run_differential_suite, run_tsql_lite_batch,
+    run_tsql_lite_batch_detailed, run_tsql_lite_session_batch_detailed,
     run_multi_session_differential_suite, DiffStep, LiveSqlServerConfig, MultiSessionStep,
     SessionSlot,
 };
@@ -12,14 +12,14 @@ use sqlserver_diff::suites::{all_multi_session_suites, all_suites};
 /// Runs every differential suite offline against `tsql_lite_core` alone (no Docker required),
 /// guaranteeing all scenarios stay valid and regression-free during normal `cargo test`.
 #[test]
-fn differential_suites_smoke_on_iridium() {
+fn differential_suites_smoke_on_tsql_lite() {
     let mut total_steps = 0usize;
     for suite in all_suites() {
         let engine = Engine::new();
         for (i, batch) in suite.setup_batches.iter().enumerate() {
-            run_iridium_batch(&engine, batch).unwrap_or_else(|e| {
+            run_tsql_lite_batch(&engine, batch).unwrap_or_else(|e| {
                 panic!(
-                    "suite '{}' setup[{}] failed on Iridium: {}",
+                    "suite '{}' setup[{}] failed on tsql-lite: {}",
                     suite.name, i, e
                 )
             });
@@ -28,13 +28,13 @@ fn differential_suites_smoke_on_iridium() {
             total_steps += 1;
             match step {
                 DiffStep::ExecOk { label, sql } => {
-                    run_iridium_batch(&engine, sql).unwrap_or_else(|e| {
+                    run_tsql_lite_batch(&engine, sql).unwrap_or_else(|e| {
                         panic!("suite '{}' [{}] ExecOk failed: {}", suite.name, label, e)
                     });
                 }
                 DiffStep::ExpectErr { label, sql } => {
                     assert!(
-                        run_iridium_batch(&engine, sql).is_err(),
+                        run_tsql_lite_batch(&engine, sql).is_err(),
                         "suite '{}' [{}] ExpectErr unexpectedly succeeded",
                         suite.name,
                         label
@@ -45,7 +45,7 @@ fn differential_suites_smoke_on_iridium() {
                     sql,
                     expected_code,
                 } => {
-                    let err = run_iridium_batch_detailed(&engine, sql).expect_err(&format!(
+                    let err = run_tsql_lite_batch_detailed(&engine, sql).expect_err(&format!(
                         "suite '{}' [{}] ExpectErrCode unexpectedly succeeded",
                         suite.name, label
                     ));
@@ -61,7 +61,7 @@ fn differential_suites_smoke_on_iridium() {
                     }
                 }
                 DiffStep::Query { label, sql, .. } => {
-                    run_iridium_batch(&engine, sql).unwrap_or_else(|e| {
+                    run_tsql_lite_batch(&engine, sql).unwrap_or_else(|e| {
                         panic!("suite '{}' [{}] Query failed: {}", suite.name, label, e)
                     });
                 }
@@ -72,25 +72,25 @@ fn differential_suites_smoke_on_iridium() {
 }
 
 #[test]
-fn multi_session_suites_smoke_on_iridium() {
+fn multi_session_suites_smoke_on_tsql_lite() {
     for suite in all_multi_session_suites() {
         let engine = Engine::new();
         let sid_a = engine.create_session();
         let sid_b = engine.create_session();
-        let db_name = format!("IridiumSmokeMS_{}", suite.name);
-        run_iridium_session_batch_detailed(&engine, sid_a, &format!("CREATE DATABASE [{}];", db_name))
+        let db_name = format!("TsqlLiteSmokeMS_{}", suite.name);
+        run_tsql_lite_session_batch_detailed(&engine, sid_a, &format!("CREATE DATABASE [{}];", db_name))
             .unwrap_or_else(|e| panic!("suite '{}' CREATE DATABASE failed: {}", suite.name, e));
         for (i, raw_opt) in suite.db_options_batches.iter().enumerate() {
             let opt_sql = raw_opt.replace("{db}", &db_name);
-            run_iridium_session_batch_detailed(&engine, sid_a, &opt_sql).unwrap_or_else(|e| {
+            run_tsql_lite_session_batch_detailed(&engine, sid_a, &opt_sql).unwrap_or_else(|e| {
                 panic!("suite '{}' db_options[{}] failed: {}", suite.name, i, e)
             });
         }
         let use_sql = format!("USE [{}];", db_name);
-        run_iridium_session_batch_detailed(&engine, sid_a, &use_sql).unwrap();
-        run_iridium_session_batch_detailed(&engine, sid_b, &use_sql).unwrap();
+        run_tsql_lite_session_batch_detailed(&engine, sid_a, &use_sql).unwrap();
+        run_tsql_lite_session_batch_detailed(&engine, sid_b, &use_sql).unwrap();
         for (i, batch) in suite.setup_batches.iter().enumerate() {
-            run_iridium_session_batch_detailed(&engine, sid_a, batch).unwrap_or_else(|e| {
+            run_tsql_lite_session_batch_detailed(&engine, sid_a, batch).unwrap_or_else(|e| {
                 panic!("suite '{}' setup[{}] failed: {}", suite.name, i, e)
             });
         }
@@ -102,7 +102,7 @@ fn multi_session_suites_smoke_on_iridium() {
                     sql,
                 } => {
                     let sid = if *session == SessionSlot::A { sid_a } else { sid_b };
-                    run_iridium_session_batch_detailed(&engine, sid, sql).unwrap_or_else(|e| {
+                    run_tsql_lite_session_batch_detailed(&engine, sid, sql).unwrap_or_else(|e| {
                         panic!("suite '{}' [{}] ExecOk failed: {}", suite.name, label, e)
                     });
                 }
@@ -113,7 +113,7 @@ fn multi_session_suites_smoke_on_iridium() {
                 } => {
                     let sid = if *session == SessionSlot::A { sid_a } else { sid_b };
                     assert!(
-                        run_iridium_session_batch_detailed(&engine, sid, sql).is_err(),
+                        run_tsql_lite_session_batch_detailed(&engine, sid, sql).is_err(),
                         "suite '{}' [{}] ExpectErr unexpectedly succeeded",
                         suite.name,
                         label
@@ -126,7 +126,7 @@ fn multi_session_suites_smoke_on_iridium() {
                     expected_code,
                 } => {
                     let sid = if *session == SessionSlot::A { sid_a } else { sid_b };
-                    let err = run_iridium_session_batch_detailed(&engine, sid, sql).expect_err(
+                    let err = run_tsql_lite_session_batch_detailed(&engine, sid, sql).expect_err(
                         &format!(
                             "suite '{}' [{}] ExpectErrCode unexpectedly succeeded",
                             suite.name, label
@@ -150,7 +150,7 @@ fn multi_session_suites_smoke_on_iridium() {
                     ..
                 } => {
                     let sid = if *session == SessionSlot::A { sid_a } else { sid_b };
-                    run_iridium_session_batch_detailed(&engine, sid, sql).unwrap_or_else(|e| {
+                    run_tsql_lite_session_batch_detailed(&engine, sid, sql).unwrap_or_else(|e| {
                         panic!("suite '{}' [{}] Query failed: {}", suite.name, label, e)
                     });
                 }
@@ -178,7 +178,7 @@ async fn differential_parity_against_live_sqlserver() {
     drop(probe);
 
     println!(
-        "\n=== Iridium SQL Differential Oracle vs Live SQL Server (major={}) ===",
+        "\n=== tsql-lite Differential Oracle vs Live SQL Server (major={}) ===",
         major
     );
 

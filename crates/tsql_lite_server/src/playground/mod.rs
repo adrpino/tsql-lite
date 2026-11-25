@@ -1,4 +1,4 @@
-//! Playground mode for iridium-server
+//! Playground mode for tsql-lite-server
 //!
 //! Provides a seeded database with sample tables, views, and data
 //! for testing SQL Server clients without requiring complex setup.

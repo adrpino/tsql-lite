@@ -1,5 +1,5 @@
 //! Discovery test: queries SQL Server for all sys.* view columns
-//! and compares with Iridium's implementation.
+//! and compares with tsql-lite's implementation.
 //!
 //! Run with: cargo test -p tsql_lite_core test_sys_views_column_discovery -- --ignored
 
@@ -56,8 +56,8 @@ mod discovery {
             .collect()
     }
 
-    /// Get all columns for a given sys view from Iridium
-    fn get_iridium_columns(view_name: &str) -> Vec<(String, String)> {
+    /// Get all columns for a given sys view from tsql-lite
+    fn get_tsql_lite_columns(view_name: &str) -> Vec<(String, String)> {
         let engine = Engine::new();
         let query2 = format!(
             "SELECT c.name, ISNULL(CAST(t.name AS VARCHAR(30)), 'unknown') AS type_name
@@ -168,42 +168,42 @@ mod discovery {
         println!("{:=<80}\n", "");
 
         let mut total_ss = 0;
-        let mut total_iridium = 0;
+        let mut total_tsql_lite = 0;
         let mut total_missing = 0;
         let mut total_extra = 0;
 
         for view in SYS_VIEWS {
             let ss_cols = get_ss_columns(view).await;
-            let iridium_cols = get_iridium_columns(view);
+            let tsql_lite_cols = get_tsql_lite_columns(view);
 
-            // Skip if Iridium doesn't have the view
-            if iridium_cols.is_empty() && ss_cols.is_empty() {
+            // Skip if tsql-lite doesn't have the view
+            if tsql_lite_cols.is_empty() && ss_cols.is_empty() {
                 continue;
             }
 
             let ss_names: std::collections::HashSet<_> =
                 ss_cols.iter().map(|(n, _)| n.to_lowercase()).collect();
-            let iridium_names: std::collections::HashSet<_> =
-                iridium_cols.iter().map(|(n, _)| n.to_lowercase()).collect();
+            let tsql_lite_names: std::collections::HashSet<_> =
+                tsql_lite_cols.iter().map(|(n, _)| n.to_lowercase()).collect();
 
-            let missing: Vec<_> = ss_names.difference(&iridium_names).collect();
-            let extra: Vec<_> = iridium_names.difference(&ss_names).collect();
+            let missing: Vec<_> = ss_names.difference(&tsql_lite_names).collect();
+            let extra: Vec<_> = tsql_lite_names.difference(&ss_names).collect();
 
             total_ss += ss_cols.len();
-            total_iridium += iridium_cols.len();
+            total_tsql_lite += tsql_lite_cols.len();
             total_missing += missing.len();
             total_extra += extra.len();
 
             if !missing.is_empty() || !extra.is_empty() {
                 println!("\n--- sys.{} ---", view);
                 println!(
-                    "  SQL Server: {} columns | Iridium: {} columns",
+                    "  SQL Server: {} columns | tsql-lite: {} columns",
                     ss_cols.len(),
-                    iridium_cols.len()
+                    tsql_lite_cols.len()
                 );
 
                 if !missing.is_empty() {
-                    println!("  MISSING in Iridium:");
+                    println!("  MISSING in tsql-lite:");
                     for m in &missing {
                         let ss_type = ss_cols
                             .iter()
@@ -215,9 +215,9 @@ mod discovery {
                 }
 
                 if !extra.is_empty() {
-                    println!("  EXTRA in Iridium:");
+                    println!("  EXTRA in tsql-lite:");
                     for e in &extra {
-                        let ir_type = iridium_cols
+                        let ir_type = tsql_lite_cols
                             .iter()
                             .find(|(n, _)| n.eq_ignore_ascii_case(e))
                             .map(|(_, t)| t.as_str())
@@ -232,9 +232,9 @@ mod discovery {
         println!("  SUMMARY");
         println!("{:=<80}", "");
         println!("  Total SQL Server columns: {}", total_ss);
-        println!("  Total Iridium columns:    {}", total_iridium);
-        println!("  Missing in Iridium:       {}", total_missing);
-        println!("  Extra in Iridium:         {}", total_extra);
+        println!("  Total tsql-lite columns:    {}", total_tsql_lite);
+        println!("  Missing in tsql-lite:       {}", total_missing);
+        println!("  Extra in tsql-lite:         {}", total_extra);
         println!("{:=<80}\n", "");
     }
 

@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "tsql-lite-core"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -1472,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "tsql-lite-server"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "bytes",
  "chrono",
@@ -1493,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "tsql-lite-server-test-support"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "env_logger",
  "log",
@@ -1506,7 +1506,7 @@ dependencies = [
 
 [[package]]
 name = "tsql-lite-wasm"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "console_error_panic_hook",
  "serde_json",

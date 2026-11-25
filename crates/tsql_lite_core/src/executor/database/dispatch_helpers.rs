@@ -190,6 +190,32 @@ where
     }
 }
 
+fn refresh_single_table<C, S>(
+    committed_storage: &S,
+    workspace: &mut TxWorkspace<C, S>,
+    table_def: &crate::catalog::TableDef,
+) -> Result<(), DbError>
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
+    let tid = table_def.id;
+    if workspace
+        .catalog
+        .find_table(table_def.schema_or_dbo(), &table_def.name)
+        .is_none()
+    {
+        workspace.catalog.register_table(table_def.clone());
+        workspace.storage.ensure_table(tid)?;
+    }
+    if let Ok(rows) = committed_storage.scan_rows(tid) {
+        if let Ok(committed_rows) = rows.collect::<Result<Vec<_>, DbError>>() {
+            workspace.storage.replace_table(tid, committed_rows)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn refresh_workspace_for_read_committed<C, S>(
     state: &SharedState<C, S>,
     workspace: &mut TxWorkspace<C, S>,
@@ -200,49 +226,89 @@ where
     S: EngineStorage,
 {
     let storage_guard = state.storage.read();
+    let current_commit_ts = storage_guard.commit_ts;
+    if current_commit_ts == workspace.full_refresh_ts {
+        return Ok(());
+    }
+
     let read_tables = collect_read_tables(stmt);
-    for table_def in storage_guard.catalog.get_tables() {
-        let display_schema =
-            super::super::database_catalog::display_schema_name(table_def.schema_or_dbo());
-        let tname = format!(
-            "{}.{}",
-            normalize_identifier(display_schema),
-            normalize_identifier(&table_def.name)
-        );
-        if workspace.write_tables.contains(&tname) {
-            continue;
-        }
-        if !read_tables.is_empty() && !read_tables.contains(&tname) {
-            continue;
-        }
-        let tid = table_def.id;
-        if let Ok(rows) = storage_guard.storage.scan_rows(tid) {
-            if let Ok(committed_rows) = rows.collect::<Result<Vec<_>, DbError>>() {
-                workspace.storage.replace_table(tid, committed_rows)?;
+    let mut needs_full_scan = read_tables.is_empty();
+
+    if !needs_full_scan {
+        for tname in &read_tables {
+            if workspace.write_tables.contains(tname) {
+                continue;
+            }
+            let last_ts = workspace
+                .table_refreshed_ts
+                .get(tname)
+                .copied()
+                .unwrap_or(workspace.full_refresh_ts);
+            if last_ts >= current_commit_ts {
+                continue;
+            }
+            let (schema, table) = match tname.split_once('.') {
+                Some((s, t)) => (s, t),
+                None => ("DBO", tname.as_str()),
+            };
+            if let Some(table_def) = storage_guard.catalog.find_table(schema, table) {
+                let table_ver = storage_guard
+                    .table_versions
+                    .get(tname)
+                    .copied()
+                    .unwrap_or(current_commit_ts);
+                let missing_in_ws = workspace
+                    .catalog
+                    .find_table(table_def.schema_or_dbo(), &table_def.name)
+                    .is_none();
+                if missing_in_ws || table_ver > last_ts {
+                    refresh_single_table(&storage_guard.storage, workspace, table_def)?;
+                }
+                workspace
+                    .table_refreshed_ts
+                    .insert(tname.clone(), current_commit_ts);
+            } else if storage_guard.catalog.find_view(schema, table).is_some() {
+                needs_full_scan = true;
+                break;
             }
         }
     }
-    for table_def in storage_guard.catalog.get_tables() {
-        let display_schema =
-            super::super::database_catalog::display_schema_name(table_def.schema_or_dbo());
-        let tname = format!(
-            "{}.{}",
-            normalize_identifier(display_schema),
-            normalize_identifier(&table_def.name)
-        );
-        if workspace.write_tables.contains(&tname) {
-            continue;
+
+    if needs_full_scan {
+        for table_def in storage_guard.catalog.get_tables() {
+            let display_schema =
+                super::super::database_catalog::display_schema_name(table_def.schema_or_dbo());
+            let tname = format!(
+                "{}.{}",
+                normalize_identifier(display_schema),
+                normalize_identifier(&table_def.name)
+            );
+            if workspace.write_tables.contains(&tname) {
+                continue;
+            }
+            let last_ts = workspace
+                .table_refreshed_ts
+                .get(&tname)
+                .copied()
+                .unwrap_or(workspace.full_refresh_ts);
+            if last_ts >= current_commit_ts {
+                continue;
+            }
+            let table_ver = storage_guard
+                .table_versions
+                .get(&tname)
+                .copied()
+                .unwrap_or(current_commit_ts);
+            let missing_in_ws = workspace
+                .catalog
+                .find_table(table_def.schema_or_dbo(), &table_def.name)
+                .is_none();
+            if missing_in_ws || table_ver > last_ts {
+                refresh_single_table(&storage_guard.storage, workspace, table_def.as_ref())?;
+            }
         }
-        if !read_tables.is_empty() && !read_tables.contains(&tname) {
-            continue;
-        }
-        if workspace
-            .catalog
-            .find_table(table_def.schema_or_dbo(), &table_def.name)
-            .is_none()
-        {
-            workspace.catalog.register_table(table_def.as_ref().clone());
-        }
+        workspace.full_refresh_ts = current_commit_ts;
+        workspace.table_refreshed_ts.clear();
     }
     Ok(())
 }
@@ -423,4 +489,84 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::executor::database::Database;
+    use crate::executor::session::SessionManager;
+    use crate::types::Value;
+    use crate::StatementExecutor;
+
+    #[test]
+    fn test_read_committed_multi_session_sees_sequential_table_and_ddl_commits() {
+        let db = Database::new();
+        let sess_a = db.session_manager().create_session();
+        let sess_b = db.session_manager().create_session();
+        let exec = db.executor();
+
+        exec.execute_session_batch_sql(
+            sess_a,
+            "CREATE TABLE dbo.TabA (Id INT PRIMARY KEY, Val INT);
+             CREATE TABLE dbo.TabB (Id INT PRIMARY KEY, Val INT);
+             CREATE VIEW dbo.vTabB AS SELECT Id, Val FROM dbo.TabB;
+             INSERT INTO dbo.TabA VALUES (1, 10);
+             INSERT INTO dbo.TabB VALUES (1, 20);",
+        )
+        .unwrap();
+
+        // Session A opens a READ COMMITTED transaction and writes to TabA locally.
+        exec.execute_session_batch_sql(sess_a, "BEGIN TRANSACTION;")
+            .unwrap();
+        exec.execute_session_batch_sql(sess_a, "UPDATE dbo.TabA SET Val = 99 WHERE Id = 1;")
+            .unwrap();
+
+        // Session B commits changes to TabB AND creates a brand-new table TabC.
+        exec.execute_session_batch_sql(
+            sess_b,
+            "INSERT INTO dbo.TabB VALUES (2, 200);
+             CREATE TABLE dbo.TabC (Id INT PRIMARY KEY, Tag NVARCHAR(20));
+             INSERT INTO dbo.TabC VALUES (1, N'Fresh');",
+        )
+        .unwrap();
+
+        // Session A reads TabA first (must keep its own uncommitted Val=99),
+        // then reads TabB (must see Session B's committed row 2!),
+        // then reads vTabB (view over TabB) and newly created TabC!
+        let a_res = exec
+            .execute_session_batch_sql(sess_a, "SELECT Val FROM dbo.TabA WHERE Id = 1;")
+            .unwrap()
+            .unwrap();
+        assert_eq!(a_res.rows[0][0], Value::Int(99));
+
+        let b_res = exec
+            .execute_session_batch_sql(sess_a, "SELECT COUNT(*) FROM dbo.TabB;")
+            .unwrap()
+            .unwrap();
+        assert_eq!(b_res.rows[0][0], Value::BigInt(2));
+
+        let v_res = exec
+            .execute_session_batch_sql(sess_a, "SELECT SUM(Val) FROM dbo.vTabB;")
+            .unwrap()
+            .unwrap();
+        assert_eq!(v_res.rows[0][0], Value::BigInt(220));
+
+        let c_res = exec
+            .execute_session_batch_sql(sess_a, "SELECT Tag FROM dbo.TabC WHERE Id = 1;")
+            .unwrap()
+            .unwrap();
+        assert_eq!(c_res.rows[0][0], Value::NVarChar("Fresh".to_string()));
+
+        // Session B commits another row to TabB after Session A already refreshed TabB once.
+        exec.execute_session_batch_sql(sess_b, "INSERT INTO dbo.TabB VALUES (3, 300);")
+            .unwrap();
+        let b_res2 = exec
+            .execute_session_batch_sql(sess_a, "SELECT COUNT(*) FROM dbo.TabB;")
+            .unwrap()
+            .unwrap();
+        assert_eq!(b_res2.rows[0][0], Value::BigInt(3));
+
+        exec.execute_session_batch_sql(sess_a, "ROLLBACK TRANSACTION;")
+            .unwrap();
+    }
 }

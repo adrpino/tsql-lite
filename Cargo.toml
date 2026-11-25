@@ -15,18 +15,14 @@ repository = "https://github.com/adrpino/tsql-lite"
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
+lto = "thin"
 strip = "symbols"
-
-[profile.bench]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
 
 [profile.release-wasm]
 inherits = "release"
 opt-level = "z"
+lto = "fat"
+codegen-units = 1
 panic = "abort"
 strip = true
 

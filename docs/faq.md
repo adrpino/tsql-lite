@@ -27,7 +27,7 @@ The project aims to provide an open alternative to SQL Server-style workflows. I
 While [SQLite](https://www.sqlite.org/) and [PostgreSQL](https://www.postgresql.org/) are excellent databases, they use different SQL dialects (Standard SQL / PostgreSQL dialect). Iridium SQL is specifically built for users and applications that depend on **T-SQL** (Transact-SQL) and the **TDS protocol**, providing a drop-in experience for those already using SQL Server tools and libraries.
 
 ### 4. Can I use Iridium SQL for production workloads?
-Iridium SQL is currently in a phase-based development cycle. While it is highly compatible with many application-facing T-SQL patterns, it is recommended to evaluate its current [Compatibility Matrix](compatibility-matrix.md) and [Roadmap](roadmap.md) to ensure it meets your specific requirements.
+Iridium SQL is under active development. While it is highly compatible with many application-facing T-SQL patterns, it is recommended to evaluate its current [Compatibility Matrix](compatibility-matrix.md) to ensure it meets your specific requirements.
 
 ### 5. What are the primary use cases?
 - **Local-first applications** that want to use T-SQL without a heavy SQL Server installation.

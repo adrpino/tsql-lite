@@ -4,9 +4,8 @@ set -e
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO_ROOT"
 
-CREDENTIALS_PATH="$REPO_ROOT/scripts/credentials.json"
-SQL_USER=$(jq -r '.sql_server_user' "$CREDENTIALS_PATH")
-SQL_PASSWORD=$(jq -r '.sql_server_password' "$CREDENTIALS_PATH")
+SQL_USER="${SQL_SERVER_USER:-sa}"
+SQL_PASSWORD="${SQL_SERVER_PASSWORD:-Iridium12345!}"
 
 LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR"

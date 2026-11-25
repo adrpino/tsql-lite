@@ -4,10 +4,8 @@ $ErrorActionPreference = "Stop"
 # SSMS Preview often defaults to encrypted connections, so we start with TLS enabled.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
-$credentialsPath = Join-Path $repoRoot "scripts\credentials.json"
-$credentials = Get-Content -LiteralPath $credentialsPath -Raw | ConvertFrom-Json
-$sqlUser = $credentials.sql_server_user
-$sqlPassword = $credentials.sql_server_password
+$sqlUser = if ($env:SQL_SERVER_USER) { $env:SQL_SERVER_USER } else { "sa" }
+$sqlPassword = if ($env:SQL_SERVER_PASSWORD) { $env:SQL_SERVER_PASSWORD } else { "Iridium12345!" }
 
 $cargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
 if (-not (Test-Path $cargo)) {

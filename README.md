@@ -78,10 +78,9 @@ const restored = await IridiumDatabase.fromCheckpoint(checkpoint);
 Compatibility is measured, documented, and updated continuously.
 
 - [Frequently Asked Questions (FAQ)](docs/faq.md)
-- [Compatibility Roadmap](docs/roadmap.md)
 - [Compatibility Matrix](docs/compatibility-matrix.md)
 - [T-SQL Function Parity Reference](docs/tsql-function-parity.md)
-- [Compatibility Backlog](docs/compatibility-backlog.md)
+- [SQL Server Error Parity](docs/error-parity.md)
 
 Current posture:
 

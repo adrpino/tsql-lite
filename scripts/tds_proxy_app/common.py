@@ -86,19 +86,15 @@ class SqlCredentials:
 
 
 def load_sql_credentials(root: Path | None = None) -> SqlCredentials:
-    base = root or repo_root()
-    path = base / "scripts" / "credentials.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if "sql_server_user" not in data or "sql_server_password" not in data:
-        raise RuntimeError(f"Missing sql_server_user/sql_server_password in {path}")
-    user = str(data["sql_server_user"]).strip()
-    password = str(data["sql_server_password"])
+    _ = root
+    user = os.environ.get("SQL_SERVER_USER", "sa").strip()
+    password = os.environ.get("SQL_SERVER_PASSWORD", "Iridium12345!")
     if len(password) < 8:
         raise RuntimeError(
-            f"sql_server_password in {path} is too short; SQL Server requires at least 8 characters"
+            "SQL_SERVER_PASSWORD is too short; SQL Server requires at least 8 characters"
         )
     if not user:
-        raise RuntimeError(f"sql_server_user in {path} is empty")
+        raise RuntimeError("SQL_SERVER_USER is empty")
     return SqlCredentials(user=user, password=password)
 
 

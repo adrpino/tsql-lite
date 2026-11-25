@@ -39,8 +39,9 @@ where
 {
     state
         .deadlock_priorities
+        .read()
         .get(&session_id)
-        .map(|priority| *priority)
+        .copied()
         .unwrap_or(0)
 }
 
@@ -90,6 +91,7 @@ where
                 ctx.metadata.datefirst = session_options.datefirst;
                 state
                     .deadlock_priorities
+                    .write()
                     .insert(session_id, session_options.deadlock_priority);
                 for warn in apply.warnings {
                     journal.record(JournalEvent::Info { message: warn });
@@ -121,6 +123,7 @@ where
             ctx.metadata.datefirst = session_options.datefirst;
             state
                 .deadlock_priorities
+                .write()
                 .insert(session_id, session_options.deadlock_priority);
             Some(Ok(StmtOutcome::Ok(None)))
         } else {
@@ -297,14 +300,15 @@ where
 {
     let mut other_sids: Vec<SessionId> = state
         .sessions
-        .iter()
-        .map(|entry| *entry.key())
+        .read()
+        .keys()
+        .copied()
         .filter(|&sid| sid != current_session_id)
         .collect();
     other_sids.sort_unstable();
     for sid in other_sids {
-        if let Some(entry) = state.sessions.get(&sid) {
-            if let Some(sess) = entry.value().try_lock() {
+        if let Some(entry) = state.get_session(sid) {
+            if let Some(sess) = entry.try_lock() {
                 if sess.current_database.eq_ignore_ascii_case(db_name) {
                     return true;
                 }
@@ -327,14 +331,15 @@ pub(crate) fn evict_sessions_for_database<C, S>(
 {
     let mut other_sids: Vec<SessionId> = state
         .sessions
-        .iter()
-        .map(|entry| *entry.key())
+        .read()
+        .keys()
+        .copied()
         .filter(|&sid| sid != current_session_id)
         .collect();
     other_sids.sort_unstable();
     for sid in other_sids {
-        if let Some(entry) = state.sessions.get(&sid) {
-            let mut sess = entry.value().lock();
+        if let Some(entry) = state.get_session(sid) {
+            let mut sess = entry.lock();
             if sess.current_database.eq_ignore_ascii_case(db_name) {
                 if sess.tx_manager.depth > 0 || sess.workspace.is_some() {
                     state.table_locks.lock().release_all_for_session(sid);

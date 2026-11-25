@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::ast::Statement;
+#[cfg(feature = "persistence")]
 use crate::catalog::CatalogImpl;
 use crate::error::DbError;
 use crate::executor::locks::SessionId;
@@ -9,7 +10,9 @@ use crate::executor::session::SessionManager as SessionManagerTrait;
 use crate::executor::tooling::{ExecutionTrace, ExplainPlan, SessionOptions};
 use crate::executor::wal::{Lsn, WalRecord};
 
-use super::super::durability::{DurabilitySink, RecoveryCheckpoint, RecoveryReader};
+#[cfg(feature = "persistence")]
+use super::super::durability::RecoveryReader;
+use super::super::durability::{DurabilitySink, RecoveryCheckpoint};
 use super::super::session::{SharedState, SharedStorage};
 use super::{
     CheckpointManager as CheckpointManagerTrait, EngineCatalog, EngineStorage,
@@ -36,6 +39,7 @@ where
     pub(crate) inner: Arc<SharedState<C, S>>,
 }
 
+#[cfg(feature = "persistence")]
 impl DatabaseInner<CatalogImpl, crate::storage::RedbStorage> {
     pub fn new_persistent(path: &std::path::Path) -> Result<Self, DbError> {
         std::fs::create_dir_all(path)
@@ -156,11 +160,16 @@ where
         storage.commit_ts = 0;
         storage.table_versions.clear();
         self.inner.table_locks.lock().clear();
-        for mut session_lock in self.inner.sessions.iter_mut() {
-            let session_id = *session_lock.key();
-            let session = session_lock.value_mut().get_mut();
-            session.reset();
-            self.inner.deadlock_priorities.insert(session_id, 0);
+        let sessions: Vec<(SessionId, Arc<parking_lot::Mutex<_>>)> = self
+            .inner
+            .sessions
+            .read()
+            .iter()
+            .map(|(&sid, s)| (sid, Arc::clone(s)))
+            .collect();
+        for (session_id, session_arc) in sessions {
+            session_arc.lock().reset();
+            self.inner.deadlock_priorities.write().insert(session_id, 0);
         }
     }
 
@@ -195,22 +204,20 @@ where
 
     pub fn print_output(&self, session_id: SessionId) -> Vec<String> {
         self.inner
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .map(|s| s.lock().diagnostics.print_output.clone())
             .unwrap_or_default()
     }
 
     pub fn take_print_output(&self, session_id: SessionId) -> Vec<String> {
         self.inner
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .map(|s| std::mem::take(&mut s.lock().diagnostics.print_output))
             .unwrap_or_default()
     }
 
     pub fn clear_print_output(&self, session_id: SessionId) {
-        if let Some(s) = self.inner.sessions.get(&session_id) {
+        if let Some(s) = self.inner.get_session(session_id) {
             s.lock().diagnostics.print_output.clear();
         }
     }
@@ -245,12 +252,12 @@ where
         stmts: Vec<Statement>,
     ) -> Result<Vec<QueryResult>, DbError> {
         let sink = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        if let Some(entry) = self.inner.sessions.get(&session_id) {
-            entry.value().lock().diagnostics.result_set_sink = Some(sink.clone());
+        if let Some(entry) = self.inner.get_session(session_id) {
+            entry.lock().diagnostics.result_set_sink = Some(sink.clone());
         }
         let res = self.executor().execute_session_batch(session_id, stmts);
-        if let Some(entry) = self.inner.sessions.get(&session_id) {
-            entry.value().lock().diagnostics.result_set_sink = None;
+        if let Some(entry) = self.inner.get_session(session_id) {
+            entry.lock().diagnostics.result_set_sink = None;
         }
         res?;
         let collected = std::mem::take(&mut *sink.lock());
@@ -589,8 +596,10 @@ where
             durability: parking_lot::Mutex::new(durability),
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
-            sessions: dashmap::DashMap::new(),
-            deadlock_priorities: std::sync::Arc::new(dashmap::DashMap::new()),
+            sessions: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            deadlock_priorities: std::sync::Arc::new(parking_lot::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),
@@ -620,8 +629,10 @@ where
             )),
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
-            sessions: dashmap::DashMap::new(),
-            deadlock_priorities: std::sync::Arc::new(dashmap::DashMap::new()),
+            sessions: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            deadlock_priorities: std::sync::Arc::new(parking_lot::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             dirty_buffer: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::dirty_buffer::DirtyBuffer::new(),
@@ -653,8 +664,10 @@ where
         shared.commit_ts = checkpoint.commit_ts;
         shared.table_versions = checkpoint.table_versions;
         self.table_locks.lock().clear();
-        for mut session_lock in self.sessions.iter_mut() {
-            session_lock.value_mut().get_mut().reset();
+        let sessions: Vec<Arc<parking_lot::Mutex<_>>> =
+            self.sessions.read().values().cloned().collect();
+        for session_arc in sessions {
+            session_arc.lock().reset();
         }
     }
 

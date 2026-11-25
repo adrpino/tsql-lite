@@ -23,8 +23,7 @@ where
     F: FnOnce(&mut SessionRuntime<C, S>) -> Result<R, DbError>,
 {
     let session_mutex = state
-        .sessions
-        .get(&session_id)
+        .get_session(session_id)
         .ok_or_else(|| DbError::Execution(format!("session {} not found", session_id)))?;
     let mut session = session_mutex.lock();
     f(&mut session)

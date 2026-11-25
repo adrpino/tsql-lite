@@ -78,15 +78,20 @@ where
 
     // 1. Merge catalogs from all active workspaces
     // This allows seeing uncommitted tables/columns.
-    for entry in state.sessions.iter() {
-        let sid = *entry.key();
+    let session_entries: Vec<(SessionId, std::sync::Arc<parking_lot::Mutex<_>>)> = state
+        .sessions
+        .read()
+        .iter()
+        .map(|(&sid, s)| (sid, std::sync::Arc::clone(s)))
+        .collect();
+    for (sid, session_arc) in session_entries {
         if sid == requesting_session_id {
             if let Some(workspace) = requesting_workspace {
                 merge_catalog(&mut merged_catalog, &workspace.catalog);
             }
             continue;
         }
-        let session = entry.value().lock();
+        let session = session_arc.lock();
         if let Some(ref workspace) = session.workspace {
             merge_catalog(&mut merged_catalog, &workspace.catalog);
         }

@@ -215,19 +215,23 @@ impl Default for Database {
 }
 
 /// Opaque wrapper around `DatabaseInner` with persistent (redb) storage.
+#[cfg(feature = "persistence")]
 pub struct PersistentDatabase(pub(crate) DatabaseInner<CatalogImpl, crate::storage::RedbStorage>);
 
+#[cfg(feature = "persistence")]
 impl std::ops::Deref for PersistentDatabase {
     type Target = DatabaseInner<CatalogImpl, crate::storage::RedbStorage>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
+#[cfg(feature = "persistence")]
 impl std::ops::DerefMut for PersistentDatabase {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
+#[cfg(feature = "persistence")]
 impl PersistentDatabase {
     pub fn new_persistent(path: &std::path::Path) -> Result<Self, DbError> {
         DatabaseInner::new_persistent(path).map(Self)
@@ -268,14 +272,17 @@ impl Default for Engine {
 }
 
 /// Opaque wrapper around `EngineInner` with persistent (redb) storage.
+#[cfg(feature = "persistence")]
 pub struct PersistentEngine(pub(crate) EngineInner<CatalogImpl, crate::storage::RedbStorage>);
 
+#[cfg(feature = "persistence")]
 impl std::ops::Deref for PersistentEngine {
     type Target = EngineInner<CatalogImpl, crate::storage::RedbStorage>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
+#[cfg(feature = "persistence")]
 impl std::ops::DerefMut for PersistentEngine {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -452,4 +459,5 @@ macro_rules! delegate_db_traits {
 }
 
 delegate_db_traits!(Database);
+#[cfg(feature = "persistence")]
 delegate_db_traits!(PersistentDatabase);

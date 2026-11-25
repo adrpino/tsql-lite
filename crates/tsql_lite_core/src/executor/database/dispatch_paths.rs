@@ -56,7 +56,7 @@ where
 {
     let priorities = Arc::clone(&state.deadlock_priorities);
     let priority_lookup: Arc<dyn Fn(SessionId) -> i32 + Send + Sync> =
-        Arc::new(move |sid| priorities.get(&sid).map(|p| *p).unwrap_or(0));
+        Arc::new(move |sid| priorities.read().get(&sid).copied().unwrap_or(0));
 
     let snapshot_conflict_checker: Option<Arc<dyn Fn(u32, usize) -> bool + Send + Sync>> =
         if isolation_level == IsolationLevel::Snapshot && allow_snapshot_isolation {

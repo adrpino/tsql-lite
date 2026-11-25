@@ -18,8 +18,7 @@ where
     fn session_isolation_level(&self, session_id: SessionId) -> Result<IsolationLevel, DbError> {
         let session_mutex = self
             .state
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .ok_or_else(|| DbError::Execution(format!("session {} not found", session_id)))?;
         let session = session_mutex.lock();
         Ok(session.tx_manager.session_isolation_level)
@@ -28,8 +27,7 @@ where
     fn transaction_is_active(&self, session_id: SessionId) -> Result<bool, DbError> {
         let session_mutex = self
             .state
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .ok_or_else(|| DbError::Execution(format!("session {} not found", session_id)))?;
         let session = session_mutex.lock();
         Ok(session.tx_manager.active.is_some())
@@ -38,8 +36,7 @@ where
     fn session_options(&self, session_id: SessionId) -> Result<SessionOptions, DbError> {
         let session_mutex = self
             .state
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .ok_or_else(|| DbError::Execution(format!("session {} not found", session_id)))?;
         let session = session_mutex.lock();
         Ok(session.options.clone())
@@ -146,8 +143,7 @@ where
     fn set_session_seed(&self, session_id: SessionId, seed: u64) -> Result<(), DbError> {
         let session_mutex = self
             .state
-            .sessions
-            .get(&session_id)
+            .get_session(session_id)
             .ok_or_else(|| DbError::Execution(format!("session {} not found", session_id)))?;
         let mut session = session_mutex.lock();
         session.random_state = seed;

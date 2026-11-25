@@ -26,6 +26,9 @@ jobs:
       - name: Clippy (all targets)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Clippy (tsql-lite-core in-memory only / no-default-features)
+        run: cargo clippy -p tsql-lite-core --no-default-features -- -D warnings
+
       - name: WASM target check
         run: cargo check --target wasm32-unknown-unknown -p tsql-lite-wasm
 

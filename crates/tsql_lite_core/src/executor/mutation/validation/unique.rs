@@ -14,6 +14,58 @@ pub(crate) fn enforce_unique_on_insert(
     table_id: u32,
     new_row: &StoredRow,
 ) -> Result<(), DbError> {
+    if let Some(slice) = storage.get_table_slice(table_id) {
+        for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
+            let new_val = &new_row.values[col_idx];
+            if new_val.is_null() {
+                continue;
+            }
+            for existing in slice {
+                if existing.deleted {
+                    continue;
+                }
+                let existing_val = &existing.values[col_idx];
+                if !existing_val.is_null()
+                    && compare_values(new_val, existing_val) == std::cmp::Ordering::Equal
+                {
+                    return Err(DbError::Execution(format!(
+                        "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
+                        col.name
+                    )));
+                }
+            }
+        }
+        let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
+        if pk_count >= 2 {
+            let pk_cols: Vec<usize> = table
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.primary_key)
+                .map(|(i, _)| i)
+                .collect();
+            for existing in slice {
+                if existing.deleted {
+                    continue;
+                }
+                let all_match = pk_cols.iter().all(|&ci| {
+                    let nv = &new_row.values[ci];
+                    let ev = &existing.values[ci];
+                    !nv.is_null()
+                        && !ev.is_null()
+                        && compare_values(nv, ev) == std::cmp::Ordering::Equal
+                });
+                if all_match {
+                    return Err(DbError::Execution(
+                        "Violation of PRIMARY KEY constraint. Cannot insert duplicate key."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+        return Ok(());
+    }
+
     for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
         let new_val = &new_row.values[col_idx];
         if new_val.is_null() {
@@ -72,6 +124,58 @@ pub(crate) fn enforce_unique_on_update(
     updated_row: &StoredRow,
     updated_idx: usize,
 ) -> Result<(), DbError> {
+    if let Some(slice) = storage.get_table_slice(table_id) {
+        for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
+            let new_val = &updated_row.values[col_idx];
+            if new_val.is_null() {
+                continue;
+            }
+            for (i, existing) in slice.iter().enumerate() {
+                if i == updated_idx || existing.deleted {
+                    continue;
+                }
+                let existing_val = &existing.values[col_idx];
+                if !existing_val.is_null()
+                    && compare_values(new_val, existing_val) == std::cmp::Ordering::Equal
+                {
+                    return Err(DbError::Execution(format!(
+                        "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
+                        col.name
+                    )));
+                }
+            }
+        }
+        let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
+        if pk_count >= 2 {
+            let pk_cols: Vec<usize> = table
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.primary_key)
+                .map(|(i, _)| i)
+                .collect();
+            for (i, existing) in slice.iter().enumerate() {
+                if i == updated_idx || existing.deleted {
+                    continue;
+                }
+                let all_match = pk_cols.iter().all(|&ci| {
+                    let nv = &updated_row.values[ci];
+                    let ev = &existing.values[ci];
+                    !nv.is_null()
+                        && !ev.is_null()
+                        && compare_values(nv, ev) == std::cmp::Ordering::Equal
+                });
+                if all_match {
+                    return Err(DbError::Execution(
+                        "Violation of PRIMARY KEY constraint. Cannot insert duplicate key."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+        return Ok(());
+    }
+
     for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
         let new_val = &updated_row.values[col_idx];
         if new_val.is_null() {
@@ -180,6 +284,49 @@ pub(crate) fn enforce_unique_indexes_on_write(
         .map(|i| i.as_ref().clone())
         .collect();
     if unique_indexes.is_empty() {
+        return Ok(());
+    }
+    if let Some(slice) = storage.get_table_slice(table_id) {
+        for idx in &unique_indexes {
+            let Some(positions) = index_key_positions(table, idx) else {
+                continue;
+            };
+            if !row_matches_filter(
+                table,
+                candidate_row,
+                &idx.filter_predicate,
+                ctx,
+                catalog,
+                storage,
+                clock,
+            )? {
+                continue;
+            }
+            for (i, existing) in slice.iter().enumerate() {
+                if existing.deleted || skip_row_idx == Some(i) {
+                    continue;
+                }
+                if !key_tuples_equal(candidate_row, existing, &positions) {
+                    continue;
+                }
+                if row_matches_filter(
+                    table,
+                    existing,
+                    &idx.filter_predicate,
+                    ctx,
+                    catalog,
+                    storage,
+                    clock,
+                )? {
+                    return Err(DbError::Execution(format!(
+                        "Cannot insert duplicate key row in object '{}.{}' with unique index '{}'.",
+                        table.schema_or_dbo(),
+                        table.name,
+                        idx.name
+                    )));
+                }
+            }
+        }
         return Ok(());
     }
     let existing_rows: Vec<(usize, StoredRow)> = storage

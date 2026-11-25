@@ -73,6 +73,36 @@ pub mod utils {
     }
 }
 
+pub(crate) fn validate_identifier_lengths(tokens: &[ast::Token]) -> Result<(), DbError> {
+    for tok in tokens {
+        let (ident, max_len) = match tok {
+            ast::Token::Identifier(id) => {
+                // SQL Server limits local temp table identifiers (#...) to 116 chars;
+                // regular, bracketed, double-quoted, and global temp (##...) identifiers allow 128.
+                if id.starts_with('#') && !id.starts_with("##") {
+                    (id.as_str(), 116usize)
+                } else {
+                    (id.as_str(), 128usize)
+                }
+            }
+            ast::Token::Variable(v) => (v.as_str(), 128usize),
+            _ => continue,
+        };
+        if ident.chars().count() > max_len {
+            let prefix: String = ident.chars().take(max_len).collect();
+            return Err(DbError::Custom {
+                class: 15,
+                number: 103,
+                message: format!(
+                    "The identifier that starts with '{}' is too long. Maximum length is {}.",
+                    prefix, max_len
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub mod statements {
     pub mod procedural {
         use crate::error::DbError;
@@ -82,6 +112,7 @@ pub mod statements {
             let mut sql_ref = input;
             let tokens = lexer::lex(&mut sql_ref, true)
                 .map_err(|e| DbError::Parse(format!("Lexer error: {:?}", e)))?;
+            crate::parser::validate_identifier_lengths(&tokens)?;
             let mut parser = Parser::new(tokens);
             let params =
                 inner_parse::parse_comma_list(&mut parser, inner_parse::parse_routine_param)
@@ -102,6 +133,7 @@ pub fn parse_expr_with_quoted_ident(
     let mut sql_ref = input;
     let tokens = lexer::lex(&mut sql_ref, quoted_identifier)
         .map_err(|e| DbError::Parse(format!("Lexer error: {:?}", e)))?;
+    validate_identifier_lengths(&tokens)?;
     let mut parser = Parser::new(tokens);
     let expr = inner_parse::expressions::parse_expr(&mut parser)
         .map_err(|e| DbError::Parse(e.to_string()))?;
@@ -130,6 +162,7 @@ pub fn parse_batch_with_quoted_ident(
     let mut sql_ref = sql;
     let tokens = lexer::lex(&mut sql_ref, quoted_identifier)
         .map_err(|e| DbError::Parse(format!("Lexer error: {:?}", e)))?;
+    validate_identifier_lengths(&tokens)?;
     let mut parser = Parser::new(tokens);
     let stmts = inner_parse::parse_batch(&mut parser).map_err(|e| DbError::Parse(e.to_string()))?;
     lower::lower_batch(stmts)

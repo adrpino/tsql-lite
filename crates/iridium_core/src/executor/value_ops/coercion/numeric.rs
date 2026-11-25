@@ -1,3 +1,4 @@
+use super::xml::xml_conversion_not_allowed;
 use crate::error::DbError;
 use crate::executor::value_helpers::rescale_raw;
 use crate::types::{DataType, Value};
@@ -50,7 +51,7 @@ pub(crate) fn coerce_int(v: i64, ty: &DataType) -> Result<Value, DbError> {
             ty
         ))),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::BigInt(v)))),
-        DataType::Xml => Ok(Value::VarChar(v.to_string())),
+        DataType::Xml => Err(xml_conversion_not_allowed("int")),
     }
 }
 
@@ -148,6 +149,7 @@ pub(crate) fn coerce_decimal(raw: i128, scale: u8, ty: &DataType) -> Result<Valu
             Ok(Value::NVarChar(crate::types::format_decimal(raw, scale)))
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Decimal(raw, scale)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("decimal")),
         _ => Err(DbError::Execution(format!(
             "cannot convert DECIMAL to {:?}",
             ty
@@ -217,6 +219,7 @@ pub(crate) fn coerce_float(bits: u64, ty: &DataType) -> Result<Value, DbError> {
         DataType::Binary { .. } => Ok(Value::Binary((f as i64).to_le_bytes().to_vec())),
         DataType::VarBinary { .. } => Ok(Value::VarBinary((f as i64).to_le_bytes().to_vec())),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Float(bits)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("float")),
         _ => Err(DbError::Execution(format!(
             "cannot convert FLOAT to {:?}",
             ty
@@ -292,6 +295,7 @@ pub(crate) fn coerce_money(raw: i128, ty: &DataType) -> Result<Value, DbError> {
         DataType::Binary { .. } => Ok(Value::Binary(raw.to_le_bytes().to_vec())),
         DataType::VarBinary { .. } => Ok(Value::VarBinary(raw.to_le_bytes().to_vec())),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Money(raw)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("money")),
         _ => Err(DbError::Execution(format!(
             "cannot convert MONEY to {:?}",
             ty

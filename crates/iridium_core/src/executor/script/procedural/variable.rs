@@ -40,6 +40,11 @@ impl<'a> ScriptExecutor<'a> {
             crate::executor::type_mapping::resolve_data_type_spec(&stmt.data_type, self.catalog)
         };
         let value = if let Some(ref default_expr) = stmt.default {
+            crate::executor::value_ops::coercion::xml::check_implicit_xml_var_conversion(
+                default_expr,
+                &ty,
+                ctx,
+            )?;
             let raw = crate::executor::evaluator::eval_expr(
                 default_expr,
                 &[],
@@ -48,7 +53,11 @@ impl<'a> ScriptExecutor<'a> {
                 self.storage,
                 self.clock,
             )?;
-            if matches!(ty, crate::types::DataType::Vector { .. }) && !raw.is_null() {
+            if matches!(
+                ty,
+                crate::types::DataType::Vector { .. } | crate::types::DataType::Xml
+            ) && !raw.is_null()
+            {
                 crate::executor::value_ops::coerce_value_to_type_with_dateformat(
                     raw,
                     &ty,
@@ -96,6 +105,12 @@ impl<'a> ScriptExecutor<'a> {
         stmt: SetStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
+        if let Some((ty, _)) = ctx.session.get_var(&stmt.name) {
+            let target_ty = ty.clone();
+            crate::executor::value_ops::coercion::xml::check_implicit_xml_var_conversion(
+                &stmt.expr, &target_ty, ctx,
+            )?;
+        }
         let val = crate::executor::evaluator::eval_expr(
             &stmt.expr,
             &[],

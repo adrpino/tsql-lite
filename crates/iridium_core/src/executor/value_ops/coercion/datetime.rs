@@ -1,3 +1,4 @@
+use super::xml::xml_conversion_not_allowed;
 use crate::error::DbError;
 use crate::types::{DataType, Value};
 
@@ -25,6 +26,7 @@ pub(crate) fn coerce_date_value(v: chrono::NaiveDate, ty: &DataType) -> Result<V
             ))
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Date(v)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("date")),
         _ => Err(DbError::Execution(format!(
             "cannot convert DATE value to {:?}",
             ty
@@ -58,6 +60,7 @@ pub(crate) fn coerce_time_value(v: chrono::NaiveTime, ty: &DataType) -> Result<V
             v.format("%H:%M:%S%.f")
         ))),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Time(v)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("time")),
         _ => Err(DbError::Execution(format!(
             "cannot convert TIME value to {:?}",
             ty
@@ -99,6 +102,7 @@ pub(crate) fn coerce_datetime_value(
             Ok(Value::Int((v - epoch).num_days() as i32))
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::DateTime(v)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("datetime")),
         _ => Err(DbError::Execution(format!(
             "cannot convert DATETIME value to {:?}",
             ty

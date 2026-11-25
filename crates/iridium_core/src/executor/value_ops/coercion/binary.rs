@@ -1,4 +1,5 @@
 use super::numeric::coerce_int;
+use super::xml::{validate_xml_fragment, xml_conversion_not_allowed};
 use crate::error::DbError;
 use crate::executor::value_helpers::pad_binary_right;
 use crate::types::{DataType, Value};
@@ -30,6 +31,22 @@ pub(crate) fn coerce_binary(data: &[u8], ty: &DataType) -> Result<Value, DbError
             Ok(Value::NVarChar(String::from_utf8_lossy(data).into_owned()))
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Binary(data.to_vec())))),
+        DataType::Xml => {
+            let text = if data.starts_with(&[0xFF, 0xFE]) && data.len().is_multiple_of(2) {
+                let units: Vec<u16> = data[2..]
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&units)
+                    .map_err(|_| DbError::Execution("invalid UTF-16 XML binary".into()))?
+            } else {
+                let bytes = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
+                String::from_utf8(bytes.to_vec())
+                    .map_err(|_| DbError::Execution("invalid UTF-8 XML binary".into()))?
+            };
+            validate_xml_fragment(&text)?;
+            Ok(Value::VarChar(text))
+        }
         DataType::UniqueIdentifier => {
             let padded = pad_binary_right(data, 16);
             let arr: [u8; 16] = padded[..16].try_into().map_err(|_| {
@@ -85,6 +102,7 @@ pub(crate) fn coerce_uuid_value(v: Uuid, ty: &DataType) -> Result<Value, DbError
         DataType::NChar { .. } | DataType::NVarChar { .. } => Ok(Value::NVarChar(v.to_string())),
         DataType::UniqueIdentifier => Ok(Value::UniqueIdentifier(v)),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::UniqueIdentifier(v)))),
+        DataType::Xml => Err(xml_conversion_not_allowed("uniqueidentifier")),
         _ => Err(DbError::Execution(format!(
             "cannot convert UNIQUEIDENTIFIER to {:?}",
             ty

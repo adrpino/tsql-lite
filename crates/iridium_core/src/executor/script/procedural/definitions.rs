@@ -55,6 +55,13 @@ impl<'a> ScriptExecutor<'a> {
     ) -> Result<(), DbError> {
         self.validate_routine_params(&stmt.params)?;
         let schema = stmt.name.schema_or_dbo().to_string();
+        if stmt.is_schema_bound {
+            crate::executor::metadata::sys::dependencies::validate_schemabinding_function(
+                &schema,
+                &stmt.name.name,
+                &stmt.body,
+            )?;
+        }
         let routine = crate::catalog::RoutineDef {
             object_id: self.catalog.alloc_object_id(),
             schema,

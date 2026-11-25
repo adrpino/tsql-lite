@@ -6,11 +6,13 @@ pub mod binary;
 pub mod datetime;
 pub mod numeric;
 pub mod string;
+pub mod xml;
 
 use binary::*;
 use datetime::*;
 use numeric::*;
 use string::*;
+use xml::*;
 
 pub fn coerce_value_to_type(value: Value, ty: &DataType) -> Result<Value, DbError> {
     coerce_value_to_type_with_dateformat(value, ty, "mdy")
@@ -64,7 +66,13 @@ pub fn coerce_value_to_type_with_dateformat(
         Value::DateTime(v) => coerce_datetime_value(v, ty),
         Value::DateTime2(v) => coerce_datetime_value(v, ty),
         Value::SmallDateTime(v) => coerce_datetime_value(v, ty),
-        Value::DateTimeOffset(v) => coerce_string(&v, ty, dateformat),
+        Value::DateTimeOffset(v) => {
+            if matches!(ty, DataType::Xml) {
+                Err(xml_conversion_not_allowed("datetimeoffset"))
+            } else {
+                coerce_string(&v, ty, dateformat)
+            }
+        }
         Value::UniqueIdentifier(v) => coerce_uuid_value(v, ty),
         Value::SqlVariant(inner) => coerce_value_to_type_with_dateformat(*inner, ty, dateformat),
     }
@@ -105,7 +113,7 @@ fn coerce_bit(v: bool, ty: &DataType) -> Result<Value, DbError> {
             ty
         ))),
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::Bit(v)))),
-        DataType::Xml => Ok(Value::VarChar(int_val.to_string())),
+        DataType::Xml => Err(xml_conversion_not_allowed("bit")),
     }
 }
 
@@ -139,6 +147,7 @@ fn coerce_vector(value: Value, ty: &DataType) -> Result<Value, DbError> {
         (Value::Vector(_), DataType::SqlVariant) => Err(DbError::Execution(
             "cannot convert VECTOR to SQL_VARIANT".into(),
         )),
+        (Value::Vector(_), DataType::Xml) => Err(xml_conversion_not_allowed("vector")),
         (Value::Vector(_), other) => Err(DbError::Execution(format!(
             "cannot convert VECTOR to {:?}",
             other

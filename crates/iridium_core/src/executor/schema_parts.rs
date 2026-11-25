@@ -421,6 +421,11 @@ pub(crate) fn create_view(
             body: Box::new(select_stmt),
         }))
     };
+    if stmt.is_schema_bound {
+        crate::executor::metadata::sys::dependencies::validate_schemabinding_view(
+            &schema, &view_name, &view_stmt,
+        )?;
+    }
     let view = crate::catalog::ViewDef {
         object_id: executor.catalog.alloc_object_id(),
         schema,

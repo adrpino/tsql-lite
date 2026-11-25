@@ -70,6 +70,12 @@ impl<'a> ScriptExecutor<'a> {
         }
         if stmt.from.is_none() {
             for t in stmt.targets {
+                if let Some((ty, _)) = ctx.session.get_var(&t.variable) {
+                    let target_ty = ty.clone();
+                    crate::executor::value_ops::coercion::xml::check_implicit_xml_var_conversion(
+                        &t.expr, &target_ty, ctx,
+                    )?;
+                }
                 let val = eval_expr(&t.expr, &[], ctx, self.catalog, self.storage, self.clock)?;
                 if let Some((ty, var)) = ctx.session.get_var_mut(&t.variable) {
                     *var = coerce_value_to_type_with_dateformat(val, ty, &ctx.options.dateformat)?;

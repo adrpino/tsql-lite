@@ -5,6 +5,7 @@ use crate::ast::{
     ProceduralStatement, SelectStmt, Statement, TableFactor, TableRef,
 };
 use crate::catalog::{Catalog, RoutineKind};
+use crate::error::DbError;
 use crate::storage::StoredRow;
 use crate::types::Value;
 
@@ -793,4 +794,419 @@ pub(crate) fn find_schemabound_column_dependent(
         }
     }
     None
+}
+
+fn is_builtin_tvf_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "OPENJSON"
+            | "OPENXML"
+            | "STRING_SPLIT"
+            | "GENERATE_SERIES"
+            | "CHANGETABLE"
+            | "CONTAINSTABLE"
+            | "FREETEXTTABLE"
+            | "OPENDATASOURCE"
+            | "OPENQUERY"
+            | "OPENROWSET"
+    )
+}
+
+fn schemabinding_star_err() -> DbError {
+    DbError::Custom {
+        class: 15,
+        number: 1054,
+        message: "Syntax '*' is not allowed in schema-bound objects.".to_string(),
+    }
+}
+
+fn schemabinding_name_err(kind: &str, schema: &str, name: &str, bad_ref: &str) -> DbError {
+    DbError::Custom {
+        class: 16,
+        number: 4512,
+        message: format!(
+            "Cannot schema bind {} '{}.{}' because name '{}' is invalid for schema binding. Names must be in two-part format and an object cannot reference itself.",
+            kind, schema, name, bad_ref
+        ),
+    }
+}
+
+fn validate_sb_object_ref(
+    obj: &ObjectName,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    let clean_name = obj.name.trim().trim_matches(['[', ']']);
+    if is_pseudo_or_temp_name(clean_name) || is_builtin_tvf_name(clean_name) {
+        return Ok(());
+    }
+    if obj.schema.is_none() && ctes.contains(&clean_name.to_ascii_lowercase()) {
+        return Ok(());
+    }
+    if obj.database.is_some() {
+        let full = format!(
+            "{}.{}.{}",
+            obj.database.as_deref().unwrap_or(""),
+            obj.schema.as_deref().unwrap_or(""),
+            clean_name
+        );
+        return Err(schemabinding_name_err(kind, self_schema, self_name, &full));
+    }
+    let Some(ref_schema) = obj.schema.as_deref() else {
+        return Err(schemabinding_name_err(
+            kind,
+            self_schema,
+            self_name,
+            clean_name,
+        ));
+    };
+    let clean_schema = ref_schema.trim().trim_matches(['[', ']']);
+    if clean_schema.eq_ignore_ascii_case(self_schema) && clean_name.eq_ignore_ascii_case(self_name)
+    {
+        return Err(schemabinding_name_err(
+            kind,
+            self_schema,
+            self_name,
+            &format!("{}.{}", clean_schema, clean_name),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sb_table_ref(
+    tr: &TableRef,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    match &tr.factor {
+        TableFactor::Named(obj) => validate_sb_object_ref(obj, ctes, kind, self_schema, self_name),
+        TableFactor::Derived(q) => validate_sb_select(q, ctes, kind, self_schema, self_name),
+        TableFactor::Values { rows, .. } => {
+            for row in rows {
+                for expr in row {
+                    validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_sb_from_node(
+    node: &FromNode,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    match node {
+        FromNode::Table(tr) => validate_sb_table_ref(tr, ctes, kind, self_schema, self_name),
+        FromNode::Aliased { source, .. } => {
+            validate_sb_from_node(source, ctes, kind, self_schema, self_name)
+        }
+        FromNode::Join {
+            left, right, on, ..
+        } => {
+            validate_sb_from_node(left, ctes, kind, self_schema, self_name)?;
+            validate_sb_from_node(right, ctes, kind, self_schema, self_name)?;
+            if let Some(expr) = on {
+                validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_sb_expr(
+    expr: &Expr,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    match expr {
+        Expr::Binary { left, right, .. } => {
+            validate_sb_expr(left, ctes, kind, self_schema, self_name)?;
+            validate_sb_expr(right, ctes, kind, self_schema, self_name)
+        }
+        Expr::Unary { expr, .. }
+        | Expr::IsNull(expr)
+        | Expr::IsNotNull(expr)
+        | Expr::Cast { expr, .. }
+        | Expr::TryCast { expr, .. }
+        | Expr::Convert { expr, .. }
+        | Expr::TryConvert { expr, .. } => {
+            validate_sb_expr(expr, ctes, kind, self_schema, self_name)
+        }
+        Expr::FunctionCall { name, args, .. } => {
+            let parts: Vec<&str> = name.split('.').collect();
+            if parts.len() > 2 {
+                return Err(schemabinding_name_err(kind, self_schema, self_name, name));
+            }
+            if parts.len() == 2 {
+                let fn_schema = parts[0].trim().trim_matches(['[', ']']);
+                let fn_name = parts[1].trim().trim_matches(['[', ']']);
+                if fn_schema.eq_ignore_ascii_case(self_schema)
+                    && fn_name.eq_ignore_ascii_case(self_name)
+                {
+                    return Err(schemabinding_name_err(kind, self_schema, self_name, name));
+                }
+            }
+            for a in args {
+                validate_sb_expr(a, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_result,
+        } => {
+            if let Some(op) = operand {
+                validate_sb_expr(op, ctes, kind, self_schema, self_name)?;
+            }
+            for wc in when_clauses {
+                validate_sb_expr(&wc.condition, ctes, kind, self_schema, self_name)?;
+                validate_sb_expr(&wc.result, ctes, kind, self_schema, self_name)?;
+            }
+            if let Some(e) = else_result {
+                validate_sb_expr(e, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+            validate_sb_expr(low, ctes, kind, self_schema, self_name)?;
+            validate_sb_expr(high, ctes, kind, self_schema, self_name)
+        }
+        Expr::InList { expr, list, .. } => {
+            validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+            for item in list {
+                validate_sb_expr(item, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+        Expr::InSubquery { expr, subquery, .. } => {
+            validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+            validate_sb_select(subquery, ctes, kind, self_schema, self_name)
+        }
+        Expr::Exists { subquery, .. } | Expr::Subquery(subquery) => {
+            validate_sb_select(subquery, ctes, kind, self_schema, self_name)
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            validate_sb_expr(expr, ctes, kind, self_schema, self_name)?;
+            validate_sb_expr(pattern, ctes, kind, self_schema, self_name)?;
+            if let Some(esc) = escape {
+                validate_sb_expr(esc, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+        Expr::WindowFunction(wf) => {
+            for a in &wf.args {
+                validate_sb_expr(a, ctes, kind, self_schema, self_name)?;
+            }
+            for p in &wf.partition_by {
+                validate_sb_expr(p, ctes, kind, self_schema, self_name)?;
+            }
+            for o in &wf.order_by {
+                validate_sb_expr(&o.expr, ctes, kind, self_schema, self_name)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_sb_select(
+    stmt: &SelectStmt,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    for item in &stmt.projection {
+        if matches!(item.expr, Expr::Wildcard | Expr::QualifiedWildcard(_)) {
+            return Err(schemabinding_star_err());
+        }
+        validate_sb_expr(&item.expr, ctes, kind, self_schema, self_name)?;
+    }
+    if let Some(from) = &stmt.from_clause {
+        validate_sb_from_node(from, ctes, kind, self_schema, self_name)?;
+    }
+    for apply in &stmt.applies {
+        validate_sb_select(&apply.subquery, ctes, kind, self_schema, self_name)?;
+    }
+    if let Some(sel) = &stmt.selection {
+        validate_sb_expr(sel, ctes, kind, self_schema, self_name)?;
+    }
+    for g in &stmt.group_by {
+        validate_sb_expr(g, ctes, kind, self_schema, self_name)?;
+    }
+    if let Some(h) = &stmt.having {
+        validate_sb_expr(h, ctes, kind, self_schema, self_name)?;
+    }
+    for o in &stmt.order_by {
+        validate_sb_expr(&o.expr, ctes, kind, self_schema, self_name)?;
+    }
+    if let Some(set_op) = &stmt.set_op {
+        validate_sb_select(&set_op.right, ctes, kind, self_schema, self_name)?;
+    }
+    Ok(())
+}
+
+fn validate_sb_stmt(
+    stmt: &Statement,
+    ctes: &HashSet<String>,
+    kind: &str,
+    self_schema: &str,
+    self_name: &str,
+) -> Result<(), DbError> {
+    match stmt {
+        Statement::WithCte(cte) => {
+            let mut local_ctes = ctes.clone();
+            for def in &cte.ctes {
+                validate_sb_stmt(&def.query, &local_ctes, kind, self_schema, self_name)?;
+                local_ctes.insert(def.name.to_ascii_lowercase());
+            }
+            validate_sb_stmt(&cte.body, &local_ctes, kind, self_schema, self_name)
+        }
+        Statement::Dml(dml) => match dml {
+            DmlStatement::Select(s) => validate_sb_select(s, ctes, kind, self_schema, self_name),
+            DmlStatement::SetOp(s) => {
+                validate_sb_stmt(&s.left, ctes, kind, self_schema, self_name)?;
+                validate_sb_stmt(&s.right, ctes, kind, self_schema, self_name)
+            }
+            DmlStatement::Insert(ins) => {
+                validate_sb_object_ref(&ins.table, ctes, kind, self_schema, self_name)?;
+                match &ins.source {
+                    crate::ast::InsertSource::Select(q) => {
+                        validate_sb_select(q, ctes, kind, self_schema, self_name)
+                    }
+                    crate::ast::InsertSource::Values(rows) => {
+                        for row in rows {
+                            for e in row {
+                                validate_sb_expr(e, ctes, kind, self_schema, self_name)?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
+            }
+            DmlStatement::SelectAssign(sa) => {
+                if let Some(tr) = &sa.from {
+                    validate_sb_table_ref(tr, ctes, kind, self_schema, self_name)?;
+                }
+                for j in &sa.joins {
+                    validate_sb_table_ref(&j.table, ctes, kind, self_schema, self_name)?;
+                    if let Some(on) = &j.on {
+                        validate_sb_expr(on, ctes, kind, self_schema, self_name)?;
+                    }
+                }
+                for t in &sa.targets {
+                    validate_sb_expr(&t.expr, ctes, kind, self_schema, self_name)?;
+                }
+                if let Some(sel) = &sa.selection {
+                    validate_sb_expr(sel, ctes, kind, self_schema, self_name)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        },
+        Statement::Procedural(p) => match p {
+            ProceduralStatement::BeginEnd(stmts) => {
+                for s in stmts {
+                    validate_sb_stmt(s, ctes, kind, self_schema, self_name)?;
+                }
+                Ok(())
+            }
+            ProceduralStatement::If(i) => {
+                validate_sb_expr(&i.condition, ctes, kind, self_schema, self_name)?;
+                for s in &i.then_body {
+                    validate_sb_stmt(s, ctes, kind, self_schema, self_name)?;
+                }
+                if let Some(else_body) = &i.else_body {
+                    for s in else_body {
+                        validate_sb_stmt(s, ctes, kind, self_schema, self_name)?;
+                    }
+                }
+                Ok(())
+            }
+            ProceduralStatement::While(w) => {
+                validate_sb_expr(&w.condition, ctes, kind, self_schema, self_name)?;
+                for s in &w.body {
+                    validate_sb_stmt(s, ctes, kind, self_schema, self_name)?;
+                }
+                Ok(())
+            }
+            ProceduralStatement::Declare(d) => {
+                if let Some(v) = &d.default {
+                    validate_sb_expr(v, ctes, kind, self_schema, self_name)?;
+                }
+                Ok(())
+            }
+            ProceduralStatement::Set(s) => {
+                validate_sb_expr(&s.expr, ctes, kind, self_schema, self_name)
+            }
+            ProceduralStatement::Return(Some(e)) => {
+                validate_sb_expr(e, ctes, kind, self_schema, self_name)
+            }
+            _ => Ok(()),
+        },
+        _ => Ok(()),
+    }
+}
+
+/// Validates SQL Server creation-time `WITH SCHEMABINDING` rules on a view:
+/// rejects `*` / `t.*` wildcards (error 1054) and 1-part, 3-part, or self-referencing
+/// object names (error 4512).
+pub(crate) fn validate_schemabinding_view(
+    schema: &str,
+    name: &str,
+    stmt: &Statement,
+) -> Result<(), DbError> {
+    let empty_ctes = HashSet::new();
+    validate_sb_stmt(stmt, &empty_ctes, "view", schema, name)
+}
+
+/// Validates SQL Server creation-time `WITH SCHEMABINDING` rules on a function:
+/// rejects `*` / `t.*` wildcards (error 1054) and 1-part, 3-part, or self-referencing
+/// object names (error 4512).
+pub(crate) fn validate_schemabinding_function(
+    schema: &str,
+    name: &str,
+    body: &FunctionBody,
+) -> Result<(), DbError> {
+    let empty_ctes = HashSet::new();
+    match body {
+        FunctionBody::ScalarReturn(e) => validate_sb_expr(e, &empty_ctes, "function", schema, name),
+        FunctionBody::Scalar(stmts) | FunctionBody::MultiStatementTable { body: stmts, .. } => {
+            for s in stmts {
+                validate_sb_stmt(s, &empty_ctes, "function", schema, name)?;
+            }
+            Ok(())
+        }
+        FunctionBody::InlineTable(q) => {
+            validate_sb_select(q, &empty_ctes, "function", schema, name)
+        }
+        FunctionBody::InlineTableWithCte(cte) => {
+            let mut local_ctes = empty_ctes;
+            for def in &cte.ctes {
+                validate_sb_stmt(&def.query, &local_ctes, "function", schema, name)?;
+                local_ctes.insert(def.name.to_ascii_lowercase());
+            }
+            validate_sb_stmt(&cte.body, &local_ctes, "function", schema, name)
+        }
+    }
 }

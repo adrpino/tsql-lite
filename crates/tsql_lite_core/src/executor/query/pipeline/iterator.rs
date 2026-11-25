@@ -562,7 +562,7 @@ impl RowIterator for TableScanIterator {
                 return Ok(Some(vec![ContextTable {
                     table: self.bound.table.clone(),
                     alias: self.bound.alias.clone(),
-                    row: Some(Arc::new(stored.clone())),
+                    row: Some(Arc::clone(stored)),
                     storage_index: Some(idx),
                     source_aliases: Vec::new(),
                 }]));

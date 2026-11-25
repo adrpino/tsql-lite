@@ -56,6 +56,7 @@ impl RowIterator for HashSemiJoinIterator {
 struct HashInSubqueryIterator {
     source: Box<dyn RowIterator>,
     lhs_expr: Expr,
+    lhs_slot: Option<(usize, usize)>,
     inner_set: HashSet<SqlHashKey>,
     inner_raw: Vec<Value>,
     inner_family: Option<HashKeyFamily>,
@@ -73,13 +74,26 @@ impl RowIterator for HashInSubqueryIterator {
         clock: &dyn Clock,
     ) -> Result<Option<JoinedRow>, DbError> {
         while let Some(row) = self.source.next_row(ctx, catalog, storage, clock)? {
-            let lhs = eval_expr(&self.lhs_expr, &row, ctx, catalog, storage, clock)?;
+            let evaluated: Option<Value>;
+            let lhs: &Value = if let Some(slot) = self.lhs_slot {
+                crate::executor::identifier::value_at_slot(&row, slot)
+            } else {
+                evaluated = Some(eval_expr(
+                    &self.lhs_expr,
+                    &row,
+                    ctx,
+                    catalog,
+                    storage,
+                    clock,
+                )?);
+                evaluated.as_ref().unwrap()
+            };
             let matched = if self.is_empty {
                 self.negated
             } else if lhs.is_null() {
                 false
             } else {
-                let hk = SqlHashKey::from_value(&lhs);
+                let hk = SqlHashKey::from_value(lhs);
                 let found = matches!(
                     self.inner_family,
                     Some(fam) if fam == hk.family() && fam != HashKeyFamily::Mixed
@@ -88,7 +102,7 @@ impl RowIterator for HashInSubqueryIterator {
                 .unwrap_or_else(|| {
                     self.inner_raw
                         .iter()
-                        .any(|rv| compare_values(&lhs, rv) == Ordering::Equal)
+                        .any(|rv| compare_values(lhs, rv) == Ordering::Equal)
                 });
                 if self.negated {
                     !found && !self.has_null
@@ -323,10 +337,12 @@ fn try_build_hash_in_subquery(
         inner_raw.push(val);
     }
 
+    let lhs_slot = crate::executor::identifier::resolve_column_slot(lhs_expr, outer_shape);
     Ok(Some(HashInSubqueryIterator {
         // Placeholder; caller attaches actual `source` iterator immediately.
         source: Box::new(from_tree::ScanIterator::new(Vec::new())),
         lhs_expr: lhs_expr.clone(),
+        lhs_slot,
         inner_set,
         inner_raw,
         inner_family,

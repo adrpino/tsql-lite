@@ -706,6 +706,9 @@ pub(crate) fn find_schemabound_dependent(
     target_schema: &str,
     target_name: &str,
 ) -> Option<String> {
+    if !catalog.has_schemabound_objects() {
+        return None;
+    }
     let empty_ctes = HashSet::new();
     for view in catalog.get_views().iter() {
         if !view.is_schema_bound {
@@ -743,6 +746,9 @@ pub(crate) fn find_schemabound_column_dependent(
     target_name: &str,
     col_name: &str,
 ) -> Option<String> {
+    if !catalog.has_schemabound_objects() {
+        return None;
+    }
     let empty_ctes = HashSet::new();
     for view in catalog.get_views().iter() {
         if !view.is_schema_bound {

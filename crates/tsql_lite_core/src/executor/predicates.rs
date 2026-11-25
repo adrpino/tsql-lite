@@ -233,7 +233,62 @@ pub(crate) fn like_match_default(s: &str, pattern: &str) -> bool {
     )
 }
 
+/// Zero-allocation O(N) ASCII `LIKE` matcher for patterns without `ESCAPE` or `[...]` classes.
+///
+/// Semantically identical to `like_match_dp` for all ASCII `(s, pattern)` because Latin accent
+/// stripping and combining-diacritic filtering are identity transforms on ASCII bytes.
+#[inline]
+fn like_match_ascii(s: &[u8], p: &[u8], case_sensitive: bool) -> bool {
+    let (mut si, mut pi) = (0usize, 0usize);
+    let mut star_p: Option<usize> = None;
+    let mut star_s: usize = 0;
+
+    while si < s.len() {
+        if pi < p.len() && p[pi] == b'%' {
+            star_p = Some(pi);
+            pi += 1;
+            star_s = si;
+        } else if pi < p.len()
+            && (p[pi] == b'_'
+                || if case_sensitive {
+                    s[si] == p[pi]
+                } else {
+                    s[si].eq_ignore_ascii_case(&p[pi])
+                })
+        {
+            si += 1;
+            pi += 1;
+        } else if let Some(sp) = star_p {
+            star_s += 1;
+            si = star_s;
+            pi = sp + 1;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == b'%' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
 fn like_match(
+    s: &str,
+    pattern: &str,
+    escape: Option<&str>,
+    flags: super::collation::CollationFlags,
+) -> bool {
+    if escape.is_none()
+        && s.is_ascii()
+        && pattern.is_ascii()
+        && !pattern.as_bytes().contains(&b'[')
+    {
+        return like_match_ascii(s.as_bytes(), pattern.as_bytes(), flags.case_sensitive);
+    }
+    like_match_dp(s, pattern, escape, flags)
+}
+
+fn like_match_dp(
     s: &str,
     pattern: &str,
     escape: Option<&str>,
@@ -530,5 +585,82 @@ fn is_expr_uncorrelated(expr: &Expr) -> bool {
         | Expr::TryConvert { expr, .. } => is_expr_uncorrelated(expr),
         Expr::FunctionCall { args, .. } => args.iter().all(is_expr_uncorrelated),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::collation::CollationFlags;
+
+    #[test]
+    fn test_like_match_ascii_matches_dp_oracle_exhaustively() {
+        // Hand-picked edge shapes + deterministic pseudo-random differential fuzz (8,000 cases)
+        let edge_cases = [
+            ("", ""),
+            ("", "%"),
+            ("", "%%"),
+            ("", "_"),
+            ("abc", "abc"),
+            ("AbC", "aBc"),
+            ("abc", "%"),
+            ("abc", "a%c"),
+            ("abc", "a%d"),
+            ("aaaaaaab", "%a%a%a%b"),
+            ("aaaaaaac", "%a%a%a%b"),
+            ("foo_bar", "foo_bar"),
+            ("fooXbar", "foo_bar"),
+            ("Café", "caf%"),
+            ("abc", "[a-c]%"),
+        ];
+        for (s, p) in edge_cases {
+            for cs in [false, true] {
+                for as_flag in [false, true] {
+                    let flags = CollationFlags {
+                        case_sensitive: cs,
+                        accent_sensitive: as_flag,
+                    };
+                    assert_eq!(
+                        like_match(s, p, None, flags),
+                        like_match_dp(s, p, None, flags),
+                        "mismatch for s={s:?} p={p:?} flags={flags:?}"
+                    );
+                }
+            }
+        }
+
+        // LCG fuzz over small alphabet {'a', 'A', 'b', 'B', '%', '_'} so backtracking & collisions trigger heavily
+        let mut seed: u64 = 0x5EED_CAFE_1234_5678;
+        let mut next_u32 = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 32) as u32
+        };
+        let s_alpha = *b"aAbBc";
+        let p_alpha = *b"aAb%_";
+        let mut s_buf = String::new();
+        let mut p_buf = String::new();
+        for _ in 0..4000 {
+            s_buf.clear();
+            p_buf.clear();
+            let slen = (next_u32() % 12) as usize;
+            let plen = (next_u32() % 10) as usize;
+            for _ in 0..slen {
+                s_buf.push(s_alpha[(next_u32() as usize) % s_alpha.len()] as char);
+            }
+            for _ in 0..plen {
+                p_buf.push(p_alpha[(next_u32() as usize) % p_alpha.len()] as char);
+            }
+            for cs in [false, true] {
+                let flags = CollationFlags {
+                    case_sensitive: cs,
+                    accent_sensitive: true,
+                };
+                assert_eq!(
+                    like_match(&s_buf, &p_buf, None, flags),
+                    like_match_dp(&s_buf, &p_buf, None, flags),
+                    "fuzz mismatch for s={s_buf:?} p={p_buf:?} cs={cs}"
+                );
+            }
+        }
     }
 }

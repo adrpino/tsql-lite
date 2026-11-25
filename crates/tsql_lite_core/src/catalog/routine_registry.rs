@@ -27,12 +27,22 @@ impl RoutineRegistry for CatalogImpl {
                 routine.schema, routine.name
             )));
         }
+        if routine.is_schema_bound {
+            self.schemabound_routine_count += 1;
+        }
         self.routines.insert_or_replace(key, routine);
         Ok(())
     }
 
     fn replace_routine(&mut self, routine: RoutineDef) -> Result<(), DbError> {
         let key = routine_key(&routine);
+        let was_bound = self.routines.get(&key).is_some_and(|r| r.is_schema_bound);
+        let now_bound = routine.is_schema_bound;
+        if was_bound && !now_bound {
+            self.schemabound_routine_count = self.schemabound_routine_count.saturating_sub(1);
+        } else if !was_bound && now_bound {
+            self.schemabound_routine_count += 1;
+        }
         self.routines.insert_or_replace(key, routine);
         Ok(())
     }
@@ -63,7 +73,11 @@ impl RoutineRegistry for CatalogImpl {
                 schema, name
             )));
         }
+        let was_bound = existing.is_schema_bound;
         self.routines.remove(&key, routine_key);
+        if was_bound {
+            self.schemabound_routine_count = self.schemabound_routine_count.saturating_sub(1);
+        }
         Ok(())
     }
 }

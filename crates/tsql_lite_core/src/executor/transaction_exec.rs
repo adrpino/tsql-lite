@@ -158,18 +158,19 @@ where
                 storage_guard.catalog = workspace.catalog;
                 storage_guard.storage = workspace.storage;
             }
-            storage_guard.commit_ts = next_commit_ts;
-            for table in &write_tables {
-                storage_guard
-                    .table_versions
-                    .insert(table.clone(), next_commit_ts);
+                    storage_guard.commit_ts = next_commit_ts;
+            if !write_tables.is_empty() {
+                let tv = std::sync::Arc::make_mut(&mut storage_guard.table_versions);
+                for table in &write_tables {
+                    tv.insert(table.clone(), next_commit_ts);
+                }
             }
             if !state.durability.lock().is_noop() {
                 let checkpoint = super::durability::RecoveryCheckpoint {
                     catalog: storage_guard.catalog.clone(),
                     storage_data: storage_guard.storage.get_checkpoint_data(),
                     commit_ts: next_commit_ts,
-                    table_versions: storage_guard.table_versions.clone(),
+                    table_versions: (*storage_guard.table_versions).clone(),
                 };
                 state.durability.lock().persist_checkpoint(&checkpoint)?;
             }
@@ -181,7 +182,7 @@ where
                 storage: S::default(),
                 base_catalog: C::default(),
                 base_storage: S::default(),
-                base_table_versions: HashMap::new(),
+                base_table_versions: std::sync::Arc::new(HashMap::new()),
                 full_refresh_ts: 0,
                 table_refreshed_ts: HashMap::new(),
                 read_tables: HashSet::new(),
@@ -258,7 +259,8 @@ where
                                 .storage
                                 .restore_from_checkpoint(checkpoint.storage_data);
                             storage_guard.commit_ts = checkpoint.commit_ts;
-                            storage_guard.table_versions = checkpoint.table_versions;
+                            storage_guard.table_versions =
+                                std::sync::Arc::new(checkpoint.table_versions);
                             drop(storage_guard);
                         }
                     }

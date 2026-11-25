@@ -301,7 +301,7 @@ pub struct SharedStorage<C, S> {
     pub(crate) catalog: C,
     pub(crate) storage: S,
     pub(crate) commit_ts: u64,
-    pub(crate) table_versions: HashMap<String, u64>,
+    pub(crate) table_versions: std::sync::Arc<HashMap<String, u64>>,
 }
 
 impl<C, S> SharedStorage<C, S> {
@@ -351,7 +351,7 @@ where
                 catalog,
                 storage,
                 commit_ts: 0,
-                table_versions: HashMap::new(),
+                table_versions: std::sync::Arc::new(HashMap::new()),
             })),
             table_locks: std::sync::Arc::new(parking_lot::Mutex::new(LockTable::new())),
             durability: parking_lot::Mutex::new(Box::new(NoopDurability::default())),

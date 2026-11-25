@@ -1,4 +1,5 @@
 ﻿use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::types::AcquiredLock;
 
@@ -7,7 +8,7 @@ pub struct TxWorkspace<C, S> {
     pub storage: S,
     pub base_catalog: C,
     pub base_storage: S,
-    pub base_table_versions: HashMap<String, u64>,
+    pub base_table_versions: Arc<HashMap<String, u64>>,
     pub full_refresh_ts: u64,
     pub table_refreshed_ts: HashMap<String, u64>,
     pub read_tables: HashSet<String>,

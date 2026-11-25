@@ -72,11 +72,14 @@ where
                 let schema_name = table.schema_name.clone();
                 let _ = storage.catalog.drop_table(&schema_name, &table_name);
                 storage.storage.remove_table(table.id)?;
-                storage.table_versions.remove(&format!(
+                let key = format!(
                     "{}.{}",
                     normalize_identifier(&schema_name),
                     normalize_identifier(&table_name)
-                ));
+                );
+                if storage.table_versions.contains_key(&key) {
+                    std::sync::Arc::make_mut(&mut storage.table_versions).remove(&key);
+                }
             }
         }
         Ok(())

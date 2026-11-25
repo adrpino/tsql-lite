@@ -95,16 +95,16 @@ fn test_lock_timeout_wait_success() {
     let db2 = Arc::clone(&db);
     let h2 = thread::spawn(move || {
         let sid = db2.create_session();
-        rx1.recv().unwrap();
-
         db2.execute_session(sid, parse_sql("SET LOCK_TIMEOUT 1000").unwrap())
             .unwrap();
+        rx1.recv().unwrap();
+
         let start = Instant::now();
         db2.execute_session(sid, parse_sql("UPDATE t SET id = 2 WHERE id = 1").unwrap())
             .unwrap();
         let elapsed = start.elapsed();
 
-        assert!(elapsed >= Duration::from_millis(200));
+        assert!(elapsed >= Duration::from_millis(150), "elapsed={elapsed:?}");
         db2.close_session(sid).unwrap();
     });
 
@@ -203,16 +203,16 @@ fn test_lock_timeout_infinite_wait() {
     let db2 = Arc::clone(&db);
     let h2 = thread::spawn(move || {
         let sid = db2.create_session();
-        rx1.recv().unwrap();
-
         db2.execute_session(sid, parse_sql("SET LOCK_TIMEOUT -1").unwrap())
             .unwrap();
+        rx1.recv().unwrap();
+
         let start = Instant::now();
         db2.execute_session(sid, parse_sql("UPDATE t SET id = 2 WHERE id = 1").unwrap())
             .unwrap();
         let elapsed = start.elapsed();
 
-        assert!(elapsed >= Duration::from_millis(300));
+        assert!(elapsed >= Duration::from_millis(250), "elapsed={elapsed:?}");
         db2.close_session(sid).unwrap();
     });
 

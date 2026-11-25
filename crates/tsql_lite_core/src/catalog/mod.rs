@@ -714,6 +714,11 @@ pub trait Catalog:
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
     fn restore_from_boxed(&mut self, _snapshot: Box<dyn Catalog>) {}
     fn rebuild_maps(&mut self) {}
+    /// Returns `true` when at least one `WITH SCHEMABINDING` view or routine exists in the catalog.
+    /// Allows `DROP TABLE` / `ALTER TABLE` dependency guards to short-circuit in O(1) when false.
+    fn has_schemabound_objects(&self) -> bool {
+        true
+    }
     /// Merges changes made in `workspace` relative to `base` into `self` during
     /// a concurrent transaction commit.
     fn merge_workspace(&mut self, workspace: Self, _base: &Self)
@@ -817,6 +822,8 @@ mod arc_serde {
     }
 }
 
+type TriggerTableIndex = HashMap<(String, String), Vec<(String, String)>>;
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CatalogImpl {
@@ -885,6 +892,12 @@ pub struct CatalogImpl {
     synonym_map: Arc<HashMap<(String, String), usize>>,
     #[cfg_attr(feature = "checkpoint", serde(skip))]
     sequence_map: Arc<HashMap<(String, String), usize>>,
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
+    schemabound_view_count: usize,
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
+    schemabound_routine_count: usize,
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
+    triggers_by_table: Arc<TriggerTableIndex>,
 }
 
 impl CatalogImpl {
@@ -986,6 +999,41 @@ impl CatalogImpl {
                 normalize_identifier(&t.name),
             )
         });
+        self.recompute_schemabound_counts();
+        self.rebuild_triggers_by_table();
+    }
+
+    pub(crate) fn recompute_schemabound_counts(&mut self) {
+        self.schemabound_view_count = self
+            .views
+            .view()
+            .iter()
+            .filter(|v| v.is_schema_bound)
+            .count();
+        self.schemabound_routine_count = self
+            .routines
+            .view()
+            .iter()
+            .filter(|r| r.is_schema_bound)
+            .count();
+    }
+
+    pub(crate) fn rebuild_triggers_by_table(&mut self) {
+        let mut by_table: HashMap<(String, String), Vec<(String, String)>> = HashMap::new();
+        for t in self.triggers.view().iter() {
+            if !t.is_database_scope {
+                let table_key = (
+                    normalize_identifier(&t.table_schema),
+                    normalize_identifier(&t.table_name),
+                );
+                let trig_key = (
+                    normalize_identifier(&t.schema),
+                    normalize_identifier(&t.name),
+                );
+                by_table.entry(table_key).or_default().push(trig_key);
+            }
+        }
+        self.triggers_by_table = Arc::new(by_table);
     }
 
     /// Remove any indexes belonging to `table_id` via O(1)-per-entry CoW tombstones.
@@ -1042,6 +1090,9 @@ impl Default for CatalogImpl {
             scalar_type_map: Arc::new(HashMap::new()),
             synonym_map: Arc::new(HashMap::new()),
             sequence_map: Arc::new(HashMap::new()),
+            schemabound_view_count: 0,
+            schemabound_routine_count: 0,
+            triggers_by_table: Arc::new(HashMap::new()),
         }
     }
 }
@@ -1923,6 +1974,10 @@ impl Catalog for CatalogImpl {
         self.rebuild_maps();
     }
 
+    fn has_schemabound_objects(&self) -> bool {
+        self.schemabound_view_count > 0 || self.schemabound_routine_count > 0
+    }
+
     fn merge_workspace(&mut self, workspace: Self, base: &Self) {
         self.tables
             .merge_delta_against_base(&workspace.tables, &base.tables, |t| {
@@ -1949,6 +2004,8 @@ impl Catalog for CatalogImpl {
                     normalize_identifier(&t.name),
                 )
             });
+        self.recompute_schemabound_counts();
+        self.rebuild_triggers_by_table();
 
         self.schemas
             .merge_delta_against_base(&workspace.schemas, &base.schemas, |s| {

@@ -161,7 +161,7 @@ where
         storage.catalog = catalog;
         storage.storage = S::default();
         storage.commit_ts = 0;
-        storage.table_versions.clear();
+        storage.table_versions = Arc::new(std::collections::HashMap::new());
         self.inner.table_locks.lock().clear();
         let sessions: Vec<(SessionId, Arc<parking_lot::Mutex<_>>)> = self
             .inner
@@ -595,7 +595,7 @@ where
                 catalog: checkpoint.catalog,
                 storage,
                 commit_ts: checkpoint.commit_ts,
-                table_versions: checkpoint.table_versions,
+                table_versions: Arc::new(checkpoint.table_versions),
             })),
             table_locks: std::sync::Arc::new(parking_lot::Mutex::new(
                 super::super::locks::LockTable::new(),
@@ -619,7 +619,7 @@ where
         catalog: C,
         storage: S,
         commit_ts: u64,
-        table_versions: std::collections::HashMap<String, u64>,
+        table_versions: Arc<std::collections::HashMap<String, u64>>,
     ) -> Self {
         Self {
             storage: std::sync::Arc::new(parking_lot::RwLock::new(SharedStorage {
@@ -656,7 +656,7 @@ where
             checkpoint.catalog,
             storage,
             checkpoint.commit_ts,
-            checkpoint.table_versions,
+            Arc::new(checkpoint.table_versions),
         )
     }
 
@@ -669,7 +669,7 @@ where
         let shared = &mut *storage;
         rebuild_all_indexes_from_catalog(&shared.catalog, &mut shared.storage);
         shared.commit_ts = checkpoint.commit_ts;
-        shared.table_versions = checkpoint.table_versions;
+        shared.table_versions = Arc::new(checkpoint.table_versions);
         self.table_locks.lock().clear();
         let sessions: Vec<Arc<parking_lot::Mutex<_>>> =
             self.sessions.read().values().cloned().collect();
@@ -688,7 +688,7 @@ where
             catalog: storage.catalog.clone(),
             storage_data: storage.storage.get_checkpoint_data(),
             commit_ts: storage.commit_ts,
-            table_versions: storage.table_versions.clone(),
+            table_versions: (*storage.table_versions).clone(),
         }
     }
 

@@ -238,9 +238,12 @@ where
     if out.is_ok() && !is_control_flow {
         storage_guard.commit_ts += 1;
         let written_tables = collect_write_tables(&stmt);
-        for table in &written_tables {
+        if !written_tables.is_empty() {
             let ts = storage_guard.commit_ts;
-            storage_guard.table_versions.insert(table.clone(), ts);
+            let tv = Arc::make_mut(&mut storage_guard.table_versions);
+            for table in &written_tables {
+                tv.insert(table.clone(), ts);
+            }
         }
         if durability_active {
             let checkpoint = state.to_checkpoint_internal(&storage_guard);

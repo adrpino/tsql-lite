@@ -285,7 +285,7 @@ impl TdsSession {
             5701,
             2,
             0,
-            &format!("Changed database context to '{}'.", &self.database),
+            &format!("Changed database context to '{}'.", self.database),
             "localhost",
             "",
             1,

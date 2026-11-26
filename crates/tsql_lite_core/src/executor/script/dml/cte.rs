@@ -163,6 +163,7 @@ impl<'a> ScriptExecutor<'a> {
                         .collect(),
                     check_constraints: vec![],
                     foreign_keys: vec![],
+                    unique_constraints: vec![],
                 };
 
                 let mut all_rows: Vec<StoredRow> = result
@@ -330,6 +331,7 @@ impl<'a> ScriptExecutor<'a> {
                         .collect(),
                     check_constraints: vec![],
                     foreign_keys: vec![],
+                    unique_constraints: vec![],
                 };
 
                 let rows: Vec<StoredRow> = result

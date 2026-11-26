@@ -146,6 +146,7 @@ impl<'a> MutationExecutor<'a> {
                     columns: table.columns.clone(),
                     check_constraints: vec![],
                     foreign_keys: vec![],
+                    unique_constraints: vec![],
                 };
                 self.catalog.register_table(ins_table);
                 self.storage.ensure_table(ins_table_id)?;
@@ -168,6 +169,7 @@ impl<'a> MutationExecutor<'a> {
                     columns: table.columns.clone(),
                     check_constraints: vec![],
                     foreign_keys: vec![],
+                    unique_constraints: vec![],
                 };
                 self.catalog.register_table(del_table);
                 self.storage.ensure_table(del_table_id)?;

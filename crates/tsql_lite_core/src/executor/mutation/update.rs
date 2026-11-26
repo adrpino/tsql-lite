@@ -310,6 +310,7 @@ impl<'a> MutationExecutor<'a> {
             .iter()
             .any(|i| i.table_id == table_id && i.is_unique);
         let has_unique = table.columns.iter().any(|c| c.unique)
+            || !table.unique_constraints.is_empty()
             || table.columns.iter().filter(|c| c.primary_key).count() >= 2
             || has_unique_index;
         let table_indexes: Vec<u32> = self

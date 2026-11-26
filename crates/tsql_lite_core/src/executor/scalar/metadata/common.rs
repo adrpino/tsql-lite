@@ -405,7 +405,7 @@ pub(super) fn table_has_primary_key(table: &TableDef) -> bool {
 }
 
 pub(super) fn table_has_unique_constraint(table: &TableDef) -> bool {
-    table.columns.iter().any(|c| c.unique)
+    table.columns.iter().any(|c| c.unique) || !table.unique_constraints.is_empty()
 }
 
 pub(super) fn table_has_default_constraint(table: &TableDef) -> bool {

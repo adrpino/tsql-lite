@@ -282,6 +282,7 @@ impl<'a> ScriptExecutor<'a> {
             columns,
             check_constraints: vec![],
             foreign_keys: vec![],
+            unique_constraints: vec![],
         };
         self.catalog.register_table(table);
         self.storage.ensure_table(table_id)?;

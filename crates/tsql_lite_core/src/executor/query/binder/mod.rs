@@ -108,6 +108,7 @@ pub(super) fn query_result_to_bound_table(
             .collect(),
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
     let rows = result
         .rows

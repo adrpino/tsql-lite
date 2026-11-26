@@ -136,6 +136,14 @@ pub struct TemporalTableConfig {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
+pub struct UniqueConstraintDef {
+    pub name: Option<String>,
+    pub columns: Vec<String>,
+    pub is_clustered: bool,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TableDef {
     pub id: u32,
     pub schema_id: u32,
@@ -144,6 +152,8 @@ pub struct TableDef {
     pub columns: Vec<ColumnDef>,
     pub check_constraints: Vec<CheckConstraintDef>,
     pub foreign_keys: Vec<ForeignKeyDef>,
+    #[cfg_attr(feature = "checkpoint", serde(default))]
+    pub unique_constraints: Vec<UniqueConstraintDef>,
 }
 
 impl TableDef {

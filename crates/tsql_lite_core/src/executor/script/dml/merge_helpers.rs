@@ -62,6 +62,7 @@ fn table_def_from_query_result(
             .collect(),
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     }
 }
 

@@ -658,6 +658,7 @@ pub(super) fn bind_openxml(
             columns,
             check_constraints: vec![],
             foreign_keys: vec![],
+            unique_constraints: vec![],
         };
         return Ok(Some(BoundTable {
             alias: Arc::from(tref.alias.as_deref().unwrap_or("OPENXML")),
@@ -738,6 +739,7 @@ pub(super) fn bind_openxml(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
     Ok(Some(BoundTable {
         alias: Arc::from(tref.alias.as_deref().unwrap_or("OPENXML")),

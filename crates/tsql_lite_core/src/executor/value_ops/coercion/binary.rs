@@ -1,5 +1,5 @@
 use super::numeric::coerce_int;
-use super::xml::{validate_xml_fragment, xml_conversion_not_allowed};
+use super::xml::{canonicalize_xml_fragment, xml_conversion_not_allowed};
 use crate::error::DbError;
 use crate::executor::value_helpers::pad_binary_right;
 use crate::types::{DataType, Value};
@@ -46,8 +46,8 @@ pub(crate) fn coerce_binary(data: &[u8], ty: &DataType) -> Result<Value, DbError
                 String::from_utf8(bytes.to_vec())
                     .map_err(|_| DbError::Execution("invalid UTF-8 XML binary".into()))?
             };
-            validate_xml_fragment(&text)?;
-            Ok(Value::VarChar(text))
+            let canonical = canonicalize_xml_fragment(&text)?;
+            Ok(Value::VarChar(canonical))
         }
         DataType::UniqueIdentifier => {
             let padded = pad_binary_right(data, 16);

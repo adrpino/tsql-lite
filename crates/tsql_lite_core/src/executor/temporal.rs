@@ -54,6 +54,7 @@ pub(crate) fn ensure_history_table(
         columns: cols,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
     catalog.register_table(history_def);
     storage.ensure_table(history_id)?;

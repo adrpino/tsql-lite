@@ -8,12 +8,47 @@ use super::super::super::context::ExecutionContext;
 use super::super::super::model::single_row_context;
 use super::super::super::value_ops::{compare_values, truthy};
 
+fn composite_unique_positions(table: &TableDef) -> Vec<(Option<&str>, Vec<usize>)> {
+    table
+        .unique_constraints
+        .iter()
+        .filter_map(|uq| {
+            let mut positions = Vec::with_capacity(uq.columns.len());
+            for col_name in &uq.columns {
+                let pos = table
+                    .columns
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(col_name))?;
+                positions.push(pos);
+            }
+            if positions.len() >= 2 {
+                Some((uq.name.as_deref(), positions))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn composite_unique_error(name: Option<&str>) -> DbError {
+    match name {
+        Some(n) => DbError::Execution(format!(
+            "Violation of UNIQUE KEY constraint '{}'. Cannot insert duplicate key.",
+            n
+        )),
+        None => DbError::Execution(
+            "Violation of UNIQUE KEY constraint. Cannot insert duplicate key.".to_string(),
+        ),
+    }
+}
+
 pub(crate) fn enforce_unique_on_insert(
     table: &TableDef,
     storage: &mut dyn Storage,
     table_id: u32,
     new_row: &StoredRow,
 ) -> Result<(), DbError> {
+    let composite_uniques = composite_unique_positions(table);
     if let Some(slice) = storage.get_table_slice(table_id) {
         for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
             let new_val = &new_row.values[col_idx];
@@ -32,6 +67,16 @@ pub(crate) fn enforce_unique_on_insert(
                         "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
                         col.name
                     )));
+                }
+            }
+        }
+        for (uq_name, uq_cols) in &composite_uniques {
+            for existing in slice {
+                if existing.deleted {
+                    continue;
+                }
+                if key_tuples_equal(new_row, existing, uq_cols) {
+                    return Err(composite_unique_error(*uq_name));
                 }
             }
         }
@@ -87,6 +132,17 @@ pub(crate) fn enforce_unique_on_insert(
             }
         }
     }
+    for (uq_name, uq_cols) in &composite_uniques {
+        for existing in storage.scan_rows(table_id)? {
+            let existing = existing?;
+            if existing.deleted {
+                continue;
+            }
+            if key_tuples_equal(new_row, &existing, uq_cols) {
+                return Err(composite_unique_error(*uq_name));
+            }
+        }
+    }
     let pk_cols: Vec<usize> = table
         .columns
         .iter()
@@ -124,6 +180,7 @@ pub(crate) fn enforce_unique_on_update(
     updated_row: &StoredRow,
     updated_idx: usize,
 ) -> Result<(), DbError> {
+    let composite_uniques = composite_unique_positions(table);
     if let Some(slice) = storage.get_table_slice(table_id) {
         for (col_idx, col) in table.columns.iter().enumerate().filter(|(_, c)| c.unique) {
             let new_val = &updated_row.values[col_idx];
@@ -142,6 +199,16 @@ pub(crate) fn enforce_unique_on_update(
                         "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
                         col.name
                     )));
+                }
+            }
+        }
+        for (uq_name, uq_cols) in &composite_uniques {
+            for (i, existing) in slice.iter().enumerate() {
+                if i == updated_idx || existing.deleted {
+                    continue;
+                }
+                if key_tuples_equal(updated_row, existing, uq_cols) {
+                    return Err(composite_unique_error(*uq_name));
                 }
             }
         }
@@ -194,6 +261,17 @@ pub(crate) fn enforce_unique_on_update(
                     "Violation of UNIQUE KEY constraint on column '{}'. Cannot insert duplicate key.",
                     col.name
                 )));
+            }
+        }
+    }
+    for (uq_name, uq_cols) in &composite_uniques {
+        for (i, existing) in storage.scan_rows(table_id)?.enumerate() {
+            let existing = existing?;
+            if i == updated_idx || existing.deleted {
+                continue;
+            }
+            if key_tuples_equal(updated_row, &existing, uq_cols) {
+                return Err(composite_unique_error(*uq_name));
             }
         }
     }

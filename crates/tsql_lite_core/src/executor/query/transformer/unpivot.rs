@@ -100,6 +100,7 @@ pub(crate) fn execute_unpivot(
         columns: output_columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     });
 
     for row in rows {

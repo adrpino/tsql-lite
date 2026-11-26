@@ -80,6 +80,7 @@ fn build_output_eval_env(
             }],
             check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
+            unique_constraints: Vec::new(),
         };
         env.push(ContextTable {
             table: std::sync::Arc::new(action_table),

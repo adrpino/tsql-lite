@@ -636,6 +636,7 @@ fn apply_from_alias(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     });
 
     let source_rows =

@@ -284,6 +284,26 @@ impl VirtualTable for SysKeyConstraints {
                     object_id += 1;
                 }
             }
+            for uq in &table.unique_constraints {
+                let uq_name = uq
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("UQ_{}_{}", table.name, uq.columns.join("_")));
+                rows.push(StoredRow {
+                    values: vec![
+                        Value::VarChar(uq_name),
+                        Value::Int(object_id),
+                        Value::Int(table.schema_id as i32),
+                        Value::Int(table.id as i32),
+                        Value::Char("UQ".to_string()),
+                        Value::VarChar("UNIQUE_CONSTRAINT".to_string()),
+                        Value::Int(1),
+                        Value::Bit(uq.name.is_none()),
+                    ],
+                    deleted: false,
+                });
+                object_id += 1;
+            }
         }
         rows
     }

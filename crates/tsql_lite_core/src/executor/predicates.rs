@@ -444,7 +444,7 @@ pub(crate) fn eval_exists(
             storage,
             clock,
         };
-        let query = RelationalQuery::from(stmt.clone());
+        let query = RelationalQuery::from_ref(stmt);
         let mut src = crate::executor::query::source::execute_source(&qe, &query, &mut sub_ctx)?;
         src.iter
             .next_row(&mut sub_ctx, catalog, storage, clock)?
@@ -535,7 +535,7 @@ fn execute_subquery_select(
             storage,
             clock,
         };
-        let result = qe.execute_select(RelationalQuery::from(stmt.clone()), &mut sub_ctx)?;
+        let result = qe.execute_select(RelationalQuery::from_ref(stmt), &mut sub_ctx)?;
 
         {
             let mut cache = ctx.subquery_cache.lock();
@@ -551,7 +551,7 @@ fn execute_subquery_select(
         clock,
     };
 
-    qe.execute_select(RelationalQuery::from(stmt.clone()), &mut sub_ctx)
+    qe.execute_select(RelationalQuery::from_ref(stmt), &mut sub_ctx)
 }
 
 fn is_uncorrelated(stmt: &crate::ast::SelectStmt) -> bool {

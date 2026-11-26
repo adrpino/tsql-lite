@@ -82,7 +82,7 @@ impl FromEval {
 
 pub(crate) fn execute_from_clause(
     executor: &QueryExecutor<'_>,
-    node: FromNode,
+    node: &FromNode,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
     execute_from_clause_with_predicate(executor, node, None, true, ctx)
@@ -90,7 +90,7 @@ pub(crate) fn execute_from_clause(
 
 pub(crate) fn execute_from_clause_with_predicate(
     executor: &QueryExecutor<'_>,
-    node: FromNode,
+    node: &FromNode,
     predicate: Option<&crate::ast::Expr>,
     allow_unqualified: bool,
     ctx: &mut ExecutionContext,
@@ -100,8 +100,8 @@ pub(crate) fn execute_from_clause_with_predicate(
             execute_table_ref_with_predicate(executor, table_ref, predicate, allow_unqualified, ctx)
         }
         FromNode::Aliased { source, alias } => {
-            let source_eval = execute_from_clause(executor, *source, ctx)?;
-            apply_from_alias(executor, source_eval, &alias, ctx)
+            let source_eval = execute_from_clause(executor, source, ctx)?;
+            apply_from_alias(executor, source_eval, alias, ctx)
         }
         FromNode::Join {
             left,
@@ -109,6 +109,7 @@ pub(crate) fn execute_from_clause_with_predicate(
             right,
             on,
         } => {
+            let join_type = *join_type;
             // Propagate single-table WHERE predicates down into safe join inputs so leaf
             // TableScanIterator::fast_filter / IndexSeek can prune rows before join build/probe:
             //   INNER / CROSS: both left & right are safe to pre-filter
@@ -129,9 +130,9 @@ pub(crate) fn execute_from_clause_with_predicate(
             };
 
             let mut left_eval =
-                execute_from_clause_with_predicate(executor, *left, push_left_pred, false, ctx)?;
+                execute_from_clause_with_predicate(executor, left, push_left_pred, false, ctx)?;
             let mut right_eval =
-                execute_from_clause_with_predicate(executor, *right, push_right_pred, false, ctx)?;
+                execute_from_clause_with_predicate(executor, right, push_right_pred, false, ctx)?;
 
             // Push single-side WHERE conjuncts into FilterIterators on the lazy join inputs
             // before HashJoin builds/probes or NestedLoop iterates, skipping conjuncts already
@@ -271,7 +272,7 @@ pub(crate) fn execute_from_clause_with_predicate(
                     right: right_eval.iter,
                     current_left: None,
                     join_type,
-                    on,
+                    on: on.clone(),
                     right_shape: right_eval.shape,
                     matched_current_left: false,
                 }),
@@ -283,7 +284,7 @@ pub(crate) fn execute_from_clause_with_predicate(
 }
 
 pub(crate) fn enforce_query_governor_cost_limit(
-    query: &RelationalQuery,
+    query: &RelationalQuery<'_>,
     ctx: &ExecutionContext,
 ) -> Result<(), DbError> {
     let limit = ctx.options.query_governor_cost_limit;
@@ -292,7 +293,7 @@ pub(crate) fn enforce_query_governor_cost_limit(
     }
 
     let mut cost = 1i64;
-    cost += count_joins(&query.from_clause) as i64;
+    cost += count_joins(query.from_clause.as_deref()) as i64;
     cost += query.applies.len() as i64;
     cost += query.filter.group_by.len() as i64;
     if query.filter.selection.is_some() {
@@ -329,12 +330,12 @@ pub(crate) fn enforce_query_governor_cost_limit(
 
 fn execute_table_ref_with_predicate(
     executor: &QueryExecutor<'_>,
-    table_ref: crate::ast::TableRef,
+    table_ref: &crate::ast::TableRef,
     predicate: Option<&crate::ast::Expr>,
     allow_unqualified: bool,
     ctx: &mut ExecutionContext,
 ) -> Result<FromEval, DbError> {
-    let bound = super::binding::bind_table(executor, executor.catalog, table_ref.clone(), ctx)?;
+    let bound = super::binding::bind_table(executor, executor.catalog, table_ref, ctx)?;
 
     // Check if it's a CTE
     if let Some(cte) = ctx
@@ -679,13 +680,12 @@ fn apply_from_alias(
     })
 }
 
-fn count_joins(from_clause: &Option<FromNode>) -> usize {
+fn count_joins(from_clause: Option<&FromNode>) -> usize {
     match from_clause {
-        None => 0,
-        Some(FromNode::Table(_)) => 0,
-        Some(FromNode::Aliased { source, .. }) => count_joins(&Some((**source).clone())),
+        None | Some(FromNode::Table(_)) => 0,
+        Some(FromNode::Aliased { source, .. }) => count_joins(Some(source)),
         Some(FromNode::Join { left, right, .. }) => {
-            1 + count_joins(&Some((**left).clone())) + count_joins(&Some((**right).clone()))
+            1 + count_joins(Some(left)) + count_joins(Some(right))
         }
     }
 }

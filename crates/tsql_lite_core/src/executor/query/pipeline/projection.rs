@@ -29,12 +29,12 @@ pub(crate) fn execute_projection_stage(
         };
         if !query.filter.grouping_sets.is_empty() {
             return group_executor.execute_grouping_sets_select(
-                query.projection.items.clone(),
+                query.projection.items.to_vec(),
                 source_rows,
                 source_shape,
                 &query.filter.group_by,
                 &query.filter.grouping_sets,
-                query.filter.having.as_ref(),
+                query.filter.having.as_deref(),
                 ctx,
             );
         }
@@ -42,7 +42,7 @@ pub(crate) fn execute_projection_stage(
             let surviving_groups = group_executor.collect_surviving_groups(
                 source_rows,
                 &query.filter.group_by,
-                query.filter.having.as_ref(),
+                query.filter.having.as_deref(),
                 ctx,
             )?;
             let window_executor =
@@ -50,11 +50,11 @@ pub(crate) fn execute_projection_stage(
             return window_executor.execute_grouped(&query.projection.items, surviving_groups, ctx);
         }
         group_executor.execute_grouped_select(
-            query.projection.items.clone(),
+            query.projection.items.to_vec(),
             source_rows,
             source_shape,
-            query.filter.group_by.clone(),
-            query.filter.having.clone(),
+            query.filter.group_by.to_vec(),
+            query.filter.having.as_deref().cloned(),
             ctx,
         )
     } else if state.has_window {
@@ -66,7 +66,7 @@ pub(crate) fn execute_projection_stage(
             executor.catalog,
             executor.storage,
             executor.clock,
-            query.projection.items.clone(),
+            &query.projection.items,
             source_rows,
             source_shape,
             ctx,

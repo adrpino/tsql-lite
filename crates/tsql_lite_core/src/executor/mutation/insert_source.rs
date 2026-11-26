@@ -36,7 +36,7 @@ impl<'a> MutationExecutor<'a> {
                     storage: self.storage,
                     clock: self.clock,
                 }
-                .execute_select(RelationalQuery::from(*select_stmt.clone()), ctx)?;
+                .execute_select(RelationalQuery::from_ref(select_stmt), ctx)?;
                 self.collect_insert_rows_from_query_result(
                     table,
                     insert_columns,

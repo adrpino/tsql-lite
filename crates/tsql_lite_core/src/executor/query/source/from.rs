@@ -21,10 +21,10 @@ fn split_and_conjuncts<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 pub(crate) fn execute_from_stage(
     executor: &QueryExecutor<'_>,
-    query: &RelationalQuery,
+    query: &RelationalQuery<'_>,
     ctx: &mut crate::executor::context::ExecutionContext,
 ) -> Result<FromEval, DbError> {
-    if let Some(from_clause) = query.from_clause.clone() {
+    if let Some(from_clause) = query.from_clause.as_deref() {
         // When a comma-join (CROSS JOIN with no ON) is paired with equi-join predicates
         // in WHERE, promote matching WHERE conjuncts into a HashJoin so large cross joins
         // (e.g. `FROM sys.schemas s, sys.objects o WHERE s.schema_id = o.schema_id`) run in O(N+M).
@@ -37,12 +37,10 @@ pub(crate) fn execute_from_stage(
                     on: None,
                 },
                 Some(where_expr),
-            ) = (&from_clause, query.filter.selection.as_ref())
+            ) = (from_clause, query.filter.selection.as_deref())
             {
-                let mut left_eval =
-                    from_tree::execute_from_clause(executor, (**left).clone(), ctx)?;
-                let mut right_eval =
-                    from_tree::execute_from_clause(executor, (**right).clone(), ctx)?;
+                let mut left_eval = from_tree::execute_from_clause(executor, left, ctx)?;
+                let mut right_eval = from_tree::execute_from_clause(executor, right, ctx)?;
                 let mut conjuncts = Vec::new();
                 split_and_conjuncts(where_expr, &mut conjuncts);
                 let mut left_keys = Vec::new();
@@ -128,7 +126,7 @@ pub(crate) fn execute_from_stage(
             }
         }
         let pushable_pred = if query.applies.is_empty() {
-            query.filter.selection.as_ref()
+            query.filter.selection.as_deref()
         } else {
             None
         };

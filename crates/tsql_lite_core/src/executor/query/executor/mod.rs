@@ -1,5 +1,7 @@
 mod select;
 
+use std::borrow::Cow;
+
 use crate::error::DbError;
 use crate::executor::result::QueryResult;
 
@@ -12,53 +14,59 @@ use crate::executor::model::JoinedRow;
 impl<'a> QueryExecutor<'a> {
     pub fn execute_select(
         &self,
-        mut query: RelationalQuery,
+        mut query: RelationalQuery<'_>,
         ctx: &mut ExecutionContext,
     ) -> Result<QueryResult, DbError> {
-        let mut set_op = query.set_op.take();
-        let into_table = query.into_table.clone();
-        let for_xml = query.for_xml.clone();
-        let for_json = query.for_json.clone();
+        let set_op = query.set_op.take();
+        let has_into = query.into_table.is_some();
+        let for_xml = query.for_xml.take();
+        let for_json = query.for_json.take();
+
+        let mut result = select::execute_select_internal(self, &query, ctx)?;
 
         // In SQL Server, a trailing ORDER BY / OFFSET / FETCH at the end of a UNION /
         // INTERSECT / EXCEPT chain applies to the entire combined set-op result (using the
         // first branch's column names/aliases), not solely to the final branch.
-        let mut trailing_order_by = Vec::new();
-        let mut trailing_offset = None;
-        let mut trailing_fetch = None;
-        if let Some(ref mut head_op) = set_op {
-            let mut tail = &mut head_op.right;
-            while let Some(ref mut next_op) = tail.set_op {
-                tail = &mut next_op.right;
+        if let Some(ref head_op) = set_op {
+            let mut trailing_order_by: &[crate::ast::OrderByExpr] = &[];
+            let mut trailing_offset: Option<&crate::ast::Expr> = None;
+            let mut trailing_fetch: Option<&crate::ast::Expr> = None;
+
+            let mut cur_op: Option<&crate::ast::SetOpClause> = Some(head_op.as_ref());
+            while let Some(op) = cur_op {
+                let is_tail = op.right.set_op.is_none();
+                let mut right_query = RelationalQuery::from_ref(&op.right);
+                right_query.set_op = None;
+                if is_tail
+                    && right_query.pagination.top.is_none()
+                    && (!right_query.sort.order_by.is_empty()
+                        || right_query.pagination.offset.is_some()
+                        || right_query.pagination.fetch.is_some())
+                {
+                    trailing_order_by = &op.right.order_by;
+                    trailing_offset = op.right.offset.as_ref();
+                    trailing_fetch = op.right.fetch.as_ref();
+                    right_query.sort.order_by = Cow::Borrowed(&[]);
+                    right_query.pagination.offset = None;
+                    right_query.pagination.fetch = None;
+                }
+                let right = select::execute_select_internal(self, &right_query, ctx)?;
+                result = crate::executor::engine::execute_set_op(result, right, op.kind)?;
+                cur_op = op.right.set_op.as_deref();
             }
-            if tail.top.is_none()
-                && (!tail.order_by.is_empty() || tail.offset.is_some() || tail.fetch.is_some())
+
+            if !trailing_order_by.is_empty()
+                || trailing_offset.is_some()
+                || trailing_fetch.is_some()
             {
-                trailing_order_by = std::mem::take(&mut tail.order_by);
-                trailing_offset = tail.offset.take();
-                trailing_fetch = tail.fetch.take();
+                result = self.apply_set_op_post_order_and_pagination_ref(
+                    result,
+                    trailing_order_by,
+                    trailing_offset,
+                    trailing_fetch,
+                    ctx,
+                )?;
             }
-        }
-
-        let mut result = select::execute_select_internal(self, &query, ctx)?;
-
-        // Evaluate the set-op chain iteratively left-to-right (SQL Server semantics).
-        while let Some(mut cur_op) = set_op {
-            let next_op = cur_op.right.set_op.take();
-            let right_query = RelationalQuery::from(cur_op.right);
-            let right = select::execute_select_internal(self, &right_query, ctx)?;
-            result = crate::executor::engine::execute_set_op(result, right, cur_op.kind)?;
-            set_op = next_op;
-        }
-
-        if !trailing_order_by.is_empty() || trailing_offset.is_some() || trailing_fetch.is_some() {
-            result = self.apply_set_op_post_order_and_pagination(
-                result,
-                trailing_order_by,
-                trailing_offset,
-                trailing_fetch,
-                ctx,
-            )?;
         }
 
         if ctx.options.rowcount > 0 && result.rows.len() > ctx.options.rowcount as usize {
@@ -71,7 +79,7 @@ impl<'a> QueryExecutor<'a> {
             result = format_for_json_result(&result, &query.projection.items, &fj);
         }
 
-        if into_table.is_some() {
+        if has_into {
             return Err(DbError::Execution(
                 "SELECT INTO is handled by ScriptExecutor".into(),
             ));
@@ -82,30 +90,49 @@ impl<'a> QueryExecutor<'a> {
 
     pub(crate) fn apply_set_op_post_order_and_pagination(
         &self,
-        mut result: QueryResult,
+        result: QueryResult,
         order_by: Vec<crate::ast::OrderByExpr>,
         offset: Option<crate::ast::Expr>,
         fetch: Option<crate::ast::Expr>,
         ctx: &mut ExecutionContext,
     ) -> Result<QueryResult, DbError> {
+        self.apply_set_op_post_order_and_pagination_ref(
+            result,
+            &order_by,
+            offset.as_ref(),
+            fetch.as_ref(),
+            ctx,
+        )
+    }
+
+    fn apply_set_op_post_order_and_pagination_ref(
+        &self,
+        mut result: QueryResult,
+        order_by: &[crate::ast::OrderByExpr],
+        offset: Option<&crate::ast::Expr>,
+        fetch: Option<&crate::ast::Expr>,
+        ctx: &mut ExecutionContext,
+    ) -> Result<QueryResult, DbError> {
         let post_query = RelationalQuery {
             from_clause: None,
-            applies: Vec::new(),
+            applies: Cow::Borrowed(&[]),
             projection: super::plan::ProjectionPlan {
-                items: Vec::new(),
+                items: Cow::Borrowed(&[]),
                 distinct: false,
             },
             filter: super::plan::FilterPlan {
                 selection: None,
-                group_by: Vec::new(),
-                grouping_sets: Vec::new(),
+                group_by: Cow::Borrowed(&[]),
+                grouping_sets: Cow::Borrowed(&[]),
                 having: None,
             },
-            sort: super::plan::SortPlan { order_by },
+            sort: super::plan::SortPlan {
+                order_by: Cow::Borrowed(order_by),
+            },
             pagination: super::plan::PaginationPlan {
                 top: None,
-                offset,
-                fetch,
+                offset: offset.map(Cow::Borrowed),
+                fetch: fetch.map(Cow::Borrowed),
             },
             into_table: None,
             set_op: None,
@@ -136,7 +163,7 @@ impl<'a> QueryExecutor<'a> {
 
     pub fn execute_to_joined_rows(
         &self,
-        query: RelationalQuery,
+        query: RelationalQuery<'_>,
         ctx: &mut ExecutionContext,
     ) -> Result<Vec<JoinedRow>, DbError> {
         let mut source_eval = source::execute_source(self, &query, ctx)?;
@@ -149,7 +176,7 @@ impl<'a> QueryExecutor<'a> {
     /// back to storage.
     pub fn execute_select_with_base_targets(
         &self,
-        query: RelationalQuery,
+        query: RelationalQuery<'_>,
         ctx: &mut ExecutionContext,
     ) -> Result<(QueryResult, Vec<crate::executor::cte::CteBaseTarget>), DbError> {
         let can_track = query.set_op.is_none()

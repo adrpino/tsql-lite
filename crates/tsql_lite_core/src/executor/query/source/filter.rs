@@ -233,20 +233,20 @@ fn select_is_uncorrelated(
         return Ok(false);
     }
     let probe_query = RelationalQuery {
-        from_clause: subquery.from_clause.clone(),
-        applies: Vec::new(),
+        from_clause: subquery.from_clause.as_ref().map(std::borrow::Cow::Borrowed),
+        applies: std::borrow::Cow::Borrowed(&[]),
         projection: crate::executor::query::plan::ProjectionPlan {
-            items: Vec::new(),
+            items: std::borrow::Cow::Borrowed(&[]),
             distinct: false,
         },
         filter: crate::executor::query::plan::FilterPlan {
             selection: None,
-            group_by: Vec::new(),
-            grouping_sets: Vec::new(),
+            group_by: std::borrow::Cow::Borrowed(&[]),
+            grouping_sets: std::borrow::Cow::Borrowed(&[]),
             having: None,
         },
         sort: crate::executor::query::plan::SortPlan {
-            order_by: Vec::new(),
+            order_by: std::borrow::Cow::Borrowed(&[]),
         },
         pagination: crate::executor::query::plan::PaginationPlan {
             top: None,
@@ -308,7 +308,7 @@ fn try_build_hash_in_subquery(
     {
         return Ok(None);
     }
-    let sub_query = RelationalQuery::from(subquery.clone());
+    let sub_query = RelationalQuery::from_ref(subquery);
     let result = executor.execute_select(sub_query, ctx)?;
     if result.columns.len() != 1 {
         return Ok(None);
@@ -450,21 +450,21 @@ fn try_build_hash_semi_join(
 
     // Determine inner shape without evaluating outer references yet.
     let probe_query = RelationalQuery {
-        from_clause: subquery.from_clause.clone(),
-        applies: Vec::new(),
+        from_clause: subquery.from_clause.as_ref().map(std::borrow::Cow::Borrowed),
+        applies: std::borrow::Cow::Borrowed(&[]),
         projection: super::super::plan::ProjectionPlan {
-            items: Vec::new(),
+            items: std::borrow::Cow::Borrowed(&[]),
             distinct: false,
         },
         into_table: None,
         filter: super::super::plan::FilterPlan {
             selection: None,
-            group_by: Vec::new(),
-            grouping_sets: Vec::new(),
+            group_by: std::borrow::Cow::Borrowed(&[]),
+            grouping_sets: std::borrow::Cow::Borrowed(&[]),
             having: None,
         },
         sort: super::super::plan::SortPlan {
-            order_by: Vec::new(),
+            order_by: std::borrow::Cow::Borrowed(&[]),
         },
         pagination: super::super::plan::PaginationPlan {
             top: None,
@@ -526,7 +526,7 @@ fn try_build_hash_semi_join(
     // Check that outer_shape and inner_shape column families match on the equi-join slots
     // (avoiding cross-family SQL coercions like INT = VARCHAR where SqlHashKey differs).
     let mut inner_query = probe_query;
-    inner_query.filter.selection = combine_and(inner_only);
+    inner_query.filter.selection = combine_and(inner_only).map(std::borrow::Cow::Owned);
     let mut inner_eval = super::execute_source(executor, &inner_query, ctx)?;
     let mut inner_keys: HashSet<Vec<SqlHashKey>> = HashSet::new();
     let mut families: Vec<Option<HashKeyFamily>> = vec![None; inner_key_exprs.len()];

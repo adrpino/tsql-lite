@@ -119,7 +119,7 @@ pub(crate) fn apply_result_ordering(
     // comparator performs zero identifier allocations or linear column scans.
     let mut specs: Vec<(usize, bool, Option<crate::executor::collation::CollationFlags>)> =
         Vec::with_capacity(order_by_refs.len());
-    for item in order_by_refs {
+    for item in order_by_refs.iter() {
         let Some(idx) =
             resolve_projected_order_index_with_projection(columns, &query.projection.items, item)
         else {

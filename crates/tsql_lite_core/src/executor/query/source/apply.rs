@@ -16,7 +16,7 @@ pub(crate) fn execute_apply_stage(
 
     let mut rows =
         source_eval.materialize(ctx, executor.catalog, executor.storage, executor.clock)?;
-    for apply_clause in &query.applies {
+    for apply_clause in query.applies.iter() {
         rows = super::super::transformer::execute_apply(rows, apply_clause, ctx, executor)?;
     }
     let shape = rows.first().cloned().unwrap_or_default();

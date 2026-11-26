@@ -18,7 +18,8 @@ pub(crate) fn execute_apply(
 
     for left_row in &rows {
         ctx.push_apply_row(left_row.clone());
-        let sub_result = executor.execute_select((*apply.subquery).clone().into(), ctx)?;
+        let sub_result =
+            executor.execute_select(super::super::plan::RelationalQuery::from_ref(&apply.subquery), ctx)?;
         ctx.pop_apply_row();
 
         if sub_result.rows.is_empty() {

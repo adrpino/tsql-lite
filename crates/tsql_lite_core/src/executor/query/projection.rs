@@ -15,16 +15,16 @@ pub(crate) fn execute_flat_select(
     catalog: &dyn Catalog,
     storage: &dyn Storage,
     clock: &dyn Clock,
-    projection: Vec<SelectItem>,
+    projection: &[SelectItem],
     rows: Vec<JoinedRow>,
     source_shape: Option<&JoinedRow>,
     ctx: &mut ExecutionContext,
 ) -> Result<QueryResult, DbError> {
     let schema_row = rows.first().or(source_shape);
-    let columns = expand_projection_columns(&projection, schema_row);
-    let projected_rows = project_flat_rows(catalog, storage, clock, &projection, &rows, ctx)?;
+    let columns = expand_projection_columns(projection, schema_row);
+    let projected_rows = project_flat_rows(catalog, storage, clock, projection, &rows, ctx)?;
 
-    let mut expr_types = expand_projection_types(&projection, schema_row);
+    let mut expr_types = expand_projection_types(projection, schema_row);
     // Preserve declared XML type for @var projections (needed for unescaped FOR XML embedding).
     if expr_types.len() == projection.len() {
         for (i, item) in projection.iter().enumerate() {
@@ -41,7 +41,7 @@ pub(crate) fn execute_flat_select(
             }
         }
     }
-    let expr_nulls = expand_projection_nullabilities(&projection, schema_row);
+    let expr_nulls = expand_projection_nullabilities(projection, schema_row);
     let row_types = derive_types_from_rows(&projected_rows, columns.len());
 
     let mut column_types = Vec::with_capacity(columns.len());

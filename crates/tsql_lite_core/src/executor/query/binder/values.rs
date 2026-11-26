@@ -9,7 +9,7 @@ use crate::executor::metadata::resolve_virtual_table;
 use crate::executor::model::BoundTable;
 
 pub(super) fn bind_plain_table(
-    tref: TableRef,
+    tref: &TableRef,
     catalog: &dyn Catalog,
     ctx: &mut ExecutionContext,
 ) -> Result<BoundTable, DbError> {
@@ -94,38 +94,20 @@ pub(super) fn bind_plain_table(
         _ => {}
     }
 
-    let mut tref = tref;
-    if let Some(mapped) = ctx.resolve_table_name(
-        tref.factor
-            .as_object_name()
-            .map(|o| o.name.as_str())
-            .unwrap_or(""),
-    ) {
-        match &mut tref.factor {
-            TableFactor::Named(o) => {
-                if tref.alias.is_none() {
-                    tref.alias = Some(o.name.clone());
-                }
-                o.name = mapped;
-            }
-            TableFactor::Derived(_) => {}
-            TableFactor::Values { .. } => {}
-        }
-    }
-    let schema = tref
-        .factor
-        .as_object_name()
-        .map(|o| o.schema_or_dbo())
-        .unwrap_or("dbo");
-    let name = tref
-        .factor
-        .as_object_name()
-        .map(|o| o.name.as_str())
-        .unwrap_or("");
+    let orig_obj = tref.factor.as_object_name();
+    let orig_name = orig_obj.map(|o| o.name.as_str()).unwrap_or("");
+    let mapped_name = ctx.resolve_table_name(orig_name);
+    let effective_alias: Option<&str> = match (&tref.alias, mapped_name.as_deref()) {
+        (Some(a), _) => Some(a.as_str()),
+        (None, Some(_)) => Some(orig_name),
+        (None, None) => None,
+    };
+    let schema = orig_obj.map(|o| o.schema_or_dbo()).unwrap_or("dbo");
+    let name = mapped_name.as_deref().unwrap_or(orig_name);
 
     if let Some(cte) = resolve_cte_table(&ctx.row.ctes, schema, name) {
         return Ok(BoundTable {
-            alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or(name)),
+            alias: std::sync::Arc::from(effective_alias.unwrap_or(name)),
             table: std::sync::Arc::new(cte.table_def.clone()),
             virtual_rows: None,
         });
@@ -133,7 +115,7 @@ pub(super) fn bind_plain_table(
 
     if let Some((table, rows)) = resolve_virtual_table(schema, name, catalog, ctx) {
         return Ok(BoundTable {
-            alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or(name)),
+            alias: std::sync::Arc::from(effective_alias.unwrap_or(name)),
             table: std::sync::Arc::new(table),
             virtual_rows: Some(rows),
         });
@@ -154,7 +136,7 @@ pub(super) fn bind_plain_table(
     }
 
     Ok(BoundTable {
-        alias: std::sync::Arc::from(tref.alias.as_deref().unwrap_or(table.name.as_str())),
+        alias: std::sync::Arc::from(effective_alias.unwrap_or(table.name.as_str())),
         table,
         virtual_rows: None,
     })

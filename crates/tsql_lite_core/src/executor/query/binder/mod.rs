@@ -18,21 +18,21 @@ pub(crate) fn bind_table(
     catalog: &dyn Catalog,
     storage: &dyn crate::storage::Storage,
     clock: &dyn Clock,
-    tref: TableRef,
+    tref: &TableRef,
     ctx: &mut ExecutionContext,
     executor: &QueryExecutor<'_>,
 ) -> Result<BoundTable, DbError> {
     if let TableFactor::Derived(ref select) = tref.factor {
-        return bind_derived_subquery(tref.alias.clone(), *select.clone(), ctx, executor);
+        return bind_derived_subquery(tref.alias.as_deref(), select, ctx, executor);
     }
 
-    if let Some(bound_tvf) = tvf::bind_builtin_tvf(catalog, storage, clock, &tref, ctx)? {
+    if let Some(bound_tvf) = tvf::bind_builtin_tvf(catalog, storage, clock, tref, ctx)? {
         return Ok(bound_tvf);
     }
-    if let Some(bound_tvf) = tvf::bind_inline_tvf(catalog, storage, clock, &tref, ctx, executor)? {
+    if let Some(bound_tvf) = tvf::bind_inline_tvf(catalog, storage, clock, tref, ctx, executor)? {
         return Ok(bound_tvf);
     }
-    if let Some(bound_view) = views::bind_view(catalog, storage, clock, &tref, ctx, executor)? {
+    if let Some(bound_view) = views::bind_view(catalog, storage, clock, tref, ctx, executor)? {
         return Ok(bound_view);
     }
     if let Some(obj) = tref.name_as_object() {
@@ -46,28 +46,30 @@ pub(crate) fn bind_table(
             ctx.frame.depth += 1;
             let mut resolved_tref = tref.clone();
             resolved_tref.factor = TableFactor::Named(synonym.base_object.clone());
-            let res = bind_table(catalog, storage, clock, resolved_tref, ctx, executor);
+            let res = bind_table(catalog, storage, clock, &resolved_tref, ctx, executor);
             ctx.frame.depth -= 1;
             return res;
         }
     }
     if let Some(ref st) = tref.system_time {
         return crate::executor::temporal::bind_temporal_table(
-            &tref, st, catalog, storage, clock, ctx,
+            tref, st, catalog, storage, clock, ctx,
         );
     }
     values::bind_plain_table(tref, catalog, ctx)
 }
 
 fn bind_derived_subquery(
-    alias: Option<String>,
-    select: SelectStmt,
+    alias: Option<&str>,
+    select: &SelectStmt,
     ctx: &mut ExecutionContext,
     executor: &QueryExecutor<'_>,
 ) -> Result<BoundTable, DbError> {
-    let alias =
-        alias.ok_or_else(|| DbError::Semantic("subquery in FROM must have an alias".into()))?;
-    let result = executor.execute_select(select.into(), ctx)?;
+    let alias = alias
+        .ok_or_else(|| DbError::Semantic("subquery in FROM must have an alias".into()))?
+        .to_string();
+    let result =
+        executor.execute_select(super::plan::RelationalQuery::from_ref(select), ctx)?;
     Ok(query_result_to_bound_table(alias.clone(), alias, result))
 }
 

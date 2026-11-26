@@ -9,7 +9,7 @@ use crate::executor::context::ExecutionContext;
 pub(crate) fn bind_table(
     executor: &QueryExecutor<'_>,
     catalog: &dyn Catalog,
-    tref: crate::ast::TableRef,
+    tref: &crate::ast::TableRef,
     ctx: &mut ExecutionContext,
 ) -> Result<BoundTable, DbError> {
     binder::bind_table(

@@ -89,30 +89,31 @@ impl<'a> ScriptExecutor<'a> {
         let order_by = stmt.order_by;
         let top = stmt.top;
         let q = RelationalQuery {
-            from_clause: build_from_clause(stmt.from, &stmt.joins),
-            applies: stmt.applies,
+            from_clause: build_from_clause(stmt.from, &stmt.joins).map(std::borrow::Cow::Owned),
+            applies: std::borrow::Cow::Owned(stmt.applies),
             projection: ProjectionPlan {
-                items: stmt
-                    .targets
-                    .iter()
-                    .map(|t| SelectItem {
-                        expr: t.expr.clone(),
-                        alias: None,
-                    })
-                    .collect(),
+                items: std::borrow::Cow::Owned(
+                    stmt.targets
+                        .iter()
+                        .map(|t| SelectItem {
+                            expr: t.expr.clone(),
+                            alias: None,
+                        })
+                        .collect(),
+                ),
                 distinct: false,
             },
             filter: FilterPlan {
-                selection: stmt.selection,
-                group_by: vec![],
-                grouping_sets: vec![],
+                selection: stmt.selection.map(std::borrow::Cow::Owned),
+                group_by: std::borrow::Cow::Borrowed(&[]),
+                grouping_sets: std::borrow::Cow::Borrowed(&[]),
                 having: None,
             },
             sort: SortPlan {
-                order_by: order_by.clone(),
+                order_by: std::borrow::Cow::Borrowed(&order_by),
             },
             pagination: PaginationPlan {
-                top: top.clone(),
+                top: top.as_ref().map(std::borrow::Cow::Borrowed),
                 offset: None,
                 fetch: None,
             },

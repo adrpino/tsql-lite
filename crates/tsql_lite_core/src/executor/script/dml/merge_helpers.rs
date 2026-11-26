@@ -117,7 +117,7 @@ pub(crate) fn merge_source_rows(
                     storage: executor.storage,
                     clock: executor.clock,
                 }
-                .execute_select(RelationalQuery::from((**select_stmt).clone()), ctx)?;
+                .execute_select(RelationalQuery::from_ref(select_stmt), ctx)?;
                 let table_def = table_def_from_query_result(source_alias, &result);
                 Ok((table_def, result.rows))
             }
@@ -157,7 +157,7 @@ pub(crate) fn merge_source_rows(
                 storage: executor.storage,
                 clock: executor.clock,
             }
-            .execute_select(RelationalQuery::from((**select_stmt).clone()), ctx)?;
+            .execute_select(RelationalQuery::from_ref(select_stmt), ctx)?;
             let table_def = table_def_from_query_result(source_alias, &result);
             Ok((table_def, result.rows))
         }

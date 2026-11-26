@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::ast::{
     Expr, FromClause, FromNode, ObjectName, SelectItem, TableFactor, TableRef, TopSpec,
 };
@@ -13,27 +15,29 @@ pub(crate) fn build_mutation_query(
     resolved_name: &str,
     selection: Option<Expr>,
     top: Option<TopSpec>,
-) -> RelationalQuery {
+) -> RelationalQuery<'static> {
     RelationalQuery {
-        from_clause: build_from_node(from, target, table, resolved_name),
-        applies: from.map(|f| f.applies.clone()).unwrap_or_default(),
+        from_clause: build_from_node(from, target, table, resolved_name).map(Cow::Owned),
+        applies: Cow::Owned(from.map(|f| f.applies.clone()).unwrap_or_default()),
         projection: ProjectionPlan {
-            items: vec![SelectItem {
+            items: Cow::Owned(vec![SelectItem {
                 expr: Expr::Wildcard,
                 alias: None,
-            }],
+            }]),
             distinct: false,
         },
         into_table: None,
         filter: FilterPlan {
-            selection,
-            group_by: vec![],
-            grouping_sets: vec![],
+            selection: selection.map(Cow::Owned),
+            group_by: Cow::Borrowed(&[]),
+            grouping_sets: Cow::Borrowed(&[]),
             having: None,
         },
-        sort: SortPlan { order_by: vec![] },
+        sort: SortPlan {
+            order_by: Cow::Borrowed(&[]),
+        },
         pagination: PaginationPlan {
-            top,
+            top: top.map(Cow::Owned),
             offset: None,
             fetch: None,
         },

@@ -30,6 +30,7 @@ pub fn all_suites() -> Vec<DiffSuite> {
         error_number_parity_sql2019(),
         sp_msforeachtable_test_reset_parity(),
         verbatim_definitions_strict_checks_and_hash_in_parity(),
+        generic_parity_matrices(),
     ]
 }
 
@@ -1923,6 +1924,180 @@ fn verbatim_definitions_strict_checks_and_hash_in_parity() -> DiffSuite {
                 label: "identifier_over_128_chars_error_103",
                 sql: "CREATE TABLE dbo.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (Id INT);",
                 expected_code: Some(103),
+            },
+        ],
+    }
+}
+
+fn generic_parity_matrices() -> DiffSuite {
+    DiffSuite {
+        name: "generic_parity_matrices",
+        category: "Generic Parity Matrices",
+        min_sql_version: 15,
+        setup_batches: &[
+            "CREATE TABLE dbo.M_CompositeUq (
+                 RowId INT PRIMARY KEY,
+                 K1 INT NULL,
+                 K2 INT NULL,
+                 K3 INT NULL,
+                 CONSTRAINT UQ_M_CompositeUq UNIQUE (K1, K2, K3)
+             );
+             CREATE TABLE dbo.M_CoerceSrc (
+                 Id INT PRIMARY KEY,
+                 Qty DECIMAL(13, 4),
+                 WideDec DECIMAL(18, 6),
+                 RawXml VARCHAR(100)
+             );
+             INSERT INTO dbo.M_CoerceSrc VALUES (1, 5000.00, 123.456789, '<Envelope  id = ''7'' />');
+             CREATE TABLE dbo.M_CoerceDst (
+                 PathName VARCHAR(20) PRIMARY KEY,
+                 Qty DECIMAL(18, 6),
+                 NarrowDec DECIMAL(18, 2),
+                 Doc XML
+             );
+             CREATE TABLE dbo.M_Groups (GroupId INT PRIMARY KEY);
+             CREATE TABLE dbo.M_Items (GroupId INT, Amt INT);
+             INSERT INTO dbo.M_Groups VALUES (1), (2), (3);
+             INSERT INTO dbo.M_Items VALUES (1, 10), (1, 20), (2, 5);",
+            "CREATE FUNCTION dbo.M_FnScale(@v INT, @mult INT = 3)
+             RETURNS INT
+             AS
+             BEGIN
+                 RETURN @v * @mult;
+             END;",
+            "CREATE FUNCTION dbo.M_FnInlineCte(@gid INT, @minAmt INT = 1)
+             RETURNS TABLE
+             AS
+             RETURN
+             (
+                 WITH Filtered AS (
+                     SELECT GroupId, Amt FROM dbo.M_Items
+                     WHERE GroupId = @gid AND Amt >= @minAmt
+                 )
+                 SELECT GroupId, SUM(Amt) AS SumAmt
+                 FROM Filtered
+                 GROUP BY GroupId
+             );",
+            "CREATE FUNCTION dbo.M_FnMultiStmt(@gid INT, @prefix VARCHAR(10) = 'G')
+             RETURNS @out TABLE (GroupId INT, Label VARCHAR(20))
+             AS
+             BEGIN
+                 IF EXISTS (SELECT 1 FROM dbo.M_Items WHERE GroupId = @gid)
+                     INSERT INTO @out VALUES (@gid, @prefix + '-' + CAST(@gid AS VARCHAR(10)));
+                 RETURN;
+             END;",
+            "CREATE PROCEDURE dbo.M_EmitSrc
+             AS
+             BEGIN
+                 SELECT 'exec' AS PathName, Qty, WideDec, RawXml FROM dbo.M_CoerceSrc;
+             END;",
+        ],
+        steps: &[
+            // 1. Built-in scalar NULL propagation across string, math, date, and JSON builtins
+            DiffStep::Query {
+                label: "null_propagation_string_math_date_json",
+                sql: "DECLARE @nullPath NVARCHAR(20) = NULL;
+                      SELECT
+                          LTRIM(NULL) AS s_ltrim,
+                          RTRIM(NULL) AS s_rtrim,
+                          TRIM(NULL) AS s_trim,
+                          LEFT('abcdef', NULL) AS s_left,
+                          RIGHT('abcdef', NULL) AS s_right,
+                          STR(12.34, NULL, 2) AS s_str_len,
+                          STR(12.34, 6, NULL) AS s_str_dec,
+                          FORMAT(1234, @nullPath) AS s_format,
+                          STRING_ESCAPE(NULL, 'json') AS s_escape,
+                          ROUND(1.234, NULL) AS m_round,
+                          JSON_VALUE(NULL, '$.a') AS j_val,
+                          JSON_QUERY(NULL, '$.a') AS j_qry,
+                          JSON_MODIFY(NULL, '$.a', 2) AS j_mod,
+                          DATEADD(DAY, CAST(NULL AS INT), '2025-01-01') AS d_add,
+                          DATEDIFF(DAY, '2025-01-01', CAST(NULL AS DATE)) AS d_diff;",
+                ordered: true,
+            },
+            // 2. DML x Type-Coercion cross-path parity (VALUES, SELECT, EXEC, UPDATE, MERGE)
+            DiffStep::ExecOk {
+                label: "dml_coercion_all_five_write_paths",
+                sql: "INSERT INTO dbo.M_CoerceDst VALUES ('values', 5000.00, 123.456789, '<Envelope  id = ''7'' />');
+                      INSERT INTO dbo.M_CoerceDst SELECT 'select', Qty, WideDec, RawXml FROM dbo.M_CoerceSrc;
+                      INSERT INTO dbo.M_CoerceDst EXEC dbo.M_EmitSrc;
+                      INSERT INTO dbo.M_CoerceDst VALUES ('update', NULL, NULL, NULL);
+                      UPDATE d SET d.Qty = s.Qty, d.NarrowDec = s.WideDec, d.Doc = s.RawXml
+                      FROM dbo.M_CoerceDst d CROSS JOIN dbo.M_CoerceSrc s
+                      WHERE d.PathName = 'update';
+                      MERGE INTO dbo.M_CoerceDst AS tgt
+                      USING (SELECT 'merge_ins' AS PathName, Qty, WideDec, RawXml FROM dbo.M_CoerceSrc) AS src
+                      ON tgt.PathName = src.PathName
+                      WHEN NOT MATCHED THEN INSERT (PathName, Qty, NarrowDec, Doc)
+                          VALUES (src.PathName, src.Qty, src.WideDec, src.RawXml);
+                      INSERT INTO dbo.M_CoerceDst VALUES ('merge_upd', NULL, NULL, NULL);
+                      MERGE INTO dbo.M_CoerceDst AS tgt
+                      USING (SELECT 'merge_upd' AS PathName, Qty, WideDec, RawXml FROM dbo.M_CoerceSrc) AS src
+                      ON tgt.PathName = src.PathName
+                      WHEN MATCHED THEN UPDATE SET tgt.Qty = src.Qty, tgt.NarrowDec = src.WideDec, tgt.Doc = src.RawXml;",
+            },
+            DiffStep::Query {
+                label: "dml_coercion_cross_path_formatted_values_match_sqlserver",
+                sql: "SELECT
+                          PathName,
+                          CAST(Qty AS VARCHAR(30)) AS QtyStr,
+                          CAST(NarrowDec AS VARCHAR(30)) AS NarrowStr,
+                          CAST(Doc AS NVARCHAR(MAX)) AS XmlStr
+                      FROM dbo.M_CoerceDst
+                      ORDER BY PathName;",
+                ordered: true,
+            },
+            // 3. Composite UNIQUE cardinality (repeat individual cols OK, duplicate tuple fails, NULL tuple semantics)
+            DiffStep::ExecOk {
+                label: "composite_unique_distinct_tuples_with_repeated_columns",
+                sql: "INSERT INTO dbo.M_CompositeUq (RowId, K1, K2, K3) VALUES
+                          (1, 10, 100, 1),
+                          (2, 10, 100, 2),
+                          (3, 10, 200, 1),
+                          (4, 20, 100, 1),
+                          (5, 10, NULL, 1),
+                          (6, 20, NULL, 1);",
+            },
+            DiffStep::ExpectErr {
+                label: "composite_unique_rejects_duplicate_tuple_insert",
+                sql: "INSERT INTO dbo.M_CompositeUq (RowId, K1, K2, K3) VALUES (7, 10, 100, 1);",
+            },
+            DiffStep::ExpectErr {
+                label: "composite_unique_rejects_duplicate_null_tuple_insert",
+                sql: "INSERT INTO dbo.M_CompositeUq (RowId, K1, K2, K3) VALUES (8, 10, NULL, 1);",
+            },
+            DiffStep::ExpectErr {
+                label: "composite_unique_rejects_duplicate_tuple_update",
+                sql: "UPDATE dbo.M_CompositeUq SET K3 = 1 WHERE RowId = 2;",
+            },
+            DiffStep::ExecOk {
+                label: "composite_unique_drop_constraint_allows_duplicate",
+                sql: "ALTER TABLE dbo.M_CompositeUq DROP CONSTRAINT UQ_M_CompositeUq;
+                      INSERT INTO dbo.M_CompositeUq (RowId, K1, K2, K3) VALUES (9, 10, 100, 1);",
+            },
+            // 4. XML canonicalization corpus
+            DiffStep::Query {
+                label: "xml_canonicalization_forms",
+                sql: "SELECT
+                          CAST(CAST('<Empty />' AS XML) AS NVARCHAR(MAX)) AS x1,
+                          CAST(CAST('<Item  id = ''7''  />' AS XML) AS NVARCHAR(MAX)) AS x2,
+                          CAST(CAST('<Root><Child>ok</Child></Root >' AS XML) AS NVARCHAR(MAX)) AS x3,
+                          CAST(CAST('<A /><B />' AS XML) AS NVARCHAR(MAX)) AS x4;",
+                ordered: true,
+            },
+            // 5. Routine composition: DEFAULT keyword + CROSS/OUTER APPLY on Inline-CTE and Multi-Stmt TVFs
+            DiffStep::Query {
+                label: "routine_default_args_and_cross_outer_apply",
+                sql: "SELECT
+                          g.GroupId,
+                          dbo.M_FnScale(g.GroupId, DEFAULT) AS Scaled,
+                          c.SumAmt,
+                          m.Label
+                      FROM dbo.M_Groups g
+                      OUTER APPLY (SELECT SumAmt FROM dbo.M_FnInlineCte(g.GroupId, DEFAULT)) c
+                      OUTER APPLY (SELECT Label FROM dbo.M_FnMultiStmt(g.GroupId, DEFAULT)) m
+                      ORDER BY g.GroupId;",
+                ordered: true,
             },
         ],
     }

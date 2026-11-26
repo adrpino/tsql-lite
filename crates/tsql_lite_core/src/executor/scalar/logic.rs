@@ -212,18 +212,24 @@ pub(crate) fn eval_greatest(
             "GREATEST requires at least 1 argument".into(),
         ));
     }
-    let mut result = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
-    for arg in &args[1..] {
+    let mut best: Option<Value> = None;
+    for arg in args {
         let val = eval_expr(arg, row, ctx, catalog, storage, clock)?;
-        if val.is_null() || result.is_null() {
-            return Ok(Value::Null);
+        if val.is_null() {
+            continue;
         }
-        if crate::executor::value_ops::compare_values(&val, &result) == std::cmp::Ordering::Greater
-        {
-            result = val;
+        match &best {
+            None => best = Some(val),
+            Some(cur)
+                if crate::executor::value_ops::compare_values(&val, cur)
+                    == std::cmp::Ordering::Greater =>
+            {
+                best = Some(val);
+            }
+            Some(_) => {}
         }
     }
-    Ok(result)
+    Ok(best.unwrap_or(Value::Null))
 }
 
 pub(crate) fn eval_least(
@@ -239,15 +245,22 @@ pub(crate) fn eval_least(
             "LEAST requires at least 1 argument".into(),
         ));
     }
-    let mut result = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
-    for arg in &args[1..] {
+    let mut best: Option<Value> = None;
+    for arg in args {
         let val = eval_expr(arg, row, ctx, catalog, storage, clock)?;
-        if val.is_null() || result.is_null() {
-            return Ok(Value::Null);
+        if val.is_null() {
+            continue;
         }
-        if crate::executor::value_ops::compare_values(&val, &result) == std::cmp::Ordering::Less {
-            result = val;
+        match &best {
+            None => best = Some(val),
+            Some(cur)
+                if crate::executor::value_ops::compare_values(&val, cur)
+                    == std::cmp::Ordering::Less =>
+            {
+                best = Some(val);
+            }
+            Some(_) => {}
         }
     }
-    Ok(result)
+    Ok(best.unwrap_or(Value::Null))
 }

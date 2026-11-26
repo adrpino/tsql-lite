@@ -47,7 +47,13 @@ pub(crate) fn rescale_raw(raw: i128, from_scale: u8, to_scale: u8) -> i128 {
     if to_scale > from_scale {
         raw * 10i128.pow((to_scale - from_scale) as u32)
     } else {
-        raw / 10i128.pow((from_scale - to_scale) as u32)
+        let divisor = 10i128.pow((from_scale - to_scale) as u32);
+        let half = divisor / 2;
+        if raw >= 0 {
+            (raw + half) / divisor
+        } else {
+            (raw - half) / divisor
+        }
     }
 }
 

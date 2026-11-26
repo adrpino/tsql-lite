@@ -45,10 +45,13 @@ pub fn eval_edit_distance(
             "EDIT_DISTANCE expects 2 arguments".into(),
         ));
     }
-    let s1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?
-        .to_string_value();
-    let s2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?
-        .to_string_value();
+    let v1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let v2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if v1.is_null() || v2.is_null() {
+        return Ok(Value::Null);
+    }
+    let s1 = v1.to_string_value();
+    let s2 = v2.to_string_value();
     Ok(Value::Int(edit_distance(&s1, &s2)))
 }
 
@@ -65,10 +68,13 @@ pub fn eval_edit_distance_similarity(
             "EDIT_DISTANCE_SIMILARITY expects 2 arguments".into(),
         ));
     }
-    let s1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?
-        .to_string_value();
-    let s2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?
-        .to_string_value();
+    let v1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let v2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if v1.is_null() || v2.is_null() {
+        return Ok(Value::Null);
+    }
+    let s1 = v1.to_string_value();
+    let s2 = v2.to_string_value();
     Ok(decimal_from_unit_interval(edit_distance_similarity(
         &s1, &s2,
     )))
@@ -113,10 +119,13 @@ pub fn eval_jaro_winkler_distance(
             "JARO_WINKLER_DISTANCE expects 2 arguments".into(),
         ));
     }
-    let s1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?
-        .to_string_value();
-    let s2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?
-        .to_string_value();
+    let v1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let v2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if v1.is_null() || v2.is_null() {
+        return Ok(Value::Null);
+    }
+    let s1 = v1.to_string_value();
+    let s2 = v2.to_string_value();
     Ok(decimal_from_unit_interval(jaro_winkler_distance(&s1, &s2)))
 }
 
@@ -133,10 +142,13 @@ pub fn eval_jaro_winkler_similarity(
             "JARO_WINKLER_SIMILARITY expects 2 arguments".into(),
         ));
     }
-    let s1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?
-        .to_string_value();
-    let s2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?
-        .to_string_value();
+    let v1 = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    let v2 = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+    if v1.is_null() || v2.is_null() {
+        return Ok(Value::Null);
+    }
+    let s1 = v1.to_string_value();
+    let s2 = v2.to_string_value();
     Ok(decimal_from_unit_interval(jaro_winkler_similarity(
         &s1, &s2,
     )))

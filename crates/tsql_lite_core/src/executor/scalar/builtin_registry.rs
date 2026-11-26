@@ -644,7 +644,7 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         }
         let json_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
         let path_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
-        if json_val.is_null() {
+        if json_val.is_null() || path_val.is_null() {
             return Ok(Value::Null);
         }
         json::json_value(&json_val.to_string_value(), &path_val.to_string_value())
@@ -655,7 +655,7 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         }
         let json_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
         let path_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
-        if json_val.is_null() {
+        if json_val.is_null() || path_val.is_null() {
             return Ok(Value::Null);
         }
         json::json_query(&json_val.to_string_value(), &path_val.to_string_value())
@@ -667,7 +667,7 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         let json_val = crate::executor::evaluator::eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
         let path_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
         let new_val = crate::executor::evaluator::eval_expr(&args[2], row, ctx, catalog, storage, clock)?;
-        if json_val.is_null() {
+        if json_val.is_null() || path_val.is_null() {
             return Ok(Value::Null);
         }
         json::json_modify(
@@ -756,6 +756,9 @@ const JSON_FUNCTIONS: &[BuiltinScalarFunction] = &[
         }
         let path = if args.len() == 2 {
             let path_val = crate::executor::evaluator::eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+            if path_val.is_null() {
+                return Ok(Value::Null);
+            }
             Some(path_val.to_string_value())
         } else {
             None
@@ -870,6 +873,12 @@ fn builtin_handler_map() -> &'static HashMap<&'static str, ScalarHandler> {
 
 pub(crate) fn lookup_builtin_handler(name: &str) -> Option<ScalarHandler> {
     builtin_handler_map().get(name).copied()
+}
+
+pub(crate) fn registered_builtin_scalar_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = builtin_handler_map().keys().copied().collect();
+    names.sort_unstable();
+    names
 }
 
 pub(crate) fn lookup_system_variable(

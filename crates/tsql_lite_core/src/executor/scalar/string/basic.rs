@@ -197,7 +197,7 @@ pub(crate) fn eval_left(
     let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
     let count = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
 
-    if val.is_null() {
+    if val.is_null() || count.is_null() {
         return Ok(Value::Null);
     }
 
@@ -221,7 +221,7 @@ pub(crate) fn eval_right(
     let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
     let count = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
 
-    if val.is_null() {
+    if val.is_null() || count.is_null() {
         return Ok(Value::Null);
     }
 

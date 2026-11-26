@@ -277,6 +277,16 @@ pub(crate) fn merge_apply_update_action(
             .iter()
             .position(|c| c.name.eq_ignore_ascii_case(&assign.column))
             .ok_or_else(|| DbError::Semantic(format!("column '{}' not found", assign.column)))?;
+        let col = &target_table.columns[col_idx];
+        let val = if !val.is_null() {
+            crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                val,
+                &col.data_type,
+                &ctx.options.dateformat,
+            )?
+        } else {
+            val
+        };
         temp_row.values[col_idx] = val;
     }
     evaluate_computed_columns(
@@ -368,6 +378,16 @@ pub(crate) fn merge_apply_insert_action(
         let val = crate::executor::evaluator::eval_expr(
             val_expr, source_ctx, ctx, catalog, storage, clock,
         )?;
+        let col = &target_table.columns[col_idx];
+        let val = if !val.is_null() {
+            crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                val,
+                &col.data_type,
+                &ctx.options.dateformat,
+            )?
+        } else {
+            val
+        };
         final_values[col_idx] = val;
     }
 

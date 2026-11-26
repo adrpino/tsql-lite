@@ -55,4 +55,4 @@ pub(crate) mod window;
 
 pub use aggregates::is_aggregate_function;
 pub use metadata::system_vars::is_system_variable_registered;
-pub use scalar::is_builtin_scalar_registered;
+pub use scalar::{is_builtin_scalar_registered, registered_builtin_scalar_names};

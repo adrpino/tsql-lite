@@ -15,6 +15,11 @@ pub fn is_builtin_scalar_registered(name: &str) -> bool {
     builtin_registry::lookup_builtin_handler(&name.to_ascii_uppercase()).is_some()
 }
 
+/// Returns a sorted list of all registered built-in scalar function names (uppercase).
+pub fn registered_builtin_scalar_names() -> Vec<&'static str> {
+    builtin_registry::registered_builtin_scalar_names()
+}
+
 use crate::ast::Expr;
 use crate::catalog::Catalog;
 use crate::error::DbError;

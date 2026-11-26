@@ -116,6 +116,9 @@ pub(crate) fn eval_round(
     let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
     let precision = if args.len() == 2 {
         let p = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        if p.is_null() {
+            return Ok(Value::Null);
+        }
         match p {
             Value::Int(v) => v,
             Value::TinyInt(v) => v as i32,

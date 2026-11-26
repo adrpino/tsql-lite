@@ -288,9 +288,11 @@ pub(crate) fn eval_str(
         return Ok(Value::Null);
     }
     let length = if args.len() >= 2 {
-        eval_expr(&args[1], row, ctx, catalog, storage, clock)?
-            .to_integer_i64()
-            .unwrap_or(10) as usize
+        let len_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
+        if len_val.is_null() {
+            return Ok(Value::Null);
+        }
+        len_val.to_integer_i64().unwrap_or(10) as usize
     } else {
         10
     };
@@ -517,7 +519,7 @@ pub(crate) fn eval_string_escape(
     let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
     let type_val = eval_expr(&args[1], row, ctx, catalog, storage, clock)?;
 
-    if val.is_null() {
+    if val.is_null() || type_val.is_null() {
         return Ok(Value::Null);
     }
 

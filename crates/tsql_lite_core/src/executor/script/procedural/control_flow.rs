@@ -33,7 +33,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_if(
         &mut self,
-        stmt: IfStmt,
+        stmt: &IfStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
         let cond = crate::executor::evaluator::eval_expr(
@@ -56,7 +56,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_while(
         &mut self,
-        stmt: WhileStmt,
+        stmt: &WhileStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
         ctx.frame.loop_depth += 1;
@@ -103,10 +103,10 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_return(
         &mut self,
-        expr: Option<crate::ast::Expr>,
+        expr: Option<&crate::ast::Expr>,
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
-        let value = if let Some(ref e) = expr {
+        let value = if let Some(e) = expr {
             Some(crate::executor::evaluator::eval_expr(
                 e,
                 &[],

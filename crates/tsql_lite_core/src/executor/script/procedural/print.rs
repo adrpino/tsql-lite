@@ -7,10 +7,10 @@ use crate::executor::evaluator::eval_expr;
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_print(
         &mut self,
-        expr: Expr,
+        expr: &Expr,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
-        let val = eval_expr(&expr, &[], ctx, self.catalog, self.storage, self.clock)?;
+        let val = eval_expr(expr, &[], ctx, self.catalog, self.storage, self.clock)?;
         ctx.session.print_output.push(val.to_string_value());
         Ok(None)
     }

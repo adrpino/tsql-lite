@@ -28,47 +28,59 @@ impl<'a> ScriptExecutor<'a> {
         proc: ProceduralStatement,
         ctx: &mut ExecutionContext<'_>,
     ) -> crate::error::StmtResult<Option<crate::executor::result::QueryResult>> {
+        self.execute_procedural_ref(&proc, ctx)
+    }
+
+    pub(crate) fn execute_procedural_ref(
+        &mut self,
+        proc: &ProceduralStatement,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> crate::error::StmtResult<Option<crate::executor::result::QueryResult>> {
         use crate::error::StmtOutcome;
 
         match proc {
             ProceduralStatement::Declare(stmt) => {
-                self.execute_declare(*stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_declare(stmt, ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::DeclareTableVar(stmt) => self
-                .execute_declare_table_var(*stmt, ctx)
+                .execute_declare_table_var(stmt, ctx)
                 .map(StmtOutcome::Ok),
-            ProceduralStatement::Set(stmt) => self.execute_set(*stmt, ctx).map(StmtOutcome::Ok),
+            ProceduralStatement::Set(stmt) => self.execute_set(stmt, ctx).map(StmtOutcome::Ok),
             ProceduralStatement::SetOption(_) => Err(DbError::Execution(
                 "SET option statements are handled at engine level".into(),
             )),
-            ProceduralStatement::If(stmt) => self.execute_if(*stmt, ctx),
-            ProceduralStatement::BeginEnd(stmts) => self.execute_batch(&stmts, ctx),
-            ProceduralStatement::While(stmt) => self.execute_while(*stmt, ctx),
+            ProceduralStatement::If(stmt) => self.execute_if(stmt, ctx),
+            ProceduralStatement::BeginEnd(stmts) => self.execute_batch(stmts, ctx),
+            ProceduralStatement::While(stmt) => self.execute_while(stmt, ctx),
             ProceduralStatement::Break => self.execute_break(ctx),
             ProceduralStatement::Continue => self.execute_continue(ctx),
-            ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label)),
+            ProceduralStatement::Goto(label) => Ok(StmtOutcome::Goto(label.clone())),
             ProceduralStatement::Label(_) => Ok(StmtOutcome::Ok(None)),
             ProceduralStatement::WaitFor(stmt) => {
-                self.execute_waitfor(*stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_waitfor((**stmt).clone(), ctx).map(StmtOutcome::Ok)
             }
-            ProceduralStatement::Return(expr) => self.execute_return(expr, ctx),
-            ProceduralStatement::ExecDynamic(stmt) => execute_exec_dynamic(self, *stmt, ctx),
+            ProceduralStatement::Return(expr) => self.execute_return(expr.as_ref(), ctx),
+            ProceduralStatement::ExecDynamic(stmt) => {
+                execute_exec_dynamic(self, (**stmt).clone(), ctx)
+            }
             ProceduralStatement::ExecProcedure(stmt) => {
-                self.execute_procedure(*stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_procedure(stmt, ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::SpExecuteSql(stmt) => {
-                execute_sp_executesql(self, *stmt, ctx).map(StmtOutcome::Ok)
+                execute_sp_executesql(self, (**stmt).clone(), ctx).map(StmtOutcome::Ok)
             }
             ProceduralStatement::Print(expr) => self.execute_print(expr, ctx).map(StmtOutcome::Ok),
             ProceduralStatement::Raiserror(stmt) => {
-                self.execute_raiserror(*stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_raiserror(stmt, ctx).map(StmtOutcome::Ok)
             }
-            ProceduralStatement::Throw(stmt) => self.execute_throw(*stmt, ctx).map(StmtOutcome::Ok),
-            ProceduralStatement::TryCatch(stmt) => self.execute_try_catch(*stmt, ctx),
+            ProceduralStatement::Throw(stmt) => self.execute_throw(stmt, ctx).map(StmtOutcome::Ok),
+            ProceduralStatement::TryCatch(stmt) => self.execute_try_catch(stmt, ctx),
             ProceduralStatement::DbccCheckIdent(stmt) => self
-                .execute_dbcc_checkident(*stmt, ctx)
+                .execute_dbcc_checkident((**stmt).clone(), ctx)
                 .map(StmtOutcome::Ok),
-            ProceduralStatement::DeclareCursor(stmt) => self.execute_declare_cursor(*stmt, ctx),
+            ProceduralStatement::DeclareCursor(stmt) => {
+                self.execute_declare_cursor((**stmt).clone(), ctx)
+            }
             ProceduralStatement::CreateProcedure(stmt) => {
                 let sch = stmt.name.schema_or_dbo().to_string();
                 let ev = if stmt.or_alter
@@ -85,8 +97,9 @@ impl<'a> ScriptExecutor<'a> {
                     object_type: "PROCEDURE",
                     command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
                 });
+                let owned = (**stmt).clone();
                 self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
-                    this.execute_create_procedure(*stmt)
+                    this.execute_create_procedure(owned)
                 })?;
                 Ok(StmtOutcome::Ok(None))
             }
@@ -106,8 +119,9 @@ impl<'a> ScriptExecutor<'a> {
                     object_type: "FUNCTION",
                     command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
                 });
+                let owned = (**stmt).clone();
                 self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
-                    this.execute_create_function(*stmt)
+                    this.execute_create_function(owned)
                 })?;
                 Ok(StmtOutcome::Ok(None))
             }
@@ -126,8 +140,9 @@ impl<'a> ScriptExecutor<'a> {
                     object_type: "VIEW",
                     command_text: format!("{} {}.{}", ev.replace('_', " "), sch, stmt.name.name),
                 });
+                let owned = (**stmt).clone();
                 self.run_with_ddl_triggers(meta, ctx, |this, ctx| {
-                    this.execute_create_view(*stmt, ctx)
+                    this.execute_create_view(owned, ctx)
                 })?;
                 Ok(StmtOutcome::Ok(None))
             }
@@ -155,8 +170,9 @@ impl<'a> ScriptExecutor<'a> {
                         ),
                     })
                 };
+                let owned = (**stmt).clone();
                 self.run_with_ddl_triggers(meta, ctx, |this, _ctx| {
-                    this.execute_create_trigger(*stmt)
+                    this.execute_create_trigger(owned)
                 })?;
                 Ok(StmtOutcome::Ok(None))
             }

@@ -61,24 +61,33 @@ impl<'a> ScriptExecutor<'a> {
         dml: crate::ast::DmlStatement,
         ctx: &mut ExecutionContext<'_>,
     ) -> crate::error::StmtResult<Option<QueryResult>> {
+        self.execute_dml_ref(&dml, ctx)
+    }
+
+    pub(crate) fn execute_dml_ref(
+        &mut self,
+        dml: &crate::ast::DmlStatement,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> crate::error::StmtResult<Option<QueryResult>> {
         use crate::ast::DmlStatement;
         use crate::error::StmtOutcome;
         match dml {
-            DmlStatement::Insert(stmt) => self.execute_insert(*stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Select(stmt) => self.execute_select_into(*stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Update(stmt) => self.execute_update(*stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Delete(stmt) => self.execute_delete(*stmt, ctx).map(StmtOutcome::Ok),
-            DmlStatement::Merge(stmt) => self.execute_merge(*stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Insert(stmt) => self.execute_insert(stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Select(stmt) => self.execute_select_into(stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Update(stmt) => self.execute_update(stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Delete(stmt) => self.execute_delete(stmt, ctx).map(StmtOutcome::Ok),
+            DmlStatement::Merge(stmt) => self.execute_merge(stmt, ctx).map(StmtOutcome::Ok),
             DmlStatement::SelectAssign(stmt) => {
-                self.execute_select_assign(*stmt, ctx).map(StmtOutcome::Ok)
+                self.execute_select_assign(stmt, ctx).map(StmtOutcome::Ok)
             }
-            DmlStatement::BulkInsert(stmt) => {
-                self.execute_bulk_insert(*stmt, ctx).map(StmtOutcome::Ok)
-            }
-            DmlStatement::InsertBulk(stmt) => {
-                self.execute_insert_bulk(*stmt, ctx).map(StmtOutcome::Ok)
-            }
-            DmlStatement::SetOp(mut stmt) => {
+            DmlStatement::BulkInsert(stmt) => self
+                .execute_bulk_insert((**stmt).clone(), ctx)
+                .map(StmtOutcome::Ok),
+            DmlStatement::InsertBulk(stmt) => self
+                .execute_insert_bulk((**stmt).clone(), ctx)
+                .map(StmtOutcome::Ok),
+            DmlStatement::SetOp(stmt) => {
+                let mut stmt = (**stmt).clone();
                 // In T-SQL, `SELECT ... INTO #tbl FROM a UNION [ALL] SELECT ... FROM b`
                 // attaches INTO to the leftmost SELECT, while trailing ORDER BY / OFFSET / FETCH
                 // on the final branch applies to the entire combined set-op result.
@@ -161,7 +170,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_insert(
         &mut self,
-        stmt: InsertStmt,
+        stmt: &InsertStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if ctx.is_readonly_table_var(&stmt.table.name) {
@@ -180,16 +189,18 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_select_into(
         &mut self,
-        mut stmt: crate::ast::SelectStmt,
+        stmt: &crate::ast::SelectStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
-        let into_table = stmt.into_table.take();
+        let into_table = stmt.into_table.clone();
+        let mut query = RelationalQuery::from_ref(stmt);
+        query.into_table = None;
         let result = QueryExecutor {
             catalog: self.catalog as &dyn Catalog,
             storage: self.storage as &dyn Storage,
             clock: self.clock,
         }
-        .execute_select(RelationalQuery::from(stmt), ctx)?;
+        .execute_select(query, ctx)?;
 
         ctx.set_last_rowcount(result.rows.len());
 
@@ -294,7 +305,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_update(
         &mut self,
-        stmt: UpdateStmt,
+        stmt: &UpdateStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if ctx.is_readonly_table_var(&stmt.table.name) {
@@ -313,7 +324,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_delete(
         &mut self,
-        stmt: DeleteStmt,
+        stmt: &DeleteStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if ctx.is_readonly_table_var(&stmt.table.name) {

@@ -100,7 +100,7 @@ fn extract_max_recursion(body: &crate::ast::Statement) -> Option<u16> {
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_with_cte(
         &mut self,
-        stmt: WithCteStmt,
+        stmt: &WithCteStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         let old_ctes = ctx.row.ctes.clone();
@@ -184,7 +184,7 @@ impl<'a> ScriptExecutor<'a> {
                     let prev_ctes = std::mem::replace(&mut ctx.row.ctes, iteration_ctes);
                     let saved_sink = ctx.frame.result_set_sink.take();
                     let saved_last = ctx.frame.last_proc_result.take();
-                    let step_outcome = self.execute(recursive_stmt.clone(), ctx);
+                    let step_outcome = self.execute_ref(&recursive_stmt, ctx);
                     ctx.frame.result_set_sink = saved_sink;
                     ctx.frame.last_proc_result = saved_last;
                     ctx.row.ctes = prev_ctes;
@@ -259,15 +259,13 @@ impl<'a> ScriptExecutor<'a> {
                             clock: self.clock,
                         };
                         qe.execute_select_with_base_targets(
-                            crate::executor::query::plan::RelationalQuery::from(
-                                (**select_stmt).clone(),
-                            ),
+                            crate::executor::query::plan::RelationalQuery::from_ref(select_stmt),
                             ctx,
                         )?
                     } else {
                         let saved_sink = ctx.frame.result_set_sink.take();
                         let saved_last = ctx.frame.last_proc_result.take();
-                        let cte_outcome = self.execute(cte_def.query.clone(), ctx);
+                        let cte_outcome = self.execute_ref(&cte_def.query, ctx);
                         ctx.frame.result_set_sink = saved_sink;
                         ctx.frame.last_proc_result = saved_last;
                         let cte_outcome = cte_outcome?;
@@ -285,7 +283,7 @@ impl<'a> ScriptExecutor<'a> {
                 } else {
                     let saved_sink = ctx.frame.result_set_sink.take();
                     let saved_last = ctx.frame.last_proc_result.take();
-                    let cte_outcome = self.execute(cte_def.query.clone(), ctx);
+                    let cte_outcome = self.execute_ref(&cte_def.query, ctx);
                     ctx.frame.result_set_sink = saved_sink;
                     ctx.frame.last_proc_result = saved_last;
                     let cte_outcome = cte_outcome?;
@@ -349,7 +347,7 @@ impl<'a> ScriptExecutor<'a> {
             }
         }
 
-        let res = self.execute(*stmt.body, ctx);
+        let res = self.execute_ref(&stmt.body, ctx);
         ctx.row.ctes = old_ctes;
         // Propagate control flow from the body; unwrap Ok values
         res.map(|outcome| outcome.into_result()).and_then(|r| r)

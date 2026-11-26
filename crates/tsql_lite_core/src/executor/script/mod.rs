@@ -34,6 +34,28 @@ impl<'a> ScriptExecutor<'a> {
         self.visit_statement(stmt, ctx)
     }
 
+    /// Zero-clone statement execution for single-database workloads (the common path).
+    /// Falls back to `execute(stmt.clone(), ctx)` only when user databases are attached and
+    /// cross-database qualification rewrites may be needed.
+    pub fn execute_ref(
+        &mut self,
+        stmt: &Statement,
+        ctx: &mut ExecutionContext<'_>,
+    ) -> StmtResult<Option<QueryResult>> {
+        if !self.catalog.get_user_databases().is_empty() {
+            return self.execute(stmt.clone(), ctx);
+        }
+        match stmt {
+            Statement::Dml(dml) => self.execute_dml_ref(dml, ctx),
+            Statement::Procedural(proc_stmt) => self.execute_procedural_ref(proc_stmt, ctx),
+            Statement::WithCte(cte) => self.execute_with_cte(cte, ctx).map(StmtOutcome::Ok),
+            Statement::Ddl(ddl) => self.visit_ddl((**ddl).clone(), ctx),
+            Statement::Transaction(tx) => self.visit_transaction(tx.clone(), ctx),
+            Statement::Cursor(cur) => self.visit_cursor(cur.clone(), ctx),
+            Statement::Session(sess) => self.visit_session(sess.clone(), ctx),
+        }
+    }
+
     pub fn execute_batch(
         &mut self,
         stmts: &[Statement],
@@ -44,7 +66,7 @@ impl<'a> ScriptExecutor<'a> {
         let mut idx = 0usize;
         let mut jumps = 0usize;
         while idx < stmts.len() {
-            match self.execute(stmts[idx].clone(), ctx) {
+            match self.execute_ref(&stmts[idx], ctx) {
                 Ok(StmtOutcome::Goto(target)) => {
                     if let Some(pos) = stmts.iter().position(|s| {
                         matches!(
@@ -379,6 +401,6 @@ impl<'a> StatementVisitor<ExecutionContext<'_>> for ScriptExecutor<'a> {
         stmt: WithCteStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> StmtResult<Option<QueryResult>> {
-        self.execute_with_cte(stmt, ctx).map(StmtOutcome::Ok)
+        self.execute_with_cte(&stmt, ctx).map(StmtOutcome::Ok)
     }
 }

@@ -52,7 +52,7 @@ pub(super) fn bind_view(
                 storage: temp_stor.as_mut(),
                 clock: executor.clock,
             };
-            match script.execute(view.query.as_ref().clone(), ctx)? {
+            match script.execute_ref(view.query.as_ref(), ctx)? {
                 crate::error::StmtOutcome::Ok(Some(res)) => res,
                 _ => crate::executor::result::QueryResult::default(),
             }

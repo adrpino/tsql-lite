@@ -44,11 +44,25 @@ pub trait StatementExecutor {
         session_id: SessionId,
         stmt: Statement,
     ) -> Result<Option<QueryResult>, DbError>;
+    fn execute_session_ref(
+        &self,
+        session_id: SessionId,
+        stmt: &Statement,
+    ) -> Result<Option<QueryResult>, DbError> {
+        self.execute_session(session_id, stmt.clone())
+    }
     fn execute_session_batch(
         &self,
         session_id: SessionId,
         stmts: Vec<Statement>,
     ) -> Result<Option<QueryResult>, DbError>;
+    fn execute_session_batch_ref(
+        &self,
+        session_id: SessionId,
+        stmts: &[Statement],
+    ) -> Result<Option<QueryResult>, DbError> {
+        self.execute_session_batch(session_id, stmts.to_vec())
+    }
     fn execute_session_batch_sql(
         &self,
         session_id: SessionId,

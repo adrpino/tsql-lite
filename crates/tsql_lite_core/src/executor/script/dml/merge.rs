@@ -12,7 +12,7 @@ use crate::executor::result::QueryResult;
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_merge(
         &mut self,
-        stmt: MergeStmt,
+        stmt: &MergeStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         let target_object = stmt
@@ -65,7 +65,7 @@ impl<'a> ScriptExecutor<'a> {
             storage: self.storage,
             clock: self.clock,
         };
-        let (source_table_def, source_rows) = merge_source_rows(&stmt, &qe, ctx)?;
+        let (source_table_def, source_rows) = merge_source_rows(stmt, &qe, ctx)?;
 
         let target_alias = stmt
             .target
@@ -102,7 +102,7 @@ impl<'a> ScriptExecutor<'a> {
         let mut deleted_rows_for_trigger = Vec::new();
 
         merge_process_matched_phase(
-            &stmt,
+            stmt,
             &target_table,
             &target_alias,
             &source_table_def,
@@ -122,7 +122,7 @@ impl<'a> ScriptExecutor<'a> {
         // Process WHEN NOT MATCHED (source rows not matched to target)
         let mut inserted_new_rows: Vec<crate::storage::StoredRow> = Vec::new();
         merge_process_not_matched_phase(
-            &stmt,
+            stmt,
             &target_table,
             &source_table_def,
             &source_rows,
@@ -138,7 +138,7 @@ impl<'a> ScriptExecutor<'a> {
 
         // Process WHEN NOT MATCHED BY SOURCE (target rows not matched by any source row)
         merge_process_not_matched_by_source_phase(
-            &stmt,
+            stmt,
             &target_table,
             &target_alias,
             &source_table_def,

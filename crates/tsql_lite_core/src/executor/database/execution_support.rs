@@ -138,7 +138,7 @@ pub(crate) fn execute_stmt_loop<C, S, F>(
     clock: &dyn crate::executor::clock::Clock,
     options: &mut crate::executor::tooling::SessionOptions,
     ctx: &mut ExecutionContext,
-    stmts: Vec<Statement>,
+    stmts: &[Statement],
     mut on_result: F,
 ) -> Result<(), DbError>
 where
@@ -147,33 +147,14 @@ where
     F: FnMut(BatchResultItem),
 {
     const MAX_GOTO_JUMPS: usize = 100_000;
-    let has_labels = stmts.iter().any(|s| {
-        matches!(
-            s,
-            Statement::Procedural(crate::ast::ProceduralStatement::Label(_))
-        )
-    });
-    let (mut stmts_owned, stmts_ref): (Vec<Option<Statement>>, Vec<Statement>) = if has_labels {
-        (Vec::new(), stmts)
-    } else {
-        (stmts.into_iter().map(Some).collect(), Vec::new())
-    };
-    let total_len = if has_labels {
-        stmts_ref.len()
-    } else {
-        stmts_owned.len()
-    };
+    let total_len = stmts.len();
     let mut idx = 0usize;
     let mut jumps = 0usize;
     while idx < total_len {
         if ctx.is_cancelled() {
             return Err(DbError::Execution("Operation cancelled by user.".into()));
         }
-        let stmt = if has_labels {
-            stmts_ref[idx].clone()
-        } else {
-            stmts_owned[idx].take().expect("statement already consumed")
-        };
+        let stmt = &stmts[idx];
         ctx.frame.trancount = tx_manager.depth;
         ctx.frame.xact_state = tx_manager.xact_state;
         ctx.session.identity_insert = options.identity_insert.clone();
@@ -186,7 +167,7 @@ where
                     | crate::ast::DmlStatement::Merge(_)
             )
         );
-        if is_transaction_statement(&stmt) {
+        if is_transaction_statement(stmt) {
             match transaction_exec::execute_transaction_statement(
                 state,
                 session_id,
@@ -195,7 +176,7 @@ where
                 workspace,
                 ctx,
                 options,
-                stmt,
+                stmt.clone(),
             ) {
                 Ok(r) => {
                     on_result(BatchResultItem {
@@ -243,7 +224,7 @@ where
                         break;
                     }
                     StmtOutcome::Goto(target) => {
-                        if let Some(pos) = stmts_ref.iter().position(|s| {
+                        if let Some(pos) = stmts.iter().position(|s| {
                             matches!(
                                 s,
                                 Statement::Procedural(crate::ast::ProceduralStatement::Label(lbl))
@@ -417,6 +398,19 @@ where
     C: EngineCatalog,
     S: EngineStorage,
 {
+    execute_batch_statements_ref(state, session_id, session, &stmts)
+}
+
+pub(crate) fn execute_batch_statements_ref<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+    session: &mut SessionRuntime<C, S>,
+    stmts: &[Statement],
+) -> Result<Option<QueryResult>, DbError>
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
     let mut last_res = None;
     let exec_res = execute_batch_core_inner(
         state,
@@ -486,7 +480,7 @@ where
                 clock,
                 options,
                 ctx,
-                stmts,
+                &stmts,
                 |item| {
                     results.push(item);
                 },
@@ -507,6 +501,19 @@ where
     C: EngineCatalog,
     S: EngineStorage,
 {
+    execute_single_statement_ref(state, session_id, session, &stmt)
+}
+
+pub(crate) fn execute_single_statement_ref<C, S>(
+    state: &SharedState<C, S>,
+    session_id: SessionId,
+    session: &mut SessionRuntime<C, S>,
+    stmt: &Statement,
+) -> Result<Option<QueryResult>, DbError>
+where
+    C: EngineCatalog,
+    S: EngineStorage,
+{
     let mut res = None;
     let exec_res = {
         let (mut ctx, tx_manager, journal, workspace, clock, options) =
@@ -520,7 +527,7 @@ where
             clock.as_ref(),
             options,
             &mut ctx,
-            vec![stmt],
+            std::slice::from_ref(stmt),
             |item| {
                 res = item.result;
             },

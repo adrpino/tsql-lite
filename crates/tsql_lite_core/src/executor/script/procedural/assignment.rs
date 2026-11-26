@@ -46,8 +46,8 @@ fn expr_contains_aggregate(expr: &Expr) -> bool {
     }
 }
 
-fn build_from_clause(from: Option<TableRef>, joins: &[JoinClause]) -> Option<crate::ast::FromNode> {
-    let mut node = from.map(crate::ast::FromNode::Table)?;
+fn build_from_clause(from: Option<&TableRef>, joins: &[JoinClause]) -> Option<crate::ast::FromNode> {
+    let mut node = from.cloned().map(crate::ast::FromNode::Table)?;
     for join in joins {
         node = crate::ast::FromNode::Join {
             left: Box::new(node),
@@ -62,14 +62,14 @@ fn build_from_clause(from: Option<TableRef>, joins: &[JoinClause]) -> Option<cra
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_select_assign(
         &mut self,
-        stmt: SelectAssignStmt,
+        stmt: &SelectAssignStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if stmt.targets.is_empty() {
             return Ok(None);
         }
         if stmt.from.is_none() {
-            for t in stmt.targets {
+            for t in &stmt.targets {
                 if let Some((ty, _)) = ctx.session.get_var(&t.variable) {
                     let target_ty = ty.clone();
                     crate::executor::value_ops::coercion::xml::check_implicit_xml_var_conversion(
@@ -86,11 +86,12 @@ impl<'a> ScriptExecutor<'a> {
             return Ok(None);
         }
 
-        let order_by = stmt.order_by;
-        let top = stmt.top;
+        let order_by = &stmt.order_by;
+        let top = &stmt.top;
         let q = RelationalQuery {
-            from_clause: build_from_clause(stmt.from, &stmt.joins).map(std::borrow::Cow::Owned),
-            applies: std::borrow::Cow::Owned(stmt.applies),
+            from_clause: build_from_clause(stmt.from.as_ref(), &stmt.joins)
+                .map(std::borrow::Cow::Owned),
+            applies: std::borrow::Cow::Borrowed(stmt.applies.as_slice()),
             projection: ProjectionPlan {
                 items: std::borrow::Cow::Owned(
                     stmt.targets
@@ -104,13 +105,13 @@ impl<'a> ScriptExecutor<'a> {
                 distinct: false,
             },
             filter: FilterPlan {
-                selection: stmt.selection.map(std::borrow::Cow::Owned),
+                selection: stmt.selection.as_ref().map(std::borrow::Cow::Borrowed),
                 group_by: std::borrow::Cow::Borrowed(&[]),
                 grouping_sets: std::borrow::Cow::Borrowed(&[]),
                 having: None,
             },
             sort: SortPlan {
-                order_by: std::borrow::Cow::Borrowed(&order_by),
+                order_by: std::borrow::Cow::Borrowed(order_by),
             },
             pagination: PaginationPlan {
                 top: top.as_ref().map(std::borrow::Cow::Borrowed),
@@ -153,7 +154,7 @@ impl<'a> ScriptExecutor<'a> {
                 let mut keyed = Vec::with_capacity(joined_rows.len());
                 for r in joined_rows {
                     let mut keys = Vec::with_capacity(order_by.len());
-                    for ob in &order_by {
+                    for ob in order_by {
                         keys.push(eval_expr(
                             &ob.expr,
                             &r,

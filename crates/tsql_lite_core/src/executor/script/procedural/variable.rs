@@ -7,7 +7,7 @@ use crate::executor::result::QueryResult;
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_declare(
         &mut self,
-        stmt: DeclareStmt,
+        stmt: &DeclareStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if let Some(ref custom_type) = stmt.custom_type {
@@ -17,8 +17,8 @@ impl<'a> ScriptExecutor<'a> {
                 .cloned()
             {
                 return self.execute_declare_table_var(
-                    crate::ast::DeclareTableVarStmt {
-                        name: stmt.name,
+                    &crate::ast::DeclareTableVarStmt {
+                        name: stmt.name.clone(),
                         columns: type_def.columns,
                         table_constraints: type_def.table_constraints,
                     },
@@ -69,14 +69,14 @@ impl<'a> ScriptExecutor<'a> {
         } else {
             crate::types::Value::Null
         };
-        ctx.session.variables.insert(stmt.name, (ty, value));
+        ctx.session.variables.insert(stmt.name.clone(), (ty, value));
         ctx.register_declared_var(&declared_name);
         Ok(None)
     }
 
     pub(crate) fn execute_declare_table_var(
         &mut self,
-        stmt: crate::ast::DeclareTableVarStmt,
+        stmt: &crate::ast::DeclareTableVarStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         let unique = ctx.next_table_var_id();
@@ -92,8 +92,8 @@ impl<'a> ScriptExecutor<'a> {
                 schema: Some("dbo".to_string()),
                 name: physical.clone(),
             },
-            columns: stmt.columns,
-            table_constraints: stmt.table_constraints,
+            columns: stmt.columns.clone(),
+            table_constraints: stmt.table_constraints.clone(),
         };
         self.schema(ctx).create_table(create)?;
         ctx.register_table_var(&stmt.name, &physical);
@@ -102,7 +102,7 @@ impl<'a> ScriptExecutor<'a> {
 
     pub(crate) fn execute_set(
         &mut self,
-        stmt: SetStmt,
+        stmt: &SetStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
         if let Some((ty, _)) = ctx.session.get_var(&stmt.name) {

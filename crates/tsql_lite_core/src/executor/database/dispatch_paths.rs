@@ -177,7 +177,7 @@ pub(crate) fn execute_write_without_transaction<C, S>(
     tx_manager: &mut TransactionManager<C, S, SessionSnapshot>,
     workspace_slot: &mut Option<TxWorkspace<C, S>>,
     session_options: &SessionOptions,
-    stmt: Statement,
+    stmt: &Statement,
     ctx: &mut ExecutionContext,
     clock: &dyn Clock,
     active_db: &str,
@@ -194,7 +194,7 @@ where
         session_id,
         tx_manager,
         workspace_slot,
-        &stmt,
+        stmt,
         active_db,
         allow_snapshot_isolation,
         &hints_by_table,
@@ -232,12 +232,12 @@ where
     };
     let (cat, stor) = storage_guard.get_mut_refs();
     let mut script = create_script_executor(cat, stor, clock);
-    let out = script.execute(stmt.clone(), ctx);
+    let out = script.execute_ref(stmt, ctx);
     ctx.session.extras.row_locks = None;
     let is_control_flow = out.as_ref().is_ok_and(|o| o.is_control_flow());
     if out.is_ok() && !is_control_flow {
         storage_guard.commit_ts += 1;
-        let written_tables = collect_write_tables(&stmt);
+        let written_tables = collect_write_tables(stmt);
         if !written_tables.is_empty() {
             let ts = storage_guard.commit_ts;
             let tv = Arc::make_mut(&mut storage_guard.table_versions);
@@ -274,7 +274,7 @@ pub(crate) fn execute_read_without_transaction<C, S>(
     tx_manager: &mut TransactionManager<C, S, SessionSnapshot>,
     workspace_slot: &mut Option<TxWorkspace<C, S>>,
     session_options: &SessionOptions,
-    stmt: Statement,
+    stmt: &Statement,
     ctx: &mut ExecutionContext,
     clock: &dyn Clock,
     active_db: &str,
@@ -291,7 +291,7 @@ where
         session_id,
         tx_manager,
         workspace_slot,
-        &stmt,
+        stmt,
         active_db,
         allow_snapshot_isolation,
         &hints_by_table,
@@ -317,23 +317,26 @@ where
 
     if let Statement::Dml(DmlStatement::Select(ref select_stmt)) = stmt {
         if select_stmt.into_table.is_none() {
-            let Statement::Dml(DmlStatement::Select(mut select_stmt)) = stmt else {
-                unreachable!()
-            };
             let storage_guard = state.storage.read();
             let (cat, stor) = storage_guard.get_refs();
-            if !cat.get_user_databases().is_empty() {
-                super::super::script::db_scope::qualify_select_in_ctx(&mut select_stmt, ctx, cat);
-            }
             let qe = super::super::query::QueryExecutor {
                 catalog: cat,
                 storage: stor,
                 clock,
             };
-            let res = qe.execute_select(
-                super::super::query::plan::RelationalQuery::from(*select_stmt),
-                ctx,
-            );
+            let res = if !cat.get_user_databases().is_empty() {
+                let mut owned_select = (**select_stmt).clone();
+                super::super::script::db_scope::qualify_select_in_ctx(&mut owned_select, ctx, cat);
+                qe.execute_select(
+                    super::super::query::plan::RelationalQuery::from(owned_select),
+                    ctx,
+                )
+            } else {
+                qe.execute_select(
+                    super::super::query::plan::RelationalQuery::from_ref(select_stmt),
+                    ctx,
+                )
+            };
             ctx.session.extras.row_locks = None;
             state.table_locks.lock().release_all_for_session(session_id);
             let result = res?;
@@ -349,7 +352,7 @@ where
     let mut storage_guard = state.storage.write();
     let (cat, stor) = storage_guard.get_mut_refs();
     let mut script = create_script_executor(cat, stor, clock);
-    let out = script.execute(stmt, ctx);
+    let out = script.execute_ref(stmt, ctx);
     ctx.session.extras.row_locks = None;
     state.table_locks.lock().release_all_for_session(session_id);
     out
@@ -360,7 +363,7 @@ pub(crate) fn execute_dirty_read_without_transaction<C, S>(
     state: &SharedState<C, S>,
     session_id: SessionId,
     workspace_slot: &mut Option<TxWorkspace<C, S>>,
-    stmt: Statement,
+    stmt: &Statement,
     ctx: &mut ExecutionContext,
     clock: &dyn Clock,
 ) -> StmtResult<Option<QueryResult>>
@@ -371,7 +374,7 @@ where
     let (mut dirty_catalog, mut dirty_storage) =
         dirty_buffer::build_dirty_read_storage(state, session_id, workspace_slot)?;
     let mut script = create_script_executor(&mut dirty_catalog, &mut dirty_storage, clock);
-    script.execute(stmt, ctx)
+    script.execute_ref(stmt, ctx)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -383,7 +386,7 @@ pub(crate) fn execute_non_transaction_statement<C, S>(
     workspace_slot: &mut Option<TxWorkspace<C, S>>,
     clock: &dyn Clock,
     session_options: &mut SessionOptions,
-    stmt: Statement,
+    stmt: &Statement,
     ctx: &mut ExecutionContext,
 ) -> StmtResult<Option<QueryResult>>
 where
@@ -393,7 +396,7 @@ where
     if let Some(result) = dispatch_helpers::handle_session_statement(
         state,
         session_id,
-        &stmt,
+        stmt,
         session_options,
         ctx,
         journal,
@@ -401,39 +404,39 @@ where
         return result;
     }
 
-    let has_writes = !collect_write_tables(&stmt).is_empty();
+    let has_writes = !collect_write_tables(stmt).is_empty();
     dispatch_helpers::check_and_prepare_database_lifecycle(
-        state, session_id, &stmt, ctx, has_writes,
+        state, session_id, stmt, ctx, has_writes,
     )?;
 
     if session_options.fmtonly {
-        if let Statement::Dml(DmlStatement::Select(select_stmt)) = &stmt {
+        if let Statement::Dml(DmlStatement::Select(select_stmt)) = stmt {
             return execute_fmt_only_select(state, select_stmt, ctx);
         }
     }
 
     if session_options.noexec {
-        if let Statement::Dml(DmlStatement::Select(select_stmt)) = &stmt {
+        if let Statement::Dml(DmlStatement::Select(select_stmt)) = stmt {
             return execute_fmt_only_select(state, select_stmt, ctx);
         }
     }
 
     if session_options.showplan_xml {
-        if let Statement::Dml(DmlStatement::Select(_)) = &stmt {
-            return execute_showplan_xml(&stmt);
+        if let Statement::Dml(DmlStatement::Select(_)) = stmt {
+            return execute_showplan_xml(stmt);
         }
     }
 
     if session_options.statistics_xml {
-        if let Statement::Dml(DmlStatement::Select(_)) = &stmt {
-            return execute_statistics_xml(&stmt, ctx);
+        if let Statement::Dml(DmlStatement::Select(_)) = stmt {
+            return execute_statistics_xml(stmt, ctx);
         }
     }
 
     if tx_manager.active.is_none()
         && session_options.implicit_transactions
-        && dispatch_helpers::should_start_implicit_transaction(&stmt)
-        && !is_transaction_statement(&stmt)
+        && dispatch_helpers::should_start_implicit_transaction(stmt)
+        && !is_transaction_statement(stmt)
     {
         transaction_exec::execute_transaction_statement(
             state,
@@ -455,7 +458,7 @@ where
         .as_deref()
         .unwrap_or("master")
         .to_string();
-    let hints_by_table = collect_and_validate_statement_hints(&stmt, &active_db)?;
+    let hints_by_table = collect_and_validate_statement_hints(stmt, &active_db)?;
     let (rcsi_enabled, allow_snapshot_isolation, is_user_db) =
         active_db_isolation_flags(state, &active_db);
 
@@ -470,8 +473,8 @@ where
     if isolation_level == IsolationLevel::Snapshot
         && is_user_db
         && !allow_snapshot_isolation
-        && (!collect_read_tables(&stmt).is_empty() || has_writes)
-        && !matches!(&stmt, Statement::Ddl(_))
+        && (!collect_read_tables(stmt).is_empty() || has_writes)
+        && !matches!(stmt, Statement::Ddl(_))
     {
         return Err(DbError::Execution(format!(
             "Snapshot isolation transaction failed accessing database '{}' because snapshot isolation is not allowed in this database. Use ALTER DATABASE to allow snapshot isolation.",
@@ -480,11 +483,11 @@ where
     }
 
     let is_select = matches!(
-        &stmt,
+        stmt,
         Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
     );
     let nolock_dirty =
-        is_select && all_read_tables_have_nolock(&stmt, &active_db, &hints_by_table);
+        is_select && all_read_tables_have_nolock(stmt, &active_db, &hints_by_table);
     let read_uncommitted_dirty =
         (isolation_level == IsolationLevel::ReadUncommitted && is_select) || nolock_dirty;
 
@@ -508,7 +511,7 @@ where
     } else if read_uncommitted_dirty {
         execute_dirty_read_without_transaction(state, session_id, workspace_slot, stmt, ctx, clock)
     } else {
-        let written_tables = collect_write_tables(&stmt);
+        let written_tables = collect_write_tables(stmt);
         if written_tables.is_empty() {
             execute_read_without_transaction(
                 state,
@@ -552,7 +555,7 @@ fn execute_in_transaction<C, S>(
     workspace_slot: &mut Option<TxWorkspace<C, S>>,
     clock: &dyn Clock,
     session_options: &mut SessionOptions,
-    stmt: Statement,
+    stmt: &Statement,
     ctx: &mut ExecutionContext,
     active_db: &str,
     rcsi_enabled: bool,
@@ -569,7 +572,7 @@ where
         session_id,
         tx_manager,
         workspace_slot,
-        &stmt,
+        stmt,
         active_db,
         allow_snapshot_isolation,
         &hints_by_table,
@@ -588,7 +591,7 @@ where
         .map(|tx| tx.isolation_level)
         .unwrap_or(tx_manager.session_isolation_level);
     let is_select = matches!(
-        &stmt,
+        stmt,
         Statement::Dml(DmlStatement::Select(s)) if s.into_table.is_none()
     );
     let read_uncommitted_dirty =
@@ -602,8 +605,8 @@ where
 
     if tx_manager.active.is_none()
         && session_options.implicit_transactions
-        && dispatch_helpers::should_start_implicit_transaction(&stmt)
-        && !is_transaction_statement(&stmt)
+        && dispatch_helpers::should_start_implicit_transaction(stmt)
+        && !is_transaction_statement(stmt)
     {
         transaction_exec::execute_transaction_statement(
             state,
@@ -639,22 +642,22 @@ where
         let (mut dirty_catalog, mut dirty_storage) =
             dirty_buffer::build_dirty_read_storage(state, session_id, workspace_slot)?;
         let mut script = create_script_executor(&mut dirty_catalog, &mut dirty_storage, clock);
-        script.execute(stmt.clone(), ctx)
+        script.execute_ref(stmt, ctx)
     } else if read_committed_select {
         let workspace = workspace_slot.as_mut().ok_or_else(|| {
             DbError::Execution("internal error: missing transaction workspace".into())
         })?;
-        dispatch_helpers::refresh_workspace_for_read_committed(state, workspace, &stmt)?;
+        dispatch_helpers::refresh_workspace_for_read_committed(state, workspace, stmt)?;
         let mut script =
             create_script_executor(&mut workspace.catalog, &mut workspace.storage, clock);
-        script.execute(stmt.clone(), ctx)
+        script.execute_ref(stmt, ctx)
     } else {
         let workspace = workspace_slot.as_mut().ok_or_else(|| {
             DbError::Execution("internal error: missing transaction workspace".into())
         })?;
         let mut script =
             create_script_executor(&mut workspace.catalog, &mut workspace.storage, clock);
-        script.execute(stmt.clone(), ctx)
+        script.execute_ref(stmt, ctx)
     };
     ctx.session.extras.row_locks = None;
 
@@ -690,7 +693,7 @@ where
         workspace_slot,
         ctx,
         session_options,
-        &stmt,
+        stmt,
     );
 
     // Reconcile transaction state changes executed inside procedural blocks

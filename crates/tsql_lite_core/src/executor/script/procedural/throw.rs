@@ -7,7 +7,7 @@ use crate::executor::evaluator::eval_expr;
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_throw(
         &mut self,
-        stmt: ThrowStmt,
+        stmt: &ThrowStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
         if stmt.error_number.is_none() {

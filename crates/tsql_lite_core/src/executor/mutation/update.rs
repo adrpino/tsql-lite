@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use crate::ast::UpdateStmt;
@@ -22,19 +23,22 @@ use super::MutationExecutor;
 impl<'a> MutationExecutor<'a> {
     pub(crate) fn execute_update_with_context(
         &mut self,
-        mut stmt: UpdateStmt,
+        stmt: &UpdateStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
-        if let Some(mapped) = ctx.resolve_table_name(&stmt.table.name) {
-            stmt.table.name = mapped;
-            if stmt.table.schema.is_none() {
-                stmt.table.schema = Some("dbo".to_string());
+        let mut target_table = stmt.table.clone();
+        if let Some(mapped) = ctx.resolve_table_name(&target_table.name) {
+            target_table.name = mapped;
+            if target_table.schema.is_none() {
+                target_table.schema = Some("dbo".to_string());
             }
         }
-        let mut target_alias = stmt.table.name.clone();
+        let mut target_alias = target_table.name.clone();
         let mut view_check_predicates = Vec::new();
+        let mut assignments: Cow<'_, [crate::ast::Assignment]> =
+            Cow::Borrowed(stmt.assignments.as_slice());
         let resolved_direct =
-            resolve_table_for_mutation(stmt.from.as_ref(), &stmt.table, |schema, name| {
+            resolve_table_for_mutation(stmt.from.as_ref(), &target_table, |schema, name| {
                 self.catalog.find_table(schema, name).cloned().or_else(|| {
                     ctx.resolve_table_name(name)
                         .and_then(|mapped| self.catalog.find_table("dbo", &mapped).cloned())
@@ -53,11 +57,11 @@ impl<'a> MutationExecutor<'a> {
                 )?;
                 let query = build_mutation_query(
                     stmt.from.as_ref(),
-                    &stmt.table,
+                    &target_table,
                     &table,
                     &resolved_name,
-                    stmt.selection.clone(),
-                    stmt.top.clone(),
+                    stmt.selection.as_ref().map(Cow::Borrowed),
+                    stmt.top.as_ref(),
                 );
                 let query_executor = QueryExecutor {
                     catalog: self.catalog,
@@ -71,8 +75,8 @@ impl<'a> MutationExecutor<'a> {
                 (table, joined_rows)
             }
             Err(orig_err) => {
-                let view_schema = stmt.table.schema_or_dbo().to_string();
-                let view_name = stmt.table.name.clone();
+                let view_schema = target_table.schema_or_dbo().to_string();
+                let view_name = target_table.name.clone();
                 if stmt.from.is_none() && self.catalog.find_view(&view_schema, &view_name).is_some()
                 {
                     let view_target = super::view_dml::resolve_updatable_view(
@@ -81,7 +85,8 @@ impl<'a> MutationExecutor<'a> {
                         &view_name,
                     )?
                     .ok_or(orig_err)?;
-                    for assign in &mut stmt.assignments {
+                    let rewritten_assigns = assignments.to_mut();
+                    for assign in rewritten_assigns.iter_mut() {
                         if !assign.column.starts_with('@') {
                             assign.column =
                                 view_target.map_view_column(&assign.column, &view_name)?;
@@ -102,7 +107,7 @@ impl<'a> MutationExecutor<'a> {
                         )
                     });
                     let combined_sel = view_target.combined_where(rewritten_sel);
-                    stmt.table = view_target.base_table.clone();
+                    target_table = view_target.base_table.clone();
                     target_alias = view_target.base_table.name.clone();
                     view_check_predicates = view_target.check_predicates;
                     let table = view_target.base_table_def;
@@ -116,11 +121,11 @@ impl<'a> MutationExecutor<'a> {
                     )?;
                     let query = build_mutation_query(
                         None,
-                        &stmt.table,
+                        &target_table,
                         &table,
-                        &stmt.table.name,
-                        combined_sel,
-                        stmt.top.clone(),
+                        &target_table.name,
+                        combined_sel.map(Cow::Owned),
+                        stmt.top.as_ref(),
                     );
                     let query_executor = QueryExecutor {
                         catalog: self.catalog,
@@ -134,7 +139,7 @@ impl<'a> MutationExecutor<'a> {
                     (table, joined_rows)
                 } else {
                     let Some((cte, cte_name)) =
-                        resolve_cte_for_mutation(stmt.from.as_ref(), &stmt.table, &ctx.row.ctes)
+                        resolve_cte_for_mutation(stmt.from.as_ref(), &target_table, &ctx.row.ctes)
                     else {
                         return Err(orig_err);
                     };
@@ -142,7 +147,7 @@ impl<'a> MutationExecutor<'a> {
                         .base_targets
                         .iter()
                         .find(|bt| {
-                            stmt.assignments.iter().all(|a| {
+                            assignments.iter().all(|a| {
                                 a.column.starts_with('@')
                                     || bt
                                         .table_def
@@ -162,11 +167,11 @@ impl<'a> MutationExecutor<'a> {
 
                     let query = build_mutation_query(
                         stmt.from.as_ref(),
-                        &stmt.table,
+                        &target_table,
                         &cte.table_def,
                         &cte_name,
-                        stmt.selection.clone(),
-                        stmt.top.clone(),
+                        stmt.selection.as_ref().map(Cow::Borrowed),
+                        stmt.top.as_ref(),
                     );
                     let query_executor = QueryExecutor {
                         catalog: self.catalog,
@@ -214,7 +219,7 @@ impl<'a> MutationExecutor<'a> {
                     apply_assignments(
                         &table,
                         &mut new_row,
-                        &stmt.assignments,
+                        &assignments,
                         joined_row,
                         ctx,
                         self.catalog,
@@ -244,11 +249,11 @@ impl<'a> MutationExecutor<'a> {
                 ctx,
             )?;
 
-            if let Some(output) = stmt.output {
+            if let Some(ref output) = stmt.output {
                 let inserted: Vec<&crate::storage::StoredRow> = inserted_rows.iter().collect();
                 let deleted: Vec<&crate::storage::StoredRow> = deleted_rows.iter().collect();
                 let result = build_output_result(
-                    &output,
+                    output,
                     &table,
                     &inserted,
                     &deleted,
@@ -257,9 +262,9 @@ impl<'a> MutationExecutor<'a> {
                     self.storage,
                     self.clock,
                 )?;
-                if let Some(target) = stmt.output_into {
+                if let Some(ref target) = stmt.output_into {
                     if let Some(result) = result.as_ref() {
-                        self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
+                        self.insert_output_into(target, &stmt.output_into_columns, result, ctx)?;
                     } else {
                         return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                     }
@@ -347,7 +352,7 @@ impl<'a> MutationExecutor<'a> {
                     apply_assignments(
                         &table,
                         &mut new_row,
-                        &stmt.assignments,
+                        &assignments,
                         joined_row,
                         ctx,
                         self.catalog,
@@ -410,7 +415,7 @@ impl<'a> MutationExecutor<'a> {
                 apply_assignments(
                     &table,
                     &mut new_row,
-                    &stmt.assignments,
+                    &assignments,
                     joined_row,
                     ctx,
                     self.catalog,
@@ -504,12 +509,12 @@ impl<'a> MutationExecutor<'a> {
             ctx,
         )?;
 
-        if let Some(output) = stmt.output {
+        if let Some(ref output) = stmt.output {
             let inserted: Vec<&crate::storage::StoredRow> =
                 inserted_rows_for_output.iter().collect();
             let deleted: Vec<&crate::storage::StoredRow> = deleted_rows_for_output.iter().collect();
             let result = build_output_result(
-                &output,
+                output,
                 &table,
                 &inserted,
                 &deleted,
@@ -518,9 +523,9 @@ impl<'a> MutationExecutor<'a> {
                 self.storage,
                 self.clock,
             )?;
-            if let Some(target) = stmt.output_into {
+            if let Some(ref target) = stmt.output_into {
                 if let Some(result) = result.as_ref() {
-                    self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
+                    self.insert_output_into(target, &stmt.output_into_columns, result, ctx)?;
                 } else {
                     return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                 }

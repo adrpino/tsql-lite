@@ -17,19 +17,21 @@ use super::MutationExecutor;
 impl<'a> MutationExecutor<'a> {
     pub(crate) fn execute_insert_with_context(
         &mut self,
-        mut stmt: InsertStmt,
+        stmt: &InsertStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<QueryResult>, DbError> {
-        if let Some(mapped) = ctx.resolve_table_name(&stmt.table.name) {
-            stmt.table.name = mapped;
-            if stmt.table.schema.is_none() {
-                stmt.table.schema = Some("dbo".to_string());
+        let mut target_table = stmt.table.clone();
+        if let Some(mapped) = ctx.resolve_table_name(&target_table.name) {
+            target_table.name = mapped;
+            if target_table.schema.is_none() {
+                target_table.schema = Some("dbo".to_string());
             }
         }
-        let schema = stmt.table.schema_or_dbo().to_string();
-        let table_name = stmt.table.name.clone();
+        let schema = target_table.schema_or_dbo().to_string();
+        let table_name = target_table.name.clone();
 
         let mut view_check_predicates = Vec::new();
+        let mut mapped_columns: Option<Option<Vec<String>>> = None;
         let table = if let Some(t) = self.catalog.find_table(&schema, &table_name) {
             t.clone()
         } else if let Some(view_target) =
@@ -40,11 +42,12 @@ impl<'a> MutationExecutor<'a> {
                 for c in cols {
                     mapped.push(view_target.map_view_column(c, &table_name)?);
                 }
-                stmt.columns = Some(mapped);
+                mapped_columns = Some(Some(mapped));
             } else {
-                stmt.columns = Some(view_target.default_insert_columns(&table_name)?);
+                mapped_columns = Some(Some(view_target.default_insert_columns(&table_name)?));
             }
-            stmt.table = view_target.base_table;
+            target_table = view_target.base_table;
+            let _ = &target_table;
             view_check_predicates = view_target.check_predicates;
             view_target.base_table_def
         } else {
@@ -63,7 +66,8 @@ impl<'a> MutationExecutor<'a> {
                 .collect::<Vec<_>>()
         };
 
-        let insert_columns = self.get_insert_columns(&table, &stmt.columns);
+        let columns_ref = mapped_columns.as_ref().unwrap_or(&stmt.columns);
+        let insert_columns = self.get_insert_columns(&table, columns_ref);
         let rowcount_limit = if ctx.options.rowcount == 0 {
             None
         } else {
@@ -105,10 +109,10 @@ impl<'a> MutationExecutor<'a> {
                 ctx,
             )?;
 
-            if let Some(output) = stmt.output {
+            if let Some(ref output) = stmt.output {
                 let inserted: Vec<&crate::storage::StoredRow> = rows.iter().collect();
                 let result = build_output_result(
-                    &output,
+                    output,
                     &table,
                     &inserted,
                     &[],
@@ -117,9 +121,9 @@ impl<'a> MutationExecutor<'a> {
                     self.storage,
                     self.clock,
                 )?;
-                if let Some(target) = stmt.output_into {
+                if let Some(ref target) = stmt.output_into {
                     if let Some(result) = result.as_ref() {
-                        self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
+                        self.insert_output_into(target, &stmt.output_into_columns, result, ctx)?;
                     } else {
                         return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                     }
@@ -151,11 +155,11 @@ impl<'a> MutationExecutor<'a> {
             ctx,
         )?;
 
-        if let Some(output) = stmt.output {
+        if let Some(ref output) = stmt.output {
             let inserted: Vec<&crate::storage::StoredRow> =
                 inserted_rows_for_output.iter().collect();
             let result = build_output_result(
-                &output,
+                output,
                 &table,
                 &inserted,
                 &[],
@@ -164,9 +168,9 @@ impl<'a> MutationExecutor<'a> {
                 self.storage,
                 self.clock,
             )?;
-            if let Some(target) = stmt.output_into {
+            if let Some(ref target) = stmt.output_into {
                 if let Some(result) = result.as_ref() {
-                    self.insert_output_into(&target, &stmt.output_into_columns, result, ctx)?;
+                    self.insert_output_into(target, &stmt.output_into_columns, result, ctx)?;
                 } else {
                     return Err(DbError::Execution("OUTPUT INTO produced no result".into()));
                 }

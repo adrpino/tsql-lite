@@ -8,17 +8,19 @@ use crate::executor::query::plan::{
     FilterPlan, PaginationPlan, ProjectionPlan, RelationalQuery, SortPlan,
 };
 
-pub(crate) fn build_mutation_query(
-    from: Option<&FromClause>,
+pub(crate) fn build_mutation_query<'a>(
+    from: Option<&'a FromClause>,
     target: &ObjectName,
     table: &TableDef,
     resolved_name: &str,
-    selection: Option<Expr>,
-    top: Option<TopSpec>,
-) -> RelationalQuery<'static> {
+    selection: Option<Cow<'a, Expr>>,
+    top: Option<&'a TopSpec>,
+) -> RelationalQuery<'a> {
     RelationalQuery {
         from_clause: build_from_node(from, target, table, resolved_name).map(Cow::Owned),
-        applies: Cow::Owned(from.map(|f| f.applies.clone()).unwrap_or_default()),
+        applies: from
+            .map(|f| Cow::Borrowed(f.applies.as_slice()))
+            .unwrap_or(Cow::Borrowed(&[])),
         projection: ProjectionPlan {
             items: Cow::Owned(vec![SelectItem {
                 expr: Expr::Wildcard,
@@ -28,7 +30,7 @@ pub(crate) fn build_mutation_query(
         },
         into_table: None,
         filter: FilterPlan {
-            selection: selection.map(Cow::Owned),
+            selection,
             group_by: Cow::Borrowed(&[]),
             grouping_sets: Cow::Borrowed(&[]),
             having: None,
@@ -37,7 +39,7 @@ pub(crate) fn build_mutation_query(
             order_by: Cow::Borrowed(&[]),
         },
         pagination: PaginationPlan {
-            top: top.map(Cow::Owned),
+            top: top.map(Cow::Borrowed),
             offset: None,
             fetch: None,
         },

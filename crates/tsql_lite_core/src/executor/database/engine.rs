@@ -117,6 +117,18 @@ impl EngineInner<CatalogImpl, InMemoryStorage> {
             .execute_session(self.default_session, stmt)
     }
 
+    pub fn execute_ref(&self, stmt: &Statement) -> Result<Option<QueryResult>, DbError> {
+        self.db
+            .executor()
+            .execute_session_ref(self.default_session, stmt)
+    }
+
+    pub fn execute_batch_ref(&self, stmts: &[Statement]) -> Result<Option<QueryResult>, DbError> {
+        self.db
+            .executor()
+            .execute_session_batch_ref(self.default_session, stmts)
+    }
+
     pub fn exec(&self, sql: &str) -> Result<(), DbError> {
         let quoted_ident = self.session_options().quoted_identifier;
         let stmt = parse_sql_with_quoted_ident(sql, quoted_ident)?;

@@ -52,7 +52,7 @@ impl<'a> MutationExecutor<'a> {
                     storage: self.storage,
                     clock: self.clock,
                 }
-                .execute(*exec_stmt.clone(), ctx);
+                .execute_ref(exec_stmt, ctx);
                 ctx.frame.result_set_sink = saved_sink;
                 let outcome = outcome?;
                 let query_result = match outcome {

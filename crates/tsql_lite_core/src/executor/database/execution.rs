@@ -24,6 +24,16 @@ where
         })
     }
 
+    fn execute_session_ref(
+        &self,
+        session_id: SessionId,
+        stmt: &Statement,
+    ) -> Result<Option<QueryResult>, DbError> {
+        execution_support::with_session(&self.state, session_id, |session| {
+            execution_support::execute_single_statement_ref(&self.state, session_id, session, stmt)
+        })
+    }
+
     fn execute_session_batch(
         &self,
         session_id: SessionId,
@@ -31,6 +41,16 @@ where
     ) -> Result<Option<QueryResult>, DbError> {
         execution_support::with_session(&self.state, session_id, |session| {
             execution_support::execute_batch_statements(&self.state, session_id, session, stmts)
+        })
+    }
+
+    fn execute_session_batch_ref(
+        &self,
+        session_id: SessionId,
+        stmts: &[Statement],
+    ) -> Result<Option<QueryResult>, DbError> {
+        execution_support::with_session(&self.state, session_id, |session| {
+            execution_support::execute_batch_statements_ref(&self.state, session_id, session, stmts)
         })
     }
 

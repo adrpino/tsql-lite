@@ -49,16 +49,16 @@ fn hoist_procedure_declares(stmts: &[crate::ast::Statement], ctx: &mut Execution
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_procedure(
         &mut self,
-        mut stmt: ExecProcedureStmt,
+        stmt: &ExecProcedureStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
-        let result_sets = stmt.result_sets.take();
-        let capture = super::result_sets::begin_result_set_capture(result_sets.as_ref(), ctx);
+        let capture =
+            super::result_sets::begin_result_set_capture(stmt.result_sets.as_ref(), ctx);
         let res = self.execute_procedure_inner(stmt, ctx);
         match res {
             Ok(raw_opt) => super::result_sets::finish_result_set_capture(
                 capture,
-                result_sets.as_ref(),
+                stmt.result_sets.as_ref(),
                 raw_opt,
                 ctx,
                 self.catalog,
@@ -72,7 +72,7 @@ impl<'a> ScriptExecutor<'a> {
 
     fn execute_procedure_inner(
         &mut self,
-        stmt: ExecProcedureStmt,
+        stmt: &ExecProcedureStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
         if stmt.name.name.eq_ignore_ascii_case("xp_msver") {
@@ -126,24 +126,24 @@ impl<'a> ScriptExecutor<'a> {
             let mut sql_expr: Option<crate::ast::Expr> = None;
             let mut params_def: Option<crate::ast::Expr> = None;
             let mut remaining = Vec::new();
-            for (idx, arg) in stmt.args.into_iter().enumerate() {
+            for (idx, arg) in stmt.args.iter().enumerate() {
                 if let Some(ref name) = arg.name {
                     let norm = name.trim_start_matches('@');
                     if norm.eq_ignore_ascii_case("stmt") || norm.eq_ignore_ascii_case("statement") {
-                        sql_expr = Some(arg.expr);
+                        sql_expr = Some(arg.expr.clone());
                         continue;
                     }
                     if norm.eq_ignore_ascii_case("params") {
-                        params_def = Some(arg.expr);
+                        params_def = Some(arg.expr.clone());
                         continue;
                     }
-                    remaining.push(arg);
+                    remaining.push(arg.clone());
                 } else if idx == 0 && sql_expr.is_none() {
-                    sql_expr = Some(arg.expr);
+                    sql_expr = Some(arg.expr.clone());
                 } else if idx == 1 && params_def.is_none() {
-                    params_def = Some(arg.expr);
+                    params_def = Some(arg.expr.clone());
                 } else {
-                    remaining.push(arg);
+                    remaining.push(arg.clone());
                 }
             }
             let Some(sql_expr) = sql_expr else {
@@ -184,7 +184,7 @@ impl<'a> ScriptExecutor<'a> {
         }
 
         if is_system_procedure(&stmt.name.name) {
-            let res = execute_system_procedure(self, &stmt, ctx)?;
+            let res = execute_system_procedure(self, stmt, ctx)?;
             let rc = res.as_ref().and_then(|r| r.return_status).unwrap_or(0);
             self.assign_exec_return_value(&stmt.return_variable, Value::Int(rc), ctx)?;
             return Ok(res);

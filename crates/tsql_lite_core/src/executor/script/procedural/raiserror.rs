@@ -7,7 +7,7 @@ use crate::executor::evaluator::eval_expr;
 impl<'a> ScriptExecutor<'a> {
     pub(crate) fn execute_raiserror(
         &mut self,
-        stmt: RaiserrorStmt,
+        stmt: &RaiserrorStmt,
         ctx: &mut ExecutionContext<'_>,
     ) -> Result<Option<crate::executor::result::QueryResult>, DbError> {
         let msg_val = eval_expr(

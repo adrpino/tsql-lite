@@ -144,6 +144,9 @@ pub(crate) fn eval_trim(
         return Err(DbError::Execution("TRIM expects 1 argument".into()));
     }
     let val = eval_expr(&args[0], row, ctx, catalog, storage, clock)?;
+    if val.is_null() {
+        return Ok(Value::Null);
+    }
     let s = val.to_string_value();
     let mut result = s.as_str();
     if left {

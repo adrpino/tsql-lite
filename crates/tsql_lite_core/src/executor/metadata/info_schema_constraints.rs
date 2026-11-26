@@ -99,6 +99,16 @@ impl VirtualTable for TableConstraints {
                     });
                 }
             }
+            for uq in &t.unique_constraints {
+                let uq_name = uq
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("UQ_{}_{}", t.name, uq.columns.join("_")));
+                rows.push(StoredRow {
+                    values: base(&uq_name, "UNIQUE"),
+                    deleted: false,
+                });
+            }
             for chk in &t.check_constraints {
                 rows.push(StoredRow {
                     values: base(&chk.name, "CHECK"),
@@ -355,6 +365,15 @@ impl VirtualTable for ConstraintColumnUsage {
                     rows.push(row(&col.name, &uq_name));
                 }
             }
+            for uq in &t.unique_constraints {
+                let uq_name = uq
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("UQ_{}_{}", t.name, uq.columns.join("_")));
+                for col_name in &uq.columns {
+                    rows.push(row(col_name, &uq_name));
+                }
+            }
             for fk in &t.foreign_keys {
                 for col_name in &fk.columns {
                     rows.push(row(col_name, &fk.name));
@@ -418,6 +437,13 @@ impl VirtualTable for ConstraintTableUsage {
                 if col.unique && !col.primary_key {
                     rows.push(row(&format!("UQ_{}_{}", t.name, col.name)));
                 }
+            }
+            for uq in &t.unique_constraints {
+                let uq_name = uq
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("UQ_{}_{}", t.name, uq.columns.join("_")));
+                rows.push(row(&uq_name));
             }
             for chk in &t.check_constraints {
                 rows.push(row(&chk.name));

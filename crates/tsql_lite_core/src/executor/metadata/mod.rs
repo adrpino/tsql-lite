@@ -69,6 +69,7 @@ pub(super) fn virtual_table_def(name: &str, cols: Vec<(&str, DataType, bool)>) -
             .collect(),
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     }
 }
 

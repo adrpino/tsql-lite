@@ -174,6 +174,7 @@ pub(super) fn bind_builtin_tvf(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     Ok(Some(BoundTable {
@@ -256,6 +257,7 @@ fn bind_xml_nodes(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     Ok(Some(BoundTable {
@@ -342,8 +344,18 @@ pub(super) fn bind_inline_tvf(
     for (param, arg_raw) in params.iter().zip(arg_exprs.iter()) {
         match &param.param_type {
             RoutineParamType::Scalar(dt) => {
-                let expr = parse_expr_subquery_aware(arg_raw)?;
-                let val = eval_expr(&expr, &[], ctx, catalog, storage, clock)?;
+                let val = if arg_raw.trim().eq_ignore_ascii_case("DEFAULT") {
+                    let Some(default_expr) = &param.default else {
+                        return Err(DbError::Execution(format!(
+                            "TVF '{}.{}' parameter '{}' has no default value",
+                            schema, fname, param.name
+                        )));
+                    };
+                    eval_expr(default_expr, &[], ctx, catalog, storage, clock)?
+                } else {
+                    let expr = parse_expr_subquery_aware(arg_raw)?;
+                    eval_expr(&expr, &[], ctx, catalog, storage, clock)?
+                };
                 let ty = type_mapping::data_type_spec_to_runtime(dt);
                 let coerced = value_ops::coerce_value_to_type_with_dateformat(
                     val,
@@ -380,6 +392,7 @@ pub(super) fn bind_inline_tvf(
         kind: ModuleKind::Function,
     });
     let saved_caller_vars = std::mem::take(ctx.session.variables);
+    let saved_sink = ctx.frame.result_set_sink.take();
     for (k, v) in &saved_caller_vars {
         if k.starts_with("@@") {
             ctx.session.variables.insert(k.clone(), v.clone());
@@ -488,6 +501,7 @@ pub(super) fn bind_inline_tvf(
     while ctx.frame.scope_vars.len() > scope_depth {
         ctx.leave_scope();
     }
+    ctx.frame.result_set_sink = saved_sink;
     *ctx.session.variables = saved_caller_vars;
     ctx.pop_module();
     let result = result?;
@@ -723,6 +737,7 @@ fn bind_openjson(
             columns,
             check_constraints: vec![],
             foreign_keys: vec![],
+            unique_constraints: vec![],
         };
         return Ok(Some(BoundTable {
             table: std::sync::Arc::new(table_def),
@@ -798,6 +813,7 @@ fn bind_openjson(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     Ok(Some(BoundTable {
@@ -1057,6 +1073,7 @@ fn bind_fn_my_permissions(tref: &TableRef) -> Result<Option<BoundTable>, DbError
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     Ok(Some(BoundTable {
@@ -1263,6 +1280,7 @@ fn bind_generate_series(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     Ok(Some(BoundTable {

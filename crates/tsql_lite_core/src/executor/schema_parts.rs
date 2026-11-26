@@ -5,7 +5,7 @@ use crate::ast::{
 };
 use crate::catalog::{
     CheckConstraintDef, ColumnDef, ForeignKeyDef, IdentityDef, ScalarTypeDef, TableDef,
-    TableTypeDef,
+    TableTypeDef, UniqueConstraintDef,
 };
 use crate::error::DbError;
 
@@ -80,18 +80,29 @@ pub(crate) fn apply_table_constraint(
             }
         }
         TableConstraintSpec::Unique {
-            name: _,
+            name,
             columns,
             is_clustered,
         } => {
+            let mut resolved_cols = Vec::with_capacity(columns.len());
             for col_spec in &columns {
                 let col = table
                     .columns
                     .iter_mut()
                     .find(|c| c.name.eq_ignore_ascii_case(&col_spec.name))
                     .ok_or_else(|| DbError::column_not_found(&col_spec.name))?;
-                col.unique = true;
+                if columns.len() == 1 {
+                    col.unique = true;
+                }
                 col.is_clustered = is_clustered;
+                resolved_cols.push(col.name.clone());
+            }
+            if columns.len() >= 2 {
+                table.unique_constraints.push(UniqueConstraintDef {
+                    name: (!name.is_empty()).then_some(name),
+                    columns: resolved_cols,
+                    is_clustered,
+                });
             }
         }
         TableConstraintSpec::SystemTimePeriod { .. }
@@ -233,6 +244,7 @@ pub(crate) fn create_table(
         columns,
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     };
 
     for (col_name, fk_ref) in column_fks {
@@ -882,10 +894,19 @@ pub(crate) fn alter_table(
                 if let Some(pos) = removed {
                     table_mut.foreign_keys.remove(pos);
                 } else {
-                    return Err(DbError::constraint_not_found(
-                        &stmt.table.name,
-                        constraint_name,
-                    ));
+                    let removed = table_mut.unique_constraints.iter().position(|uq| {
+                        uq.name
+                            .as_deref()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(&constraint_name))
+                    });
+                    if let Some(pos) = removed {
+                        table_mut.unique_constraints.remove(pos);
+                    } else {
+                        return Err(DbError::constraint_not_found(
+                            &stmt.table.name,
+                            constraint_name,
+                        ));
+                    }
                 }
             }
         }

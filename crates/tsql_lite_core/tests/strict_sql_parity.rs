@@ -357,3 +357,330 @@ fn hash_in_subquery_three_valued_nulls_and_large_join_ordering_performance() {
     assert_eq!(qr.rows[4][0].to_integer_i64(), Some(504));
     assert_eq!(qr.rows[4][1].to_integer_i64(), Some(1008));
 }
+
+#[test]
+fn composite_unique_constraint_enforces_tuple_not_single_columns() {
+    let engine = Engine::new();
+
+    run_batch(
+        &engine,
+        "CREATE TABLE dbo.Allocations (
+             Id INT PRIMARY KEY,
+             TenantId INT NOT NULL,
+             GroupId INT NOT NULL,
+             ItemId INT NOT NULL,
+             CONSTRAINT UQ_Allocations_Key UNIQUE (TenantId, GroupId, ItemId)
+         );
+         INSERT INTO dbo.Allocations (Id, TenantId, GroupId, ItemId) VALUES
+             (1, 10, 100, 1),
+             (2, 10, 100, 2),
+             (3, 10, 200, 1),
+             (4, 20, 100, 1);",
+    )
+    .expect("distinct composite tuples sharing individual column values must insert cleanly");
+
+    // Duplicate composite tuple on INSERT must fail.
+    let err = run_batch(
+        &engine,
+        "INSERT INTO dbo.Allocations (Id, TenantId, GroupId, ItemId) VALUES (5, 10, 100, 1);",
+    )
+    .expect_err("duplicate composite UNIQUE tuple on INSERT must fail");
+    assert!(
+        err.to_string().contains("UNIQUE KEY"),
+        "expected UNIQUE KEY violation, got: {err}"
+    );
+
+    // Duplicate composite tuple on UPDATE must fail.
+    let err = run_batch(
+        &engine,
+        "UPDATE dbo.Allocations SET ItemId = 1 WHERE Id = 2;",
+    )
+    .expect_err("duplicate composite UNIQUE tuple on UPDATE must fail");
+    assert!(
+        err.to_string().contains("UNIQUE KEY"),
+        "expected UNIQUE KEY violation on UPDATE, got: {err}"
+    );
+
+    // Distinct tuple on UPDATE must succeed.
+    run_batch(
+        &engine,
+        "UPDATE dbo.Allocations SET ItemId = 3 WHERE Id = 2;",
+    )
+    .expect("UPDATE to distinct composite UNIQUE tuple must succeed");
+
+    // Metadata views expose the composite unique constraint.
+    let qr = engine
+        .query(
+            "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+             FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+             WHERE TABLE_NAME = 'Allocations' AND CONSTRAINT_TYPE = 'UNIQUE';",
+        )
+        .unwrap();
+    assert_eq!(qr.rows.len(), 1);
+    assert_eq!(qr.rows[0][0], Value::VarChar("UQ_Allocations_Key".into()));
+
+    // Dropping the named composite unique constraint allows previously conflicting tuples.
+    run_batch(
+        &engine,
+        "ALTER TABLE dbo.Allocations DROP CONSTRAINT UQ_Allocations_Key;
+         INSERT INTO dbo.Allocations (Id, TenantId, GroupId, ItemId) VALUES (6, 10, 100, 1);",
+    )
+    .expect("INSERT after dropping composite UNIQUE constraint must succeed");
+}
+
+#[test]
+fn ltrim_rtrim_trim_propagate_null() {
+    let engine = Engine::new();
+
+    let qr = run_batch(
+        &engine,
+        "DECLARE @v NVARCHAR(50) = NULL;
+         SELECT LTRIM(NULL) AS a,
+                RTRIM(NULL) AS b,
+                TRIM(NULL) AS c,
+                LTRIM(RTRIM(@v)) AS d,
+                LTRIM(RTRIM(N'  hello  ')) AS e;",
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(qr.rows[0][0].is_null(), "LTRIM(NULL) must be NULL");
+    assert!(qr.rows[0][1].is_null(), "RTRIM(NULL) must be NULL");
+    assert!(qr.rows[0][2].is_null(), "TRIM(NULL) must be NULL");
+    assert!(
+        qr.rows[0][3].is_null(),
+        "LTRIM(RTRIM(NULL var)) must be NULL"
+    );
+    assert_eq!(qr.rows[0][4], Value::VarChar("hello".into()));
+}
+
+#[test]
+fn default_keyword_in_tvf_and_scalar_udf_arguments() {
+    let engine = Engine::new();
+
+    run_batch(
+        &engine,
+        "CREATE FUNCTION dbo.SplitItems(@input NVARCHAR(400), @sep VARCHAR(10) = ',')
+         RETURNS @out TABLE (Token NVARCHAR(100))
+         AS
+         BEGIN
+             DECLARE @pos INT = CHARINDEX(@sep, @input);
+             WHILE @pos > 0
+             BEGIN
+                 INSERT INTO @out VALUES (LEFT(@input, @pos - 1));
+                 SET @input = SUBSTRING(@input, @pos + LEN(@sep), LEN(@input));
+                 SET @pos = CHARINDEX(@sep, @input);
+             END
+             IF LEN(@input) > 0
+                 INSERT INTO @out VALUES (@input);
+             RETURN;
+         END;",
+    )
+    .unwrap();
+
+    run_batch(
+        &engine,
+        "CREATE FUNCTION dbo.FilterThreshold(@minVal INT = 10)
+         RETURNS TABLE
+         AS
+         RETURN (SELECT @minVal AS Threshold);",
+    )
+    .unwrap();
+
+    run_batch(
+        &engine,
+        "CREATE FUNCTION dbo.AddWithDefault(@base INT, @delta INT = 5)
+         RETURNS INT
+         AS
+         BEGIN
+             RETURN @base + @delta;
+         END;",
+    )
+    .unwrap();
+
+    let qr = engine
+        .query("SELECT Token FROM dbo.SplitItems(N'alpha,beta,gamma', DEFAULT);")
+        .unwrap();
+    assert_eq!(
+        qr.rows,
+        vec![
+            vec![Value::NVarChar("alpha".into())],
+            vec![Value::NVarChar("beta".into())],
+            vec![Value::NVarChar("gamma".into())],
+        ]
+    );
+
+    let qr = engine
+        .query("SELECT Threshold FROM dbo.FilterThreshold(DEFAULT);")
+        .unwrap();
+    assert_eq!(qr.rows, vec![vec![Value::Int(10)]]);
+
+    let qr = engine
+        .query("SELECT dbo.AddWithDefault(12, DEFAULT) AS SumVal;")
+        .unwrap();
+    assert_eq!(qr.rows[0][0].to_integer_i64(), Some(17));
+
+    // Passing DEFAULT for a parameter without a default value must error.
+    let err = engine.query("SELECT Token FROM dbo.SplitItems(DEFAULT, ',');");
+    assert!(
+        err.is_err(),
+        "DEFAULT for a parameter without a default must fail"
+    );
+}
+
+#[test]
+fn xml_canonicalizes_self_closing_empty_elements_and_attributes() {
+    let engine = Engine::new();
+
+    let qr = run_batch(
+        &engine,
+        "SELECT
+             CAST(CAST('<Envelope />' AS XML) AS NVARCHAR(MAX)) AS empty_el,
+             CAST(CAST('<Item   id = ''7''  />' AS XML) AS NVARCHAR(MAX)) AS attr_el,
+             CAST(CAST('<Root><Child>ok</Child></Root >' AS XML) AS NVARCHAR(MAX)) AS nested_el,
+             CAST(CAST(CAST('<Node />' AS VARBINARY(MAX)) AS XML) AS NVARCHAR(MAX)) AS bin_el,
+             CAST(CAST('<Tag msg=''say \"hi\"'' />' AS XML) AS NVARCHAR(MAX)) AS escaped_quote;",
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(qr.rows[0][0], Value::NVarChar("<Envelope/>".into()));
+    assert_eq!(qr.rows[0][1], Value::NVarChar("<Item id=\"7\"/>".into()));
+    assert_eq!(
+        qr.rows[0][2],
+        Value::NVarChar("<Root><Child>ok</Child></Root>".into())
+    );
+    assert_eq!(qr.rows[0][3], Value::NVarChar("<Node/>".into()));
+    assert_eq!(
+        qr.rows[0][4],
+        Value::NVarChar("<Tag msg=\"say &quot;hi&quot;\"/>".into())
+    );
+}
+
+#[test]
+fn insert_select_coerces_decimal_scale_to_target_columns() {
+    let engine = Engine::new();
+
+    run_batch(
+        &engine,
+        "CREATE TABLE dbo.SrcAmounts (Qty DECIMAL(13, 4));
+         INSERT INTO dbo.SrcAmounts VALUES (5000.00);
+         CREATE TABLE dbo.DstAmounts (Qty DECIMAL(18, 6));
+         INSERT INTO dbo.DstAmounts (Qty)
+         SELECT Qty FROM dbo.SrcAmounts;",
+    )
+    .unwrap();
+
+    let qr = engine.query("SELECT Qty FROM dbo.DstAmounts;").unwrap();
+    assert_eq!(
+        qr.rows[0][0],
+        Value::Decimal(5_000_000_000, 6),
+        "INSERT ... SELECT must rescale DECIMAL(13,4) into target DECIMAL(18,6)"
+    );
+}
+
+#[test]
+fn tvf_with_cte_and_multi_stmt_tvf_do_not_leak_into_result_set_sink() {
+    let engine = Engine::new();
+
+    run_batch(
+        &engine,
+        "CREATE TABLE dbo.Orders (OrderId INT, TenantId INT);
+         CREATE TABLE dbo.OrderLines (OrderId INT, TenantId INT, Qty INT);
+         INSERT INTO dbo.Orders VALUES (1, 10), (2, 10);
+         INSERT INTO dbo.OrderLines VALUES (1, 10, 5), (1, 10, 7), (2, 10, 3);",
+    )
+    .unwrap();
+
+    run_batch(
+        &engine,
+        "CREATE FUNCTION dbo.GetOrderLineSums(@tenantId INT, @orderId INT)
+         RETURNS TABLE
+         AS
+         RETURN
+         (
+             WITH Filtered AS (
+                 SELECT OrderId, Qty
+                 FROM dbo.OrderLines
+                 WHERE TenantId = @tenantId AND OrderId = @orderId
+             )
+             SELECT OrderId, SUM(Qty) AS TotalQty
+             FROM Filtered
+             GROUP BY OrderId
+         );",
+    )
+    .unwrap();
+
+    run_batch(
+        &engine,
+        "CREATE FUNCTION dbo.BuildLabels(@orderId INT)
+         RETURNS @res TABLE (OrderId INT, Label VARCHAR(20))
+         AS
+         BEGIN
+             INSERT INTO @res VALUES (@orderId, 'ORD-' + CAST(@orderId AS VARCHAR(10)));
+             RETURN;
+         END;",
+    )
+    .unwrap();
+
+    run_batch(
+        &engine,
+        "CREATE PROCEDURE dbo.usp_GetOrderBundle @TenantId INT
+         AS
+         BEGIN
+             SET NOCOUNT ON;
+             SELECT OrderId, TenantId INTO #Scoped FROM dbo.Orders WHERE TenantId = @TenantId;
+
+             -- RS1: 1 column
+             SELECT OrderId FROM #Scoped ORDER BY OrderId;
+
+             -- RS2: 2 columns via CROSS APPLY onto InlineTableWithCte TVF
+             SELECT s.OrderId, agg.TotalQty
+             FROM #Scoped s
+             CROSS APPLY (
+                 SELECT OrderId, TotalQty
+                 FROM dbo.GetOrderLineSums(@TenantId, s.OrderId)
+             ) agg
+             ORDER BY s.OrderId;
+
+             -- RS3: 2 columns via CROSS APPLY onto MultiStatementTable TVF
+             SELECT s.OrderId, lbl.Label
+             FROM #Scoped s
+             CROSS APPLY (
+                 SELECT Label FROM dbo.BuildLabels(s.OrderId)
+             ) lbl
+             ORDER BY s.OrderId;
+         END;",
+    )
+    .unwrap();
+
+    let stmts = parse_batch("EXEC dbo.usp_GetOrderBundle @TenantId = 10;").unwrap();
+    let results = engine.execute_batch_all_results(stmts).unwrap();
+
+    assert_eq!(
+        results.len(),
+        3,
+        "TVFs inside CROSS APPLY must not leak internal result sets into result_set_sink"
+    );
+    assert_eq!(results[0].columns.len(), 1);
+    assert_eq!(
+        results[0].rows,
+        vec![vec![Value::Int(1)], vec![Value::Int(2)]]
+    );
+
+    assert_eq!(results[1].columns.len(), 2);
+    assert_eq!(results[1].rows.len(), 2);
+    assert_eq!(results[1].rows[0][0].to_integer_i64(), Some(1));
+    assert_eq!(results[1].rows[0][1].to_integer_i64(), Some(12));
+    assert_eq!(results[1].rows[1][0].to_integer_i64(), Some(2));
+    assert_eq!(results[1].rows[1][1].to_integer_i64(), Some(3));
+
+    assert_eq!(results[2].columns.len(), 2);
+    assert_eq!(
+        results[2].rows,
+        vec![
+            vec![Value::Int(1), Value::VarChar("ORD-1".into())],
+            vec![Value::Int(2), Value::VarChar("ORD-2".into())],
+        ]
+    );
+}

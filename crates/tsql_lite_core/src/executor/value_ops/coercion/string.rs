@@ -1,6 +1,6 @@
 use super::datetime::parse_date_string;
 use super::numeric::{parse_decimal_string, parse_money_string};
-use super::xml::validate_xml_fragment;
+use super::xml::canonicalize_xml_fragment;
 use crate::error::DbError;
 use crate::executor::value_helpers::{pad_binary_right, pad_right};
 use crate::executor::value_ops::formatting::parse_datetime_string;
@@ -146,8 +146,8 @@ pub(crate) fn coerce_string(v: &str, ty: &DataType, dateformat: &str) -> Result<
         }
         DataType::SqlVariant => Ok(Value::SqlVariant(Box::new(Value::VarChar(v.to_string())))),
         DataType::Xml => {
-            validate_xml_fragment(v)?;
-            Ok(Value::VarChar(v.to_string()))
+            let canonical = canonicalize_xml_fragment(v)?;
+            Ok(Value::VarChar(canonical))
         }
     }
 }

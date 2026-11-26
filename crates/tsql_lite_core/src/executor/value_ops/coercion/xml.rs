@@ -159,23 +159,31 @@ fn skip_ws(bytes: &[u8], mut i: usize) -> usize {
     i
 }
 
-/// Validates an XML 1.0 document or content fragment following SQL Server `XML` data type rules.
+/// Validates and canonicalizes an XML 1.0 document or content fragment following SQL Server `XML`
+/// data type rules.
 ///
 /// SQL Server allows empty strings, plain text fragments, and multi-root fragments (`<a/><b/>`),
 /// while rejecting unclosed/mismatched tags, unescaped `<`/`&`, malformed/duplicate attributes,
 /// and unterminated comments, CDATA sections, or processing instructions.
-pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
+///
+/// Canonicalization strips any leading UTF-8 BOM, removes redundant whitespace inside start/end
+/// tags (including before `>` and `/>`, so `<Tag />` becomes `<Tag/>`), and normalizes attribute
+/// quoting to double quotes.
+pub(crate) fn canonicalize_xml_fragment(s: &str) -> Result<String, DbError> {
     let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
     let bytes = s.as_bytes();
     let len = bytes.len();
     let mut i = 0;
     let mut stack: Vec<&str> = Vec::new();
+    let mut out = String::with_capacity(len);
 
     while i < len {
         match bytes[i] {
             b'&' => {
                 let consumed = validate_entity_ref(&s[i + 1..])?;
-                i += 1 + consumed;
+                let next_i = i + 1 + consumed;
+                out.push_str(&s[i..next_i]);
+                i = next_i;
             }
             b']' if s[i..].starts_with("]]>") => {
                 return Err(xml_parse_err("']]>' is not allowed in character data"));
@@ -190,13 +198,17 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                     if body.contains("--") || body.ends_with('-') {
                         return Err(xml_parse_err("'--' is not allowed inside XML comment"));
                     }
-                    i = body_start + rel_end + 3;
+                    let next_i = body_start + rel_end + 3;
+                    out.push_str(&s[i..next_i]);
+                    i = next_i;
                 } else if s[i..].starts_with("<![CDATA[") {
                     let body_start = i + 9;
                     let Some(rel_end) = s[body_start..].find("]]>") else {
                         return Err(xml_parse_err("unexpected end of input in CDATA section"));
                     };
-                    i = body_start + rel_end + 3;
+                    let next_i = body_start + rel_end + 3;
+                    out.push_str(&s[i..next_i]);
+                    i = next_i;
                 } else if s[i..].starts_with("<?") {
                     let name_start = i + 2;
                     let Some(name_end) = scan_name(s, name_start) else {
@@ -207,13 +219,17 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                             "unexpected end of input in processing instruction",
                         ));
                     };
-                    i = name_end + rel_end + 2;
+                    let next_i = name_end + rel_end + 2;
+                    out.push_str(&s[i..next_i]);
+                    i = next_i;
                 } else if s[i..].starts_with("<!") {
                     // DOCTYPE or markup declaration — reject if unclosed.
                     let Some(rel_end) = s[i + 2..].find('>') else {
                         return Err(xml_parse_err("unexpected end of input in declaration"));
                     };
-                    i = i + 2 + rel_end + 1;
+                    let next_i = i + 2 + rel_end + 1;
+                    out.push_str(&s[i..next_i]);
+                    i = next_i;
                 } else if i + 1 < len && bytes[i + 1] == b'/' {
                     // Closing tag </name>
                     let name_start = i + 2;
@@ -244,6 +260,9 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                             )));
                         }
                     }
+                    out.push_str("</");
+                    out.push_str(tag_name);
+                    out.push('>');
                     i = j + 1;
                 } else {
                     // Opening or self-closing tag <name attr="val" ...>
@@ -256,6 +275,9 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                     let mut seen_attrs: Vec<&str> = Vec::new();
                     let mut self_closing = false;
 
+                    out.push('<');
+                    out.push_str(tag_name);
+
                     loop {
                         let before_ws = j;
                         j = skip_ws(bytes, j);
@@ -263,12 +285,14 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                             return Err(xml_parse_err("unexpected end of input in start tag"));
                         }
                         if bytes[j] == b'>' {
+                            out.push('>');
                             j += 1;
                             break;
                         }
                         if bytes[j] == b'/' {
                             if j + 1 < len && bytes[j + 1] == b'>' {
                                 self_closing = true;
+                                out.push_str("/>");
                                 j += 2;
                                 break;
                             }
@@ -300,10 +324,13 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                         }
                         let quote = bytes[j];
                         j += 1;
+                        let val_start = j;
+                        let mut val_end = j;
                         let mut closed = false;
                         while j < len {
                             let b = bytes[j];
                             if b == quote {
+                                val_end = j;
                                 j += 1;
                                 closed = true;
                                 break;
@@ -323,6 +350,16 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                                 "unexpected end of input in attribute value",
                             ));
                         }
+                        let attr_val = &s[val_start..val_end];
+                        out.push(' ');
+                        out.push_str(attr_name);
+                        out.push_str("=\"");
+                        if quote == b'\'' && attr_val.contains('"') {
+                            out.push_str(&attr_val.replace('"', "&quot;"));
+                        } else {
+                            out.push_str(attr_val);
+                        }
+                        out.push('"');
                     }
 
                     if !self_closing {
@@ -332,7 +369,12 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
                 }
             }
             _ => {
+                let text_start = i;
                 i += 1;
+                while i < len && !matches!(bytes[i], b'<' | b'&' | b']') {
+                    i += 1;
+                }
+                out.push_str(&s[text_start..i]);
             }
         }
     }
@@ -343,5 +385,5 @@ pub(crate) fn validate_xml_fragment(s: &str) -> Result<(), DbError> {
             unclosed
         )));
     }
-    Ok(())
+    Ok(out)
 }

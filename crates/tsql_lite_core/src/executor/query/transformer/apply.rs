@@ -127,5 +127,6 @@ fn build_virtual_table(alias: &str, sub_result: &QueryResult) -> TableDef {
             .collect(),
         check_constraints: vec![],
         foreign_keys: vec![],
+        unique_constraints: vec![],
     }
 }

@@ -29,6 +29,7 @@ pub(super) fn bind_plain_table(
                 columns: Vec::new(),
                 check_constraints: Vec::new(),
                 foreign_keys: Vec::new(),
+                unique_constraints: Vec::new(),
             };
 
             let first_row_len = rows.first().map(|r| r.len()).unwrap_or(0);

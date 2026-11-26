@@ -221,6 +221,13 @@ impl<'a> MutationExecutor<'a> {
                     col.name
                 )));
             }
+            if !value.is_null() {
+                value = crate::executor::value_ops::coerce_value_to_type_with_dateformat(
+                    value,
+                    &col.data_type,
+                    &ctx.options.dateformat,
+                )?;
+            }
             apply_ansi_padding(&mut value, &col.data_type, col.ansi_padding_on);
             enforce_string_length(&col.data_type, &value, &col.name)?;
             final_values[col_idx] = value;

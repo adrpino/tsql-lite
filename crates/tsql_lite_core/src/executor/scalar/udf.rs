@@ -58,7 +58,22 @@ pub(crate) fn eval_user_scalar_function(
                 name, param.name
             )));
         };
-        let val = eval_expr(arg_expr, row, ctx, catalog, storage, clock)?;
+        let is_default_kw = matches!(arg_expr, Expr::Identifier(id) if id.eq_ignore_ascii_case("default"))
+            && !row.iter().any(|ct| {
+                ct.table
+                    .columns
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case("default"))
+            });
+        let val = if is_default_kw {
+            if let Some(default_expr) = &param.default {
+                eval_expr(default_expr, &[], ctx, catalog, storage, clock)?
+            } else {
+                eval_expr(arg_expr, row, ctx, catalog, storage, clock)?
+            }
+        } else {
+            eval_expr(arg_expr, row, ctx, catalog, storage, clock)?
+        };
         let ty = type_mapping::resolve_data_type_spec(dt, catalog);
         let coerced =
             value_ops::coerce_value_to_type_with_dateformat(val, &ty, &ctx.options.dateformat)?;
@@ -72,6 +87,7 @@ pub(crate) fn eval_user_scalar_function(
         kind: ModuleKind::Function,
     });
     let saved_caller_vars = std::mem::take(ctx.session.variables);
+    let saved_sink = ctx.frame.result_set_sink.take();
     for (k, v) in &saved_caller_vars {
         if k.starts_with("@@") {
             ctx.session.variables.insert(k.clone(), v.clone());
@@ -104,6 +120,7 @@ pub(crate) fn eval_user_scalar_function(
     while ctx.frame.scope_vars.len() > scope_depth {
         ctx.leave_scope();
     }
+    ctx.frame.result_set_sink = saved_sink;
     *ctx.session.variables = saved_caller_vars;
     ctx.pop_module();
     out

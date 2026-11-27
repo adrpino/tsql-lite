@@ -8,6 +8,7 @@ use crate::executor::locks::SessionId;
 use crate::executor::result::QueryResult;
 use crate::executor::session::SessionManager as SessionManagerTrait;
 use crate::executor::tooling::{ExecutionTrace, ExplainPlan, SessionOptions};
+#[cfg(feature = "checkpoint")]
 use crate::executor::wal::{Lsn, WalRecord};
 
 #[cfg(feature = "persistence")]
@@ -601,6 +602,7 @@ where
                 super::super::locks::LockTable::new(),
             )),
             durability: parking_lot::Mutex::new(durability),
+            #[cfg(feature = "checkpoint")]
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
             sessions: parking_lot::RwLock::new(std::collections::HashMap::new()),
@@ -634,6 +636,7 @@ where
             durability: parking_lot::Mutex::new(Box::new(
                 super::super::durability::NoopDurability::default(),
             )),
+            #[cfg(feature = "checkpoint")]
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
             sessions: parking_lot::RwLock::new(std::collections::HashMap::new()),
@@ -692,59 +695,76 @@ where
         }
     }
 
-    pub fn wal_begin(&self, tx_id: u64, isolation_level: &str) {
-        let mut wal_guard = self.wal.lock();
-        if let Some(ref mut wal) = *wal_guard {
-            let _ = wal.append(WalRecord::Begin {
-                tx_id,
-                isolation_level: isolation_level.to_string(),
-            });
-            let _ = wal.flush();
+    pub fn wal_begin(&self, _tx_id: u64, _isolation_level: &str) {
+        #[cfg(feature = "checkpoint")]
+        {
+            let mut wal_guard = self.wal.lock();
+            if let Some(ref mut wal) = *wal_guard {
+                let _ = wal.append(WalRecord::Begin {
+                    tx_id: _tx_id,
+                    isolation_level: _isolation_level.to_string(),
+                });
+                let _ = wal.flush();
+            }
         }
     }
 
-    pub fn wal_commit(&self, tx_id: u64) {
-        let mut wal_guard = self.wal.lock();
-        if let Some(ref mut wal) = *wal_guard {
-            let lsn = wal.append(WalRecord::Commit { tx_id }).unwrap_or(Lsn(0));
-            let _ = wal.append(WalRecord::Checkpoint { lsn });
-            let _ = wal.flush();
-            let _ = wal.truncate();
+    pub fn wal_commit(&self, _tx_id: u64) {
+        #[cfg(feature = "checkpoint")]
+        {
+            let mut wal_guard = self.wal.lock();
+            if let Some(ref mut wal) = *wal_guard {
+                let lsn = wal
+                    .append(WalRecord::Commit { tx_id: _tx_id })
+                    .unwrap_or(Lsn(0));
+                let _ = wal.append(WalRecord::Checkpoint { lsn });
+                let _ = wal.flush();
+                let _ = wal.truncate();
+            }
         }
     }
 
-    pub fn wal_rollback(&self, tx_id: u64) {
-        let mut wal_guard = self.wal.lock();
-        if let Some(ref mut wal) = *wal_guard {
-            let _ = wal.append(WalRecord::Rollback { tx_id });
-            let _ = wal.flush();
+    pub fn wal_rollback(&self, _tx_id: u64) {
+        #[cfg(feature = "checkpoint")]
+        {
+            let mut wal_guard = self.wal.lock();
+            if let Some(ref mut wal) = *wal_guard {
+                let _ = wal.append(WalRecord::Rollback { tx_id: _tx_id });
+                let _ = wal.flush();
+            }
         }
     }
 
-    pub fn wal_savepoint(&self, tx_id: u64, name: &str) {
-        let mut wal_guard = self.wal.lock();
-        if let Some(ref mut wal) = *wal_guard {
-            let _ = wal.append(WalRecord::Savepoint {
-                tx_id,
-                name: name.to_string(),
-            });
-            let _ = wal.flush();
+    pub fn wal_savepoint(&self, _tx_id: u64, _name: &str) {
+        #[cfg(feature = "checkpoint")]
+        {
+            let mut wal_guard = self.wal.lock();
+            if let Some(ref mut wal) = *wal_guard {
+                let _ = wal.append(WalRecord::Savepoint {
+                    tx_id: _tx_id,
+                    name: _name.to_string(),
+                });
+                let _ = wal.flush();
+            }
         }
     }
 
-    pub fn wal_auto_commit(&self, tx_id: u64) {
-        let mut wal_guard = self.wal.lock();
-        if let Some(ref mut wal) = *wal_guard {
-            let lsn = wal
-                .append(WalRecord::Begin {
-                    tx_id,
-                    isolation_level: "AutoCommit".to_string(),
-                })
-                .unwrap_or(Lsn(0));
-            let _ = wal.append(WalRecord::Commit { tx_id });
-            let _ = wal.append(WalRecord::Checkpoint { lsn });
-            let _ = wal.flush();
-            let _ = wal.truncate();
+    pub fn wal_auto_commit(&self, _tx_id: u64) {
+        #[cfg(feature = "checkpoint")]
+        {
+            let mut wal_guard = self.wal.lock();
+            if let Some(ref mut wal) = *wal_guard {
+                let lsn = wal
+                    .append(WalRecord::Begin {
+                        tx_id: _tx_id,
+                        isolation_level: "AutoCommit".to_string(),
+                    })
+                    .unwrap_or(Lsn(0));
+                let _ = wal.append(WalRecord::Commit { tx_id: _tx_id });
+                let _ = wal.append(WalRecord::Checkpoint { lsn });
+                let _ = wal.flush();
+                let _ = wal.truncate();
+            }
         }
     }
 

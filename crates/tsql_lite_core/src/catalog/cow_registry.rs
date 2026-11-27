@@ -513,7 +513,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
     struct Item {
         id: u32,
         key: String,
@@ -608,10 +609,13 @@ mod tests {
         assert_eq!(fork.view().len(), 100);
 
         // Serde round-trip preserves forked state cleanly
-        let encoded = serde_json::to_string(&child).unwrap();
-        let mut decoded: CowRegistry<String, Item> = serde_json::from_str(&encoded).unwrap();
-        decoded.rebuild_map(key_of);
-        assert_eq!(snapshot(&decoded), snapshot(&child));
+        #[cfg(feature = "checkpoint")]
+        {
+            let encoded = serde_json::to_string(&child).unwrap();
+            let mut decoded: CowRegistry<String, Item> = serde_json::from_str(&encoded).unwrap();
+            decoded.rebuild_map(key_of);
+            assert_eq!(snapshot(&decoded), snapshot(&child));
+        }
     }
 
     #[test]

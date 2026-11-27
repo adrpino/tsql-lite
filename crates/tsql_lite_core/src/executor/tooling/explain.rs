@@ -1,15 +1,18 @@
 use super::formatting::{format_expr, format_from_node, format_select_columns, format_select_stmt};
 use super::{collect_read_tables, collect_write_tables, normalize_object_name, select_from_name};
 use crate::ast::{DdlStatement, DmlStatement, FromNode, Statement};
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ExplainOperator {
     pub op: String,
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ExplainPlan {
     pub statement_kind: String,
     pub operators: Vec<ExplainOperator>,

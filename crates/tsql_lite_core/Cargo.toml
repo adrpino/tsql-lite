@@ -11,20 +11,18 @@ categories = ["database", "web-programming"]
 
 [features]
 default = ["checkpoint", "persistence"]
-checkpoint = []
+checkpoint = ["dep:serde", "uuid/serde", "chrono/serde"]
 persistence = ["checkpoint", "dep:redb"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", features = ["unbounded_depth"] }
-thiserror = "2"
-hex = "0.4"
 regex = "1.12.3"
 redb = { version = "2.1", optional = true }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
-chrono = { version = "0.4", features = ["clock", "serde"] }
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 md-5 = { version = "0.11", default-features = false }
 sha1 = { version = "0.11", default-features = false }
 sha2 = { version = "0.11", default-features = false }
@@ -32,6 +30,7 @@ aes-gcm = { version = "0.11", default-features = false, features = ["aes", "allo
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }
+chrono = { version = "0.4", default-features = false, features = ["wasmbind"] }
 js-sys = "0.3"
 
 [dev-dependencies]

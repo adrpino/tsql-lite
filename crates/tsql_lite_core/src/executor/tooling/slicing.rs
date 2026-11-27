@@ -1,6 +1,8 @@
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SourceSpan {
     pub start_line: usize,
     pub start_col: usize,
@@ -8,7 +10,8 @@ pub struct SourceSpan {
     pub end_col: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct StatementSlice {
     pub index: usize,
     pub sql: String,

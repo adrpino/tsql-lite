@@ -16,11 +16,13 @@ use std::sync::Arc;
 
 use crate::error::DbError;
 use crate::types::Value;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
 pub type StorageRowStream<'a> = Box<dyn Iterator<Item = Result<StoredRow, DbError>> + 'a>;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct StoredRow {
     pub values: Vec<Value>,
     pub deleted: bool,

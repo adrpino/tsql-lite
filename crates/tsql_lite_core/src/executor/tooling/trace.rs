@@ -1,7 +1,9 @@
 use super::slicing::SourceSpan;
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TraceStatementEvent {
     pub index: usize,
     pub sql: String,
@@ -15,7 +17,8 @@ pub struct TraceStatementEvent {
     pub write_tables: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct ExecutionTrace {
     pub events: Vec<TraceStatementEvent>,
     pub stopped_on_error: bool,

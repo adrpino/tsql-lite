@@ -12,6 +12,7 @@ use super::journal::{Journal, NoopJournal};
 use super::locks::{LockTable, SessionId, TxWorkspace};
 use super::tooling::SessionOptions;
 use super::transaction::TransactionManager;
+#[cfg(feature = "checkpoint")]
 use super::wal::Wal;
 
 pub trait SessionManager {
@@ -321,6 +322,7 @@ pub struct SharedState<C, S> {
     pub(crate) storage: std::sync::Arc<parking_lot::RwLock<SharedStorage<C, S>>>,
     pub(crate) table_locks: std::sync::Arc<parking_lot::Mutex<LockTable>>,
     pub(crate) durability: parking_lot::Mutex<Box<dyn DurabilitySink<C>>>,
+    #[cfg(feature = "checkpoint")]
     pub(crate) wal: parking_lot::Mutex<Option<Wal>>,
     pub(crate) next_tx_id: std::sync::atomic::AtomicU64,
     pub(crate) sessions: SharedSessionMap<C, S>,
@@ -355,6 +357,7 @@ where
             })),
             table_locks: std::sync::Arc::new(parking_lot::Mutex::new(LockTable::new())),
             durability: parking_lot::Mutex::new(Box::new(NoopDurability::default())),
+            #[cfg(feature = "checkpoint")]
             wal: parking_lot::Mutex::new(None),
             next_tx_id: std::sync::atomic::AtomicU64::new(1),
             sessions: parking_lot::RwLock::new(HashMap::new()),

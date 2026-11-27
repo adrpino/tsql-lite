@@ -1,4 +1,4 @@
-use thiserror::Error;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorClass {
@@ -8,27 +8,17 @@ pub enum ErrorClass {
     Storage,
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone)]
 pub enum DbError {
-    #[error("Incorrect syntax near '{0}'.")]
     Parse(String),
-
-    #[error("{0}")]
     Semantic(String),
-
-    #[error("execution error: {0}")]
     Execution(String),
-
-    #[error("{0}")]
     Storage(String),
-
-    #[error("Transaction (Process ID 0) was deadlocked on resources with another process and has been chosen as the deadlock victim. Rerun the transaction.")]
     Deadlock(String),
 
     /// A custom error with an explicit SQL Server–style class and number.
     /// Allows callers to raise domain-specific errors (e.g. timeout, permission)
     /// without modifying the DbError enum itself.
-    #[error("{message}")]
     Custom {
         class: u8,
         number: i32,
@@ -36,7 +26,6 @@ pub enum DbError {
     },
 
     /// A user-raised SQL error (RAISERROR / THROW) preserving exact number, severity, and state.
-    #[error("{message}")]
     Raised {
         number: i32,
         severity: u8,
@@ -45,84 +34,122 @@ pub enum DbError {
     },
 
     // -- Strongly-typed semantic errors --
-    #[error("Invalid schema name '{schema}'.")]
     SchemaNotFound { schema: String },
-
-    #[error("Invalid object name '{table}'.")]
     TableNotFound { schema: String, table: String },
-
-    #[error("Invalid column name '{column}'.")]
     ColumnNotFound { column: String },
-
-    #[error("Invalid column name '{column}'.")]
     ColumnNotFoundQualified { table: String, column: String },
-
-    #[error("Type mismatch: expected {expected}, found {found}")]
     TypeMismatch { expected: String, found: String },
-
-    #[error("Index '{index}' not found on table '{table}'.")]
     IndexNotFound { table: String, index: String },
-
-    #[error("Primary key not found on table '{table}'.")]
     PrimaryKeyNotFound { table: String },
-
-    #[error("Constraint '{constraint}' not found on table '{table}'.")]
     ConstraintNotFound { table: String, constraint: String },
-
-    #[error("Database '{database}' does not exist. Make sure that the name is entered correctly and try again.")]
     DatabaseNotFound { database: String },
-
-    #[error("Invalid object name '{object}'.")]
     ObjectNotFound { object: String },
-
-    #[error("Column names in each table must be unique. Column name '{column}' in table is specified more than once.")]
     DuplicateColumn { column: String },
-
-    #[error("There is already an object named '{table}' in the database.")]
     DuplicateTable { schema: String, table: String },
-
-    #[error("The identifier '{identifier}' is too long. Maximum length is 128.")]
     InvalidIdentifier { identifier: String },
-
-    #[error("Invalid object name '{schema}.{trigger}'.")]
     TriggerNotFound { schema: String, trigger: String },
-
-    #[error("There is already an object named '{trigger}' in the database.")]
     DuplicateTrigger { schema: String, trigger: String },
-
-    #[error("Invalid object name '{schema}.{view}'.")]
     ViewNotFound { schema: String, view: String },
-
-    #[error("There is already an object named '{view}' in the database.")]
     DuplicateView { schema: String, view: String },
-
-    #[error("Type '{schema}.{type_name}' not found.")]
     TypeNotFound { schema: String, type_name: String },
-
-    #[error("There is already an object named '{type_name}' in the database.")]
     DuplicateType { schema: String, type_name: String },
-
-    #[error("There is already a schema named '{schema}' in the database.")]
     DuplicateSchema { schema: String },
-
-    #[error("The cursor '{cursor}' does not exist.")]
     CursorNotDeclared { cursor: String },
-
-    #[error("The cursor '{cursor}' has no query.")]
     CursorHasNoQuery { cursor: String },
-
-    #[error("Divide by zero error encountered.")]
     DivideByZero,
-
-    #[error(
-        "Conversion failed when converting the {from_type} value '{value}' to data type {to_type}."
-    )]
     ConversionFailed {
         from_type: String,
         value: String,
         to_type: String,
     },
 }
+
+impl fmt::Display for DbError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DbError::Parse(s) => write!(f, "Incorrect syntax near '{s}'."),
+            DbError::Semantic(s) => f.write_str(s),
+            DbError::Execution(s) => write!(f, "execution error: {s}"),
+            DbError::Storage(s) => f.write_str(s),
+            DbError::Deadlock(_) => f.write_str(
+                "Transaction (Process ID 0) was deadlocked on resources with another process and has been chosen as the deadlock victim. Rerun the transaction.",
+            ),
+            DbError::Custom { message, .. } => f.write_str(message),
+            DbError::Raised { message, .. } => f.write_str(message),
+            DbError::SchemaNotFound { schema } => write!(f, "Invalid schema name '{schema}'."),
+            DbError::TableNotFound { table, .. } => write!(f, "Invalid object name '{table}'."),
+            DbError::ColumnNotFound { column } => write!(f, "Invalid column name '{column}'."),
+            DbError::ColumnNotFoundQualified { column, .. } => {
+                write!(f, "Invalid column name '{column}'.")
+            }
+            DbError::TypeMismatch { expected, found } => {
+                write!(f, "Type mismatch: expected {expected}, found {found}")
+            }
+            DbError::IndexNotFound { table, index } => {
+                write!(f, "Index '{index}' not found on table '{table}'.")
+            }
+            DbError::PrimaryKeyNotFound { table } => {
+                write!(f, "Primary key not found on table '{table}'.")
+            }
+            DbError::ConstraintNotFound { table, constraint } => {
+                write!(f, "Constraint '{constraint}' not found on table '{table}'.")
+            }
+            DbError::DatabaseNotFound { database } => write!(
+                f,
+                "Database '{database}' does not exist. Make sure that the name is entered correctly and try again."
+            ),
+            DbError::ObjectNotFound { object } => write!(f, "Invalid object name '{object}'."),
+            DbError::DuplicateColumn { column } => write!(
+                f,
+                "Column names in each table must be unique. Column name '{column}' in table is specified more than once."
+            ),
+            DbError::DuplicateTable { table, .. } => {
+                write!(f, "There is already an object named '{table}' in the database.")
+            }
+            DbError::InvalidIdentifier { identifier } => {
+                write!(f, "The identifier '{identifier}' is too long. Maximum length is 128.")
+            }
+            DbError::TriggerNotFound { schema, trigger } => {
+                write!(f, "Invalid object name '{schema}.{trigger}'.")
+            }
+            DbError::DuplicateTrigger { trigger, .. } => {
+                write!(f, "There is already an object named '{trigger}' in the database.")
+            }
+            DbError::ViewNotFound { schema, view } => {
+                write!(f, "Invalid object name '{schema}.{view}'.")
+            }
+            DbError::DuplicateView { view, .. } => {
+                write!(f, "There is already an object named '{view}' in the database.")
+            }
+            DbError::TypeNotFound { schema, type_name } => {
+                write!(f, "Type '{schema}.{type_name}' not found.")
+            }
+            DbError::DuplicateType { type_name, .. } => {
+                write!(f, "There is already an object named '{type_name}' in the database.")
+            }
+            DbError::DuplicateSchema { schema } => {
+                write!(f, "There is already a schema named '{schema}' in the database.")
+            }
+            DbError::CursorNotDeclared { cursor } => {
+                write!(f, "The cursor '{cursor}' does not exist.")
+            }
+            DbError::CursorHasNoQuery { cursor } => {
+                write!(f, "The cursor '{cursor}' has no query.")
+            }
+            DbError::DivideByZero => f.write_str("Divide by zero error encountered."),
+            DbError::ConversionFailed {
+                from_type,
+                value,
+                to_type,
+            } => write!(
+                f,
+                "Conversion failed when converting the {from_type} value '{value}' to data type {to_type}."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DbError {}
 
 impl DbError {
     pub fn class(&self) -> ErrorClass {

@@ -1,10 +1,12 @@
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
 use crate::types::Value;
 
 use crate::types::DataType;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub column_types: Vec<DataType>,
@@ -26,7 +28,8 @@ pub struct BatchResultItem {
     pub suppress_rowcount: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize))]
 pub struct JsonQueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<serde_json::Value>,
@@ -41,7 +44,7 @@ impl QueryResult {
             .map(|r| {
                 let values = r
                     .iter()
-                    .map(|v| serde_json::to_value(v.to_json()).unwrap_or(serde_json::Value::Null))
+                    .map(|v| serde_json::Value::from(v.to_json()))
                     .collect::<Vec<_>>();
                 serde_json::Value::Array(values)
             })

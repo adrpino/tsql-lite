@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -6,7 +7,8 @@ use crate::error::DbError;
 
 pub const VECTOR_MAX_DIMENSIONS: u16 = 1998;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum DataType {
     Bit,
     TinyInt,
@@ -84,7 +86,8 @@ impl DataType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum Value {
     Null,
     Bit(bool),
@@ -113,19 +116,32 @@ pub enum Value {
     SqlVariant(Box<Value>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct TypedValue {
     pub ty: DataType,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Hash)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "checkpoint", serde(untagged))]
 pub enum JsonValue {
     Null,
     Bool(bool),
     Number(i64),
     String(String),
+}
+
+impl From<JsonValue> for serde_json::Value {
+    fn from(v: JsonValue) -> Self {
+        match v {
+            JsonValue::Null => serde_json::Value::Null,
+            JsonValue::Bool(b) => serde_json::Value::Bool(b),
+            JsonValue::Number(n) => serde_json::Value::Number(n.into()),
+            JsonValue::String(s) => serde_json::Value::String(s),
+        }
+    }
 }
 
 impl Eq for JsonValue {}
@@ -203,7 +219,15 @@ impl Value {
             }
             Value::DateTimeOffset(v) => format!("'{}'", v.replace("'", "''")),
             Value::UniqueIdentifier(v) => format!("'{}'", v),
-            Value::Binary(v) | Value::VarBinary(v) => format!("0x{}", hex::encode(v)),
+            Value::Binary(v) | Value::VarBinary(v) => {
+                use std::fmt::Write;
+                let mut s = String::with_capacity(2 + v.len() * 2);
+                s.push_str("0x");
+                for b in v {
+                    let _ = write!(s, "{b:02x}");
+                }
+                s
+            }
             Value::Vector(v) => format!("'{}'", format_vector(v).replace("'", "''")),
             Value::SqlVariant(v) => v.to_sql_literal(),
         }

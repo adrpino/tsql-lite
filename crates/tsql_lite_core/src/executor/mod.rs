@@ -50,6 +50,7 @@ pub mod transaction_exec;
 pub(crate) mod type_mapping;
 pub(crate) mod value_helpers;
 pub(crate) mod value_ops;
+#[cfg(feature = "checkpoint")]
 pub mod wal;
 pub(crate) mod window;
 

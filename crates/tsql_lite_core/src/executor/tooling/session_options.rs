@@ -1,15 +1,18 @@
 use std::collections::HashSet;
 
+#[cfg(feature = "checkpoint")]
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{SessionOption, SessionOptionValue, SetOptionStmt, Statement};
 use crate::error::DbError;
 
+#[cfg(feature = "checkpoint")]
 fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct SessionOptions {
     pub ansi_nulls: bool,
     pub quoted_identifier: bool,
@@ -37,9 +40,9 @@ pub struct SessionOptions {
     pub showplan_all: bool,
     pub showplan_xml: bool,
     pub statistics_xml: bool,
-    #[serde(default = "default_true")]
+    #[cfg_attr(feature = "checkpoint", serde(default = "default_true"))]
     pub recursive_triggers: bool,
-    #[serde(skip)]
+    #[cfg_attr(feature = "checkpoint", serde(skip))]
     pub identity_insert: HashSet<String>,
 }
 

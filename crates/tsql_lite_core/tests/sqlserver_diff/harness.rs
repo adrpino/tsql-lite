@@ -341,7 +341,15 @@ impl DiffValue {
             DiffValue::Float(f) => format!("F:{:.6}", f),
             DiffValue::Decimal(d) => format!("D:{}", d),
             DiffValue::Str(s) => format!("S:{}", s),
-            DiffValue::Bytes(b) => format!("X:{}", hex::encode(b)),
+            DiffValue::Bytes(b) => {
+                use std::fmt::Write;
+                let mut s = String::with_capacity(2 + b.len() * 2);
+                s.push_str("X:");
+                for byte in b {
+                    let _ = write!(s, "{byte:02x}");
+                }
+                s
+            }
             DiffValue::Date(d) => format!("DT:{}", d),
             DiffValue::Time(t) => format!("TM:{}", t),
             DiffValue::DateTime(dt) => format!("DTM:{}", dt),
